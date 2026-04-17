@@ -1,11 +1,17 @@
 package handler
 
 import (
-	"encoding/json"
 	"net/http"
 
 	"github.com/fishhub-oss/fishhub-server/internal/store"
+	"github.com/go-chi/render"
 )
+
+type TokenResponse struct {
+	Token    string `json:"token"`
+	DeviceID string `json:"device_id"`
+	UserID   string `json:"user_id"`
+}
 
 type TokensHandler struct {
 	Store  store.TokenStore
@@ -19,11 +25,10 @@ func (h *TokensHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(map[string]string{
-		"token":     result.Token,
-		"device_id": result.DeviceID,
-		"user_id":   result.UserID,
+	render.Status(r, http.StatusCreated)
+	render.JSON(w, r, TokenResponse{
+		Token:    result.Token,
+		DeviceID: result.DeviceID,
+		UserID:   result.UserID,
 	})
 }

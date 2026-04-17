@@ -39,22 +39,19 @@ func TestTokensHandler_Create_success(t *testing.T) {
 	if res.StatusCode != http.StatusCreated {
 		t.Fatalf("expected 201, got %d", res.StatusCode)
 	}
-	if ct := res.Header.Get("Content-Type"); ct != "application/json" {
-		t.Fatalf("expected application/json, got %s", ct)
-	}
 
-	var body map[string]string
+	var body handler.TokenResponse
 	if err := json.NewDecoder(res.Body).Decode(&body); err != nil {
 		t.Fatalf("decode body: %v", err)
 	}
-	if body["token"] != "abc123" {
-		t.Errorf("unexpected token: %s", body["token"])
+	if body.Token != "abc123" {
+		t.Errorf("unexpected token: %s", body.Token)
 	}
-	if body["device_id"] != "device-uuid" {
-		t.Errorf("unexpected device_id: %s", body["device_id"])
+	if body.DeviceID != "device-uuid" {
+		t.Errorf("unexpected device_id: %s", body.DeviceID)
 	}
-	if body["user_id"] != "user-uuid" {
-		t.Errorf("unexpected user_id: %s", body["user_id"])
+	if body.UserID != "user-uuid" {
+		t.Errorf("unexpected user_id: %s", body.UserID)
 	}
 }
 

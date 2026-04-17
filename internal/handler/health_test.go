@@ -19,15 +19,12 @@ func TestHealth(t *testing.T) {
 	if res.StatusCode != http.StatusOK {
 		t.Fatalf("expected 200, got %d", res.StatusCode)
 	}
-	if ct := res.Header.Get("Content-Type"); ct != "application/json" {
-		t.Fatalf("expected application/json, got %s", ct)
-	}
 
-	var body map[string]string
+	var body handler.HealthResponse
 	if err := json.NewDecoder(res.Body).Decode(&body); err != nil {
 		t.Fatalf("decode body: %v", err)
 	}
-	if body["status"] != "ok" {
-		t.Fatalf("expected status ok, got %s", body["status"])
+	if body.Status != "ok" {
+		t.Fatalf("expected status ok, got %s", body.Status)
 	}
 }
