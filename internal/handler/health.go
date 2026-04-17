@@ -1,11 +1,15 @@
 package handler
 
 import (
-	"encoding/json"
 	"net/http"
+
+	"github.com/go-chi/render"
 )
 
+type HealthResponse struct {
+	Status string `json:"status"`
+}
+
 func Health(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+	render.JSON(w, r, HealthResponse{Status: "ok"})
 }
