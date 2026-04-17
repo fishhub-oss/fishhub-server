@@ -1,7 +1,6 @@
 package handler
 
 import (
-	"database/sql"
 	"encoding/json"
 	"net/http"
 
@@ -9,12 +8,12 @@ import (
 )
 
 type TokensHandler struct {
-	DB     *sql.DB
+	Store  store.TokenStore
 	UserID string
 }
 
 func (h *TokensHandler) Create(w http.ResponseWriter, r *http.Request) {
-	result, err := store.CreateToken(r.Context(), h.DB, h.UserID)
+	result, err := h.Store.CreateToken(r.Context(), h.UserID)
 	if err != nil {
 		http.Error(w, "failed to create token", http.StatusInternalServerError)
 		return

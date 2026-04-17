@@ -30,12 +30,12 @@ func Open() (*sql.DB, error) {
 	return db, nil
 }
 
-func Migrate(db *sql.DB) error {
+func Migrate(db *sql.DB, migrationsPath string) error {
 	driver, err := postgres.WithInstance(db, &postgres.Config{})
 	if err != nil {
 		return fmt.Errorf("migrate driver: %w", err)
 	}
-	m, err := migrate.NewWithDatabaseInstance("file://db/migrations", "postgres", driver)
+	m, err := migrate.NewWithDatabaseInstance("file://"+migrationsPath, "postgres", driver)
 	if err != nil {
 		return fmt.Errorf("migrate init: %w", err)
 	}

@@ -7,6 +7,7 @@ import (
 
 	appdb "github.com/fishhub-oss/fishhub-server/internal/db"
 	"github.com/fishhub-oss/fishhub-server/internal/handler"
+	"github.com/fishhub-oss/fishhub-server/internal/store"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -18,7 +19,7 @@ func main() {
 	}
 	defer db.Close()
 
-	if err := appdb.Migrate(db); err != nil {
+	if err := appdb.Migrate(db, "db/migrations"); err != nil {
 		fmt.Fprintf(os.Stderr, "db migrate: %v\n", err)
 		os.Exit(1)
 	}
@@ -28,7 +29,10 @@ func main() {
 		os.Exit(1)
 	}
 
-	tokens := &handler.TokensHandler{DB: db, UserID: appdb.SeedUserID()}
+	tokens := &handler.TokensHandler{
+		Store:  store.NewTokenStore(db),
+		UserID: appdb.SeedUserID(),
+	}
 
 	r := chi.NewRouter()
 	r.Get("/health", handler.Health)

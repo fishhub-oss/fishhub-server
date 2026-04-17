@@ -14,14 +14,26 @@ type TokenResult struct {
 	UserID   string
 }
 
-func CreateToken(ctx context.Context, db *sql.DB, userID string) (TokenResult, error) {
+type TokenStore interface {
+	CreateToken(ctx context.Context, userID string) (TokenResult, error)
+}
+
+type postgresTokenStore struct {
+	db *sql.DB
+}
+
+func NewTokenStore(db *sql.DB) TokenStore {
+	return &postgresTokenStore{db: db}
+}
+
+func (s *postgresTokenStore) CreateToken(ctx context.Context, userID string) (TokenResult, error) {
 	raw := make([]byte, 32)
 	if _, err := rand.Read(raw); err != nil {
 		return TokenResult{}, fmt.Errorf("generate token: %w", err)
 	}
 	token := hex.EncodeToString(raw)
 
-	tx, err := db.BeginTx(ctx, nil)
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return TokenResult{}, fmt.Errorf("begin tx: %w", err)
 	}
