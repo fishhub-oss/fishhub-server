@@ -44,14 +44,18 @@ func TestCreateToken_integration(t *testing.T) {
 		}
 
 		var deviceUserID string
+		var deviceName *string
 		err = db.QueryRowContext(ctx,
-			`SELECT user_id FROM devices WHERE id = $1`, result.DeviceID,
-		).Scan(&deviceUserID)
+			`SELECT user_id, name FROM devices WHERE id = $1`, result.DeviceID,
+		).Scan(&deviceUserID, &deviceName)
 		if err != nil {
 			t.Fatalf("device not found in DB: %v", err)
 		}
 		if deviceUserID != userID {
 			t.Errorf("device has wrong user_id: %s", deviceUserID)
+		}
+		if deviceName != nil {
+			t.Errorf("expected name to be NULL, got %s", *deviceName)
 		}
 
 		var storedToken string
