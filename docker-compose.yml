@@ -28,7 +28,7 @@ services:
 
 secrets:
   influxdb-admin-token:
-    file: ./secrets/influxdb-admin-token.json
+    file: ${INFLUX_TOKEN_FILE:-/tmp/influxdb-admin-token.json}
 
 volumes:
   postgres_data:

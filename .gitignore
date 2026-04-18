@@ -6,4 +6,3 @@ bin/
 *.dylib
 *.test
 *.out
-secrets/influxdb-admin-token.json
