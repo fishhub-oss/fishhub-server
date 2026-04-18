@@ -13,10 +13,8 @@ build:
 run:
 	DATABASE_URL=$(DATABASE_URL) go run ./...
 
-$(INFLUX_TOKEN_FILE):
+dev:
 	echo '{"token":"$(INFLUXDB3_TOKEN)","name":"admin"}' > $(INFLUX_TOKEN_FILE)
-
-dev: $(INFLUX_TOKEN_FILE)
 	INFLUX_TOKEN_FILE=$(INFLUX_TOKEN_FILE) docker compose up -d
 	until docker compose exec postgres pg_isready -U fishhub; do sleep 1; done
 	DATABASE_URL=$(DATABASE_URL) \
