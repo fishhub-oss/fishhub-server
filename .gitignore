@@ -1,4 +1,6 @@
 bin/
+.env
+.influxdb-admin-token.json
 *.exe
 *.exe~
 *.dll

@@ -1,14 +1,23 @@
-.PHONY: run build dev
+.PHONY: run build dev influx-setup
 
-DATABASE_URL ?= postgres://fishhub:fishhub@localhost:5432/fishhub?sslmode=disable
+-include .env
+export
+
+INFLUX_TOKEN_FILE := $(CURDIR)/.influxdb-admin-token.json
 
 build:
 	go build -o bin/server ./...
 
 run:
-	DATABASE_URL=$(DATABASE_URL) go run ./...
+	go run ./...
 
 dev:
-	docker compose up -d
+	echo '{"token":"$(INFLUXDB3_TOKEN)","name":"admin"}' > $(INFLUX_TOKEN_FILE)
+	INFLUX_TOKEN_FILE=$(INFLUX_TOKEN_FILE) docker compose up -d
 	until docker compose exec postgres pg_isready -U fishhub; do sleep 1; done
-	DATABASE_URL=$(DATABASE_URL) go run ./...
+	until curl -sf -H "Authorization: Bearer $(INFLUXDB3_TOKEN)" $(INFLUXDB3_HOST)/health > /dev/null; do sleep 1; done
+	go run ./...
+
+influx-setup:
+	docker compose exec influxdb influxdb3 create database \
+	  --token $(INFLUXDB3_TOKEN) $(INFLUXDB3_DATABASE)

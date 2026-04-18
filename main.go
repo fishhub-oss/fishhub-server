@@ -2,12 +2,14 @@ package main
 
 import (
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 
 	"github.com/fishhub-oss/fishhub-server/internal/auth"
 	appdb "github.com/fishhub-oss/fishhub-server/internal/db"
 	"github.com/fishhub-oss/fishhub-server/internal/handler"
+	"github.com/fishhub-oss/fishhub-server/internal/influx"
 	"github.com/fishhub-oss/fishhub-server/internal/store"
 	"github.com/go-chi/chi/v5"
 )
@@ -30,11 +32,29 @@ func main() {
 		os.Exit(1)
 	}
 
+	var writer influx.ReadingWriter
+	influxHost := os.Getenv("INFLUXDB3_HOST")
+	influxToken := os.Getenv("INFLUXDB3_TOKEN")
+	influxDatabase := os.Getenv("INFLUXDB3_DATABASE")
+	if influxHost != "" && influxToken != "" && influxDatabase != "" {
+		w, err := influx.NewReadingWriter(influxHost, influxToken, influxDatabase)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "influx init: %v\n", err)
+			os.Exit(1)
+		}
+		writer = w
+		log.Printf("InfluxDB writer configured: host=%s database=%s", influxHost, influxDatabase)
+	} else {
+		log.Printf("warning: INFLUXDB3_HOST/TOKEN/DATABASE not set — readings will not be persisted to InfluxDB")
+	}
+
 	tokens := &handler.TokensHandler{
 		Store:  store.NewTokenStore(db),
 		UserID: appdb.SeedUserID(),
 	}
-	readings := &handler.ReadingsHandler{}
+	readings := &handler.ReadingsHandler{
+		Writer: writer,
+	}
 
 	r := chi.NewRouter()
 	r.Get("/health", handler.Health)
