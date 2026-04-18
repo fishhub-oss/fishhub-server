@@ -16,6 +16,7 @@ dev:
 	INFLUX_TOKEN_FILE=$(INFLUX_TOKEN_FILE) docker compose up -d
 	until docker compose exec postgres pg_isready -U fishhub; do sleep 1; done
 	until curl -sf -H "Authorization: Bearer $(INFLUXDB3_TOKEN)" $(INFLUXDB3_HOST)/health > /dev/null; do sleep 1; done
+	until curl -sf http://localhost:3000/api/health > /dev/null; do sleep 1; done
 	go run ./...
 
 influx-setup:
