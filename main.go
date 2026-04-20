@@ -86,6 +86,10 @@ func main() {
 		r.Use(platform.DeviceAuthenticator(sensors.NewDeviceStore(db)))
 		r.Post("/readings", readings.Create)
 	})
+	r.Group(func(r chi.Router) {
+		r.Use(platform.SessionAuthenticator(authSvc))
+		// user-facing API routes (web #3, web #4) go here
+	})
 
 	port := os.Getenv("PORT")
 	if port == "" {
