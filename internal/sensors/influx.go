@@ -1,4 +1,4 @@
-package influx
+package sensors
 
 import (
 	"context"
@@ -8,15 +8,13 @@ import (
 	influxdb3 "github.com/InfluxCommunity/influxdb3-go/v2/influxdb3"
 )
 
-// Reading represents a set of sensor measurements from a single device at a single point in time.
 type Reading struct {
 	DeviceID     string
 	UserID       string
 	Timestamp    time.Time
-	Measurements map[string]any // field name → typed value (float64, bool)
+	Measurements map[string]any
 }
 
-// ReadingWriter persists sensor readings to a time-series store.
 type ReadingWriter interface {
 	WriteReading(ctx context.Context, r Reading) error
 }
@@ -26,7 +24,6 @@ type influxDBWriter struct {
 	database string
 }
 
-// NewReadingWriter creates a ReadingWriter backed by InfluxDB 3 Core.
 func NewReadingWriter(host, token, database string) (ReadingWriter, error) {
 	client, err := influxdb3.New(influxdb3.ClientConfig{
 		Host:     host,

@@ -1,19 +1,15 @@
-package auth
+package platform
 
 import (
 	"context"
-	"errors"
 	"net/http"
 	"strings"
 
-	"github.com/fishhub-oss/fishhub-server/internal/store"
+	"github.com/fishhub-oss/fishhub-server/internal/sensors"
+	"github.com/go-chi/render"
 )
 
-type contextKey string
-
-const deviceContextKey contextKey = "device"
-
-func Authenticator(devices store.DeviceStore) func(http.Handler) http.Handler {
+func DeviceAuthenticator(devices sensors.DeviceStore) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			token := bearerToken(r)
@@ -23,24 +19,19 @@ func Authenticator(devices store.DeviceStore) func(http.Handler) http.Handler {
 			}
 
 			info, err := devices.LookupByToken(r.Context(), token)
-			if errors.Is(err, store.ErrTokenNotFound) {
-				http.Error(w, "invalid token", http.StatusUnauthorized)
-				return
-			}
 			if err != nil {
+				if strings.Contains(err.Error(), sensors.ErrTokenNotFound.Error()) {
+					http.Error(w, "invalid token", http.StatusUnauthorized)
+					return
+				}
 				http.Error(w, "internal server error", http.StatusInternalServerError)
 				return
 			}
 
-			ctx := context.WithValue(r.Context(), deviceContextKey, info)
+			ctx := context.WithValue(r.Context(), sensors.DeviceContextKey, info)
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}
-}
-
-func DeviceFromContext(ctx context.Context) (store.DeviceInfo, bool) {
-	info, ok := ctx.Value(deviceContextKey).(store.DeviceInfo)
-	return info, ok
 }
 
 func bearerToken(r *http.Request) string {
@@ -50,4 +41,12 @@ func bearerToken(r *http.Request) string {
 		return ""
 	}
 	return strings.TrimSpace(parts[1])
+}
+
+type HealthResponse struct {
+	Status string `json:"status"`
+}
+
+func Health(w http.ResponseWriter, r *http.Request) {
+	render.JSON(w, r, HealthResponse{Status: "ok"})
 }

@@ -6,38 +6,35 @@ import (
 	"net/http"
 	"os"
 
-	"github.com/fishhub-oss/fishhub-server/internal/auth"
-	appdb "github.com/fishhub-oss/fishhub-server/internal/db"
-	"github.com/fishhub-oss/fishhub-server/internal/handler"
-	"github.com/fishhub-oss/fishhub-server/internal/influx"
-	"github.com/fishhub-oss/fishhub-server/internal/store"
+	"github.com/fishhub-oss/fishhub-server/internal/platform"
+	"github.com/fishhub-oss/fishhub-server/internal/sensors"
 	"github.com/go-chi/chi/v5"
 )
 
 func main() {
-	db, err := appdb.Open()
+	db, err := platform.Open()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "db open: %v\n", err)
 		os.Exit(1)
 	}
 	defer db.Close()
 
-	if err := appdb.Migrate(db, "db/migrations"); err != nil {
+	if err := platform.Migrate(db, "db/migrations"); err != nil {
 		fmt.Fprintf(os.Stderr, "db migrate: %v\n", err)
 		os.Exit(1)
 	}
 
-	if err := appdb.SeedUser(db); err != nil {
+	if err := platform.SeedUser(db); err != nil {
 		fmt.Fprintf(os.Stderr, "db seed: %v\n", err)
 		os.Exit(1)
 	}
 
-	var writer influx.ReadingWriter
+	var writer sensors.ReadingWriter
 	influxHost := os.Getenv("INFLUXDB3_HOST")
 	influxToken := os.Getenv("INFLUXDB3_TOKEN")
 	influxDatabase := os.Getenv("INFLUXDB3_DATABASE")
 	if influxHost != "" && influxToken != "" && influxDatabase != "" {
-		w, err := influx.NewReadingWriter(influxHost, influxToken, influxDatabase)
+		w, err := sensors.NewReadingWriter(influxHost, influxToken, influxDatabase)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "influx init: %v\n", err)
 			os.Exit(1)
@@ -48,19 +45,19 @@ func main() {
 		log.Printf("warning: INFLUXDB3_HOST/TOKEN/DATABASE not set — readings will not be persisted to InfluxDB")
 	}
 
-	tokens := &handler.TokensHandler{
-		Store:  store.NewTokenStore(db),
-		UserID: appdb.SeedUserID(),
+	tokens := &sensors.TokensHandler{
+		Store:  sensors.NewTokenStore(db),
+		UserID: platform.SeedUserID(),
 	}
-	readings := &handler.ReadingsHandler{
+	readings := &sensors.ReadingsHandler{
 		Writer: writer,
 	}
 
 	r := chi.NewRouter()
-	r.Get("/health", handler.Health)
+	r.Get("/health", platform.Health)
 	r.Post("/tokens", tokens.Create)
 	r.Group(func(r chi.Router) {
-		r.Use(auth.Authenticator(store.NewDeviceStore(db)))
+		r.Use(platform.DeviceAuthenticator(sensors.NewDeviceStore(db)))
 		r.Post("/readings", readings.Create)
 	})
 

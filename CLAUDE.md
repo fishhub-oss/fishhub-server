@@ -48,12 +48,36 @@ Go HTTP backend for FishHub. Receives temperature readings from ESP32 devices, a
 - **Dependency injection everywhere**: every dependency (DB, external clients, etc.) must be injected, never instantiated inline.
 - **Depend on interfaces, not concrete types**: define the smallest interface the caller needs; pass it by interface at construction time. This applies to handlers, stores, and any service layer.
 
+## Package structure
+
+```
+internal/
+├── sensors/        ← domain package: handlers, stores, SenML parser, InfluxDB writer
+│   ├── handler.go          tokens + readings HTTP handlers
+│   ├── store.go            DeviceStore + TokenStore interfaces
+│   ├── store_postgres.go   Postgres implementations
+│   ├── influx.go           ReadingWriter interface + InfluxDB implementation
+│   ├── senml.go            SenML parser (RFC 8428)
+│   └── model.go            DeviceInfo, TokenResult, Reading, Measurement, context helpers
+├── platform/       ← cross-cutting: DB setup, migrations, device auth middleware, health handler
+│   ├── db.go               Open(), Migrate(), SeedUser(), SeedUserID()
+│   └── middleware.go       DeviceAuthenticator(), Health()
+└── testutil/
+    └── db.go               NewTestDB(t) — starts Postgres container, runs migrations
+```
+
+## Package rules
+
+- **Domain packages never import each other** — `sensors` and future domains are fully isolated
+- **`platform` may be imported by any domain** — it has no domain knowledge
+- **`main.go` is the only wiring point** — it imports all packages and constructs the dependency graph
+- **Cross-domain dependencies use interfaces** — define the interface in the consumer package
+
 ## Key conventions
 
 - Router: `chi` v5
 - Database: Postgres (application data) via `golang-migrate` for schema migrations
-- Metrics: InfluxDB (time-series readings)
+- Metrics: InfluxDB 3 Core (time-series readings)
 - Wire format for sensor readings: **SenML JSON (RFC 8428)**
 - Auth: **Bearer token** (random 32-byte hex), one token per device
-- New stores go in `internal/store/`, new handlers in `internal/handler/`
 - Integration tests use `testutil.NewTestDB(t)` — never mock the database

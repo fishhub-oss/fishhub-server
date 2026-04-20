@@ -1,16 +1,16 @@
-package senml_test
+package sensors_test
 
 import (
 	"errors"
 	"testing"
 
-	"github.com/fishhub-oss/fishhub-server/internal/senml"
+	"github.com/fishhub-oss/fishhub-server/internal/sensors"
 )
 
-func TestParse(t *testing.T) {
+func TestParseSenML(t *testing.T) {
 	t.Run("single float entry", func(t *testing.T) {
 		body := `[{"bn":"fishhub/device/","bt":1713000000,"e":[{"n":"temperature","u":"Cel","v":23.4}]}]`
-		r, err := senml.Parse([]byte(body))
+		r, err := sensors.ParseSenML([]byte(body))
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -31,7 +31,7 @@ func TestParse(t *testing.T) {
 
 	t.Run("multi-sensor payload", func(t *testing.T) {
 		body := `[{"bn":"fishhub/device/","bt":1713000000,"e":[{"n":"temperature","u":"Cel","v":23.4},{"n":"ph","u":"pH","v":7.2}]}]`
-		r, err := senml.Parse([]byte(body))
+		r, err := sensors.ParseSenML([]byte(body))
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -48,7 +48,7 @@ func TestParse(t *testing.T) {
 
 	t.Run("boolean entry", func(t *testing.T) {
 		body := `[{"bn":"fishhub/device/","bt":1713000000,"e":[{"n":"door_open","vb":true}]}]`
-		r, err := senml.Parse([]byte(body))
+		r, err := sensors.ParseSenML([]byte(body))
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -63,7 +63,7 @@ func TestParse(t *testing.T) {
 
 	t.Run("entries with unknown value type are skipped", func(t *testing.T) {
 		body := `[{"bn":"fishhub/device/","bt":1713000000,"e":[{"n":"label","vs":"hello"},{"n":"temperature","v":23.4}]}]`
-		r, err := senml.Parse([]byte(body))
+		r, err := sensors.ParseSenML([]byte(body))
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -73,36 +73,36 @@ func TestParse(t *testing.T) {
 	})
 
 	t.Run("malformed JSON", func(t *testing.T) {
-		_, err := senml.Parse([]byte(`not json`))
+		_, err := sensors.ParseSenML([]byte(`not json`))
 		if err == nil {
 			t.Fatal("expected error")
 		}
 	})
 
 	t.Run("empty array", func(t *testing.T) {
-		_, err := senml.Parse([]byte(`[]`))
-		if !errors.Is(err, senml.ErrEmptyPayload) {
+		_, err := sensors.ParseSenML([]byte(`[]`))
+		if !errors.Is(err, sensors.ErrEmptyPayload) {
 			t.Errorf("expected ErrEmptyPayload, got %v", err)
 		}
 	})
 
 	t.Run("missing base time", func(t *testing.T) {
-		_, err := senml.Parse([]byte(`[{"bn":"fishhub/device/","e":[{"n":"temperature","v":23.4}]}]`))
-		if !errors.Is(err, senml.ErrMissingBaseTime) {
+		_, err := sensors.ParseSenML([]byte(`[{"bn":"fishhub/device/","e":[{"n":"temperature","v":23.4}]}]`))
+		if !errors.Is(err, sensors.ErrMissingBaseTime) {
 			t.Errorf("expected ErrMissingBaseTime, got %v", err)
 		}
 	})
 
 	t.Run("empty entries", func(t *testing.T) {
-		_, err := senml.Parse([]byte(`[{"bn":"fishhub/device/","bt":1713000000,"e":[]}]`))
-		if !errors.Is(err, senml.ErrEmptyEntries) {
+		_, err := sensors.ParseSenML([]byte(`[{"bn":"fishhub/device/","bt":1713000000,"e":[]}]`))
+		if !errors.Is(err, sensors.ErrEmptyEntries) {
 			t.Errorf("expected ErrEmptyEntries, got %v", err)
 		}
 	})
 
 	t.Run("all entries have no supported value type", func(t *testing.T) {
-		_, err := senml.Parse([]byte(`[{"bn":"fishhub/device/","bt":1713000000,"e":[{"n":"label","vs":"hello"}]}]`))
-		if !errors.Is(err, senml.ErrEmptyEntries) {
+		_, err := sensors.ParseSenML([]byte(`[{"bn":"fishhub/device/","bt":1713000000,"e":[{"n":"label","vs":"hello"}]}]`))
+		if !errors.Is(err, sensors.ErrEmptyEntries) {
 			t.Errorf("expected ErrEmptyEntries, got %v", err)
 		}
 	})

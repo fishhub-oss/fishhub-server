@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/fishhub-oss/fishhub-server/internal/db"
+	"github.com/fishhub-oss/fishhub-server/internal/platform"
 	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
 )
 
@@ -60,10 +60,10 @@ func NewTestDB(t *testing.T) *sql.DB {
 	}
 
 	migrationsPath := filepath.Join(moduleRoot(t), "db", "migrations")
-	if err := db.Migrate(sqlDB, migrationsPath); err != nil {
+	if err := platform.Migrate(sqlDB, migrationsPath); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
-	if err := db.SeedUser(sqlDB); err != nil {
+	if err := platform.SeedUser(sqlDB); err != nil {
 		t.Fatalf("seed user: %v", err)
 	}
 
