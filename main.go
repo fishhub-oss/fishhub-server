@@ -1,11 +1,15 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"net/http"
 	"os"
+	"strconv"
+	"time"
 
+	"github.com/fishhub-oss/fishhub-server/internal/auth"
 	"github.com/fishhub-oss/fishhub-server/internal/platform"
 	"github.com/fishhub-oss/fishhub-server/internal/sensors"
 	"github.com/go-chi/chi/v5"
@@ -45,6 +49,26 @@ func main() {
 		log.Printf("warning: INFLUXDB3_HOST/TOKEN/DATABASE not set — readings will not be persisted to InfluxDB")
 	}
 
+	ctx := context.Background()
+
+	jwtTTL := 24 * time.Hour
+	if h, err := strconv.Atoi(os.Getenv("JWT_TTL_HOURS")); err == nil && h > 0 {
+		jwtTTL = time.Duration(h) * time.Hour
+	}
+
+	authSvc, err := auth.NewOIDCService(ctx, auth.OIDCConfig{
+		Providers: map[string]string{
+			"google": os.Getenv("GOOGLE_CLIENT_ID"),
+		},
+		Store:     auth.NewPostgresStore(db),
+		JWTSecret: os.Getenv("JWT_SECRET"),
+		JWTTTL:    jwtTTL,
+	})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "auth init: %v\n", err)
+		os.Exit(1)
+	}
+
 	tokens := &sensors.TokensHandler{
 		Store:  sensors.NewTokenStore(db),
 		UserID: platform.SeedUserID(),
@@ -55,6 +79,8 @@ func main() {
 
 	r := chi.NewRouter()
 	r.Get("/health", platform.Health)
+	r.Post("/auth/verify", (&auth.VerifyHandler{Service: authSvc}).ServeHTTP)
+	r.Post("/auth/logout", auth.Logout)
 	r.Post("/tokens", tokens.Create)
 	r.Group(func(r chi.Router) {
 		r.Use(platform.DeviceAuthenticator(sensors.NewDeviceStore(db)))
