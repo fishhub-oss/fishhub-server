@@ -19,7 +19,7 @@ jobs:
         run: go build ./...
 
       - name: Unit tests
-        run: go test ./internal/senml/... ./internal/handler/... ./internal/auth/...
+        run: go test ./internal/sensors/... ./internal/platform/... -short
 
       - name: Integration tests
-        run: go test ./internal/store/... ./internal/influx/... -timeout 120s
+        run: go test ./internal/sensors/... -timeout 120s -run Integration
