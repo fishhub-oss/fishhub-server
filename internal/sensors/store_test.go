@@ -1,21 +1,55 @@
-package store_test
+package sensors_test
 
 import (
 	"context"
 	"database/sql"
 	"encoding/hex"
+	"errors"
 	"testing"
 
-	appdb "github.com/fishhub-oss/fishhub-server/internal/db"
-	"github.com/fishhub-oss/fishhub-server/internal/store"
+	"github.com/fishhub-oss/fishhub-server/internal/platform"
+	"github.com/fishhub-oss/fishhub-server/internal/sensors"
 	"github.com/fishhub-oss/fishhub-server/internal/testutil"
 	_ "github.com/lib/pq"
 )
 
+func TestLookupByToken_integration(t *testing.T) {
+	db := testutil.NewTestDB(t)
+	devices := sensors.NewDeviceStore(db)
+	tokens := sensors.NewTokenStore(db)
+	ctx := context.Background()
+	userID := platform.SeedUserID()
+
+	t.Run("returns device info for valid token", func(t *testing.T) {
+		result, err := tokens.CreateToken(ctx, userID)
+		if err != nil {
+			t.Fatalf("setup: create token: %v", err)
+		}
+
+		info, err := devices.LookupByToken(ctx, result.Token)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if info.DeviceID != result.DeviceID {
+			t.Errorf("expected device_id %s, got %s", result.DeviceID, info.DeviceID)
+		}
+		if info.UserID != userID {
+			t.Errorf("expected user_id %s, got %s", userID, info.UserID)
+		}
+	})
+
+	t.Run("returns ErrTokenNotFound for unknown token", func(t *testing.T) {
+		_, err := devices.LookupByToken(ctx, "0000000000000000000000000000000000000000000000000000000000000000")
+		if !errors.Is(err, sensors.ErrTokenNotFound) {
+			t.Errorf("expected ErrTokenNotFound, got %v", err)
+		}
+	})
+}
+
 func TestCreateToken_integration(t *testing.T) {
 	db := testutil.NewTestDB(t)
-	s := store.NewTokenStore(db)
-	userID := appdb.SeedUserID()
+	s := sensors.NewTokenStore(db)
+	userID := platform.SeedUserID()
 	ctx := context.Background()
 
 	t.Run("returns valid token and IDs", func(t *testing.T) {
@@ -103,5 +137,4 @@ func TestCreateToken_integration(t *testing.T) {
 	})
 }
 
-// compile-time check: postgresTokenStore satisfies TokenStore
-var _ store.TokenStore = store.NewTokenStore((*sql.DB)(nil))
+var _ sensors.TokenStore = sensors.NewTokenStore((*sql.DB)(nil))

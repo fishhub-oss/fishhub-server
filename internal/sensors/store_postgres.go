@@ -1,21 +1,37 @@
-package store
+package sensors
 
 import (
 	"context"
 	"crypto/rand"
 	"database/sql"
 	"encoding/hex"
+	"errors"
 	"fmt"
 )
 
-type TokenResult struct {
-	Token    string
-	DeviceID string
-	UserID   string
+type postgresDeviceStore struct {
+	db *sql.DB
 }
 
-type TokenStore interface {
-	CreateToken(ctx context.Context, userID string) (TokenResult, error)
+func NewDeviceStore(db *sql.DB) DeviceStore {
+	return &postgresDeviceStore{db: db}
+}
+
+func (s *postgresDeviceStore) LookupByToken(ctx context.Context, token string) (DeviceInfo, error) {
+	var info DeviceInfo
+	err := s.db.QueryRowContext(ctx, `
+		SELECT d.id, d.user_id
+		FROM device_tokens dt
+		JOIN devices d ON d.id = dt.device_id
+		WHERE dt.token = $1
+	`, token).Scan(&info.DeviceID, &info.UserID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return DeviceInfo{}, ErrTokenNotFound
+	}
+	if err != nil {
+		return DeviceInfo{}, fmt.Errorf("lookup token: %w", err)
+	}
+	return info, nil
 }
 
 type postgresTokenStore struct {

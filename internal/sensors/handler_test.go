@@ -1,44 +1,98 @@
-package handler_test
+package sensors_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
-	"github.com/fishhub-oss/fishhub-server/internal/auth"
-	"github.com/fishhub-oss/fishhub-server/internal/handler"
-	"github.com/fishhub-oss/fishhub-server/internal/influx"
-	"github.com/fishhub-oss/fishhub-server/internal/store"
+	"github.com/fishhub-oss/fishhub-server/internal/platform"
+	"github.com/fishhub-oss/fishhub-server/internal/sensors"
 )
 
-// stubWriter captures the last WriteReading call.
-type stubWriter struct {
+type stubTokenStore struct {
+	result sensors.TokenResult
+	err    error
+}
+
+func (s *stubTokenStore) CreateToken(_ context.Context, userID string) (sensors.TokenResult, error) {
+	return s.result, s.err
+}
+
+func TestTokensHandler_Create_success(t *testing.T) {
+	h := &sensors.TokensHandler{
+		Store: &stubTokenStore{result: sensors.TokenResult{
+			Token:    "abc123",
+			DeviceID: "device-uuid",
+			UserID:   "user-uuid",
+		}},
+		UserID: "user-uuid",
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/tokens", nil)
+	w := httptest.NewRecorder()
+	h.Create(w, req)
+
+	res := w.Result()
+	if res.StatusCode != http.StatusCreated {
+		t.Fatalf("expected 201, got %d", res.StatusCode)
+	}
+
+	var body sensors.TokenResponse
+	if err := json.NewDecoder(res.Body).Decode(&body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if body.Token != "abc123" {
+		t.Errorf("unexpected token: %s", body.Token)
+	}
+	if body.DeviceID != "device-uuid" {
+		t.Errorf("unexpected device_id: %s", body.DeviceID)
+	}
+	if body.UserID != "user-uuid" {
+		t.Errorf("unexpected user_id: %s", body.UserID)
+	}
+}
+
+func TestTokensHandler_Create_storeError(t *testing.T) {
+	h := &sensors.TokensHandler{
+		Store:  &stubTokenStore{err: errors.New("db down")},
+		UserID: "user-uuid",
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/tokens", nil)
+	w := httptest.NewRecorder()
+	h.Create(w, req)
+
+	if w.Result().StatusCode != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d", w.Result().StatusCode)
+	}
+}
+
+type stubReadingWriter struct {
 	called  bool
-	reading influx.Reading
+	reading sensors.Reading
 	err     error
 }
 
-func (s *stubWriter) WriteReading(_ context.Context, r influx.Reading) error {
+func (s *stubReadingWriter) WriteReading(_ context.Context, r sensors.Reading) error {
 	s.called = true
 	s.reading = r
 	return s.err
 }
 
-type deviceStoreStub struct{ info store.DeviceInfo }
+type stubDeviceStore struct{ info sensors.DeviceInfo }
 
-func (s *deviceStoreStub) LookupByToken(_ context.Context, _ string) (store.DeviceInfo, error) {
+func (s *stubDeviceStore) LookupByToken(_ context.Context, _ string) (sensors.DeviceInfo, error) {
 	return s.info, nil
 }
 
-type contextKey string
-
-func withDevice(r *http.Request, info store.DeviceInfo) *http.Request {
+func withDevice(r *http.Request, info sensors.DeviceInfo) *http.Request {
 	var enriched *http.Request
 	called := false
-	mw := auth.Authenticator(&deviceStoreStub{info: info})
+	mw := platform.DeviceAuthenticator(&stubDeviceStore{info: info})
 	inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		enriched = r
 		called = true
@@ -56,11 +110,11 @@ const validSenML = `[{"bn":"fishhub/device/","bt":1713000000,"e":[{"n":"temperat
 const multiSenML = `[{"bn":"fishhub/device/","bt":1713000000,"e":[{"n":"temperature","u":"Cel","v":23.4},{"n":"ph","u":"pH","v":7.2}]}]`
 
 func TestReadingsHandler_Create(t *testing.T) {
-	device := store.DeviceInfo{DeviceID: "device-uuid", UserID: "user-uuid"}
+	device := sensors.DeviceInfo{DeviceID: "device-uuid", UserID: "user-uuid"}
 
 	t.Run("valid payload with writer returns 201 and calls writer", func(t *testing.T) {
-		w := &stubWriter{}
-		h := &handler.ReadingsHandler{Writer: w}
+		w := &stubReadingWriter{}
+		h := &sensors.ReadingsHandler{Writer: w}
 		req := withDevice(httptest.NewRequest(http.MethodPost, "/readings", strings.NewReader(validSenML)), device)
 		rec := httptest.NewRecorder()
 		h.Create(rec, req)
@@ -82,8 +136,8 @@ func TestReadingsHandler_Create(t *testing.T) {
 	})
 
 	t.Run("multi-sensor payload writes all fields", func(t *testing.T) {
-		w := &stubWriter{}
-		h := &handler.ReadingsHandler{Writer: w}
+		w := &stubReadingWriter{}
+		h := &sensors.ReadingsHandler{Writer: w}
 		req := withDevice(httptest.NewRequest(http.MethodPost, "/readings", strings.NewReader(multiSenML)), device)
 		rec := httptest.NewRecorder()
 		h.Create(rec, req)
@@ -96,8 +150,8 @@ func TestReadingsHandler_Create(t *testing.T) {
 	})
 
 	t.Run("writer error returns 500", func(t *testing.T) {
-		w := &stubWriter{err: errors.New("influx down")}
-		h := &handler.ReadingsHandler{Writer: w}
+		w := &stubReadingWriter{err: errors.New("influx down")}
+		h := &sensors.ReadingsHandler{Writer: w}
 		req := withDevice(httptest.NewRequest(http.MethodPost, "/readings", strings.NewReader(validSenML)), device)
 		rec := httptest.NewRecorder()
 		h.Create(rec, req)
@@ -107,7 +161,7 @@ func TestReadingsHandler_Create(t *testing.T) {
 	})
 
 	t.Run("nil writer returns 201 (degraded mode)", func(t *testing.T) {
-		h := &handler.ReadingsHandler{Writer: nil}
+		h := &sensors.ReadingsHandler{Writer: nil}
 		req := withDevice(httptest.NewRequest(http.MethodPost, "/readings", strings.NewReader(validSenML)), device)
 		rec := httptest.NewRecorder()
 		h.Create(rec, req)
@@ -117,7 +171,7 @@ func TestReadingsHandler_Create(t *testing.T) {
 	})
 
 	t.Run("malformed JSON returns 400", func(t *testing.T) {
-		h := &handler.ReadingsHandler{}
+		h := &sensors.ReadingsHandler{}
 		req := withDevice(httptest.NewRequest(http.MethodPost, "/readings", strings.NewReader(`not json`)), device)
 		rec := httptest.NewRecorder()
 		h.Create(rec, req)
@@ -127,7 +181,7 @@ func TestReadingsHandler_Create(t *testing.T) {
 	})
 
 	t.Run("missing base time returns 400", func(t *testing.T) {
-		h := &handler.ReadingsHandler{}
+		h := &sensors.ReadingsHandler{}
 		body := `[{"bn":"fishhub/device/","e":[{"n":"temperature","v":23.4}]}]`
 		req := withDevice(httptest.NewRequest(http.MethodPost, "/readings", strings.NewReader(body)), device)
 		rec := httptest.NewRecorder()
@@ -138,7 +192,7 @@ func TestReadingsHandler_Create(t *testing.T) {
 	})
 
 	t.Run("no device in context returns 401", func(t *testing.T) {
-		h := &handler.ReadingsHandler{}
+		h := &sensors.ReadingsHandler{}
 		req := httptest.NewRequest(http.MethodPost, "/readings", strings.NewReader(validSenML))
 		rec := httptest.NewRecorder()
 		h.Create(rec, req)

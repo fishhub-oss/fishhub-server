@@ -1,4 +1,4 @@
-package influx_test
+package sensors_test
 
 import (
 	"context"
@@ -11,7 +11,7 @@ import (
 	"time"
 
 	influxdb3 "github.com/InfluxCommunity/influxdb3-go/v2/influxdb3"
-	"github.com/fishhub-oss/fishhub-server/internal/influx"
+	"github.com/fishhub-oss/fishhub-server/internal/sensors"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"
 )
@@ -21,7 +21,6 @@ const (
 	testDatabase = "test_readings"
 )
 
-// writeTokenFile writes a token JSON file to a temp dir and returns its path.
 func writeTokenFile(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -105,13 +104,13 @@ func TestWriteReading_Integration(t *testing.T) {
 	host := startInfluxDB(t)
 	createDatabase(t, host)
 
-	writer, err := influx.NewReadingWriter(host, testToken, testDatabase)
+	writer, err := sensors.NewReadingWriter(host, testToken, testDatabase)
 	if err != nil {
 		t.Fatalf("new writer: %v", err)
 	}
 
 	ts := time.Unix(1713000000, 0).UTC()
-	err = writer.WriteReading(context.Background(), influx.Reading{
+	err = writer.WriteReading(context.Background(), sensors.Reading{
 		DeviceID:  "test-device",
 		UserID:    "test-user",
 		Timestamp: ts,

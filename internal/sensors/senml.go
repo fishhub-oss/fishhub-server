@@ -1,4 +1,4 @@
-package senml
+package sensors
 
 import (
 	"encoding/json"
@@ -12,17 +12,17 @@ var (
 	ErrEmptyEntries    = errors.New("payload must contain at least one entry")
 )
 
-type entry struct {
+type senmlEntry struct {
 	Name      string   `json:"n"`
 	Unit      string   `json:"u"`
 	Value     *float64 `json:"v"`
 	BoolValue *bool    `json:"vb"`
 }
 
-type record struct {
-	BaseName string  `json:"bn"`
-	BaseTime int64   `json:"bt"`
-	Entries  []entry `json:"e"`
+type senmlRecord struct {
+	BaseName string       `json:"bn"`
+	BaseTime int64        `json:"bt"`
+	Entries  []senmlEntry `json:"e"`
 }
 
 type Measurement struct {
@@ -31,23 +31,23 @@ type Measurement struct {
 	Value any // float64 or bool
 }
 
-type Reading struct {
+type SenMLReading struct {
 	BaseTime     int64
 	Measurements []Measurement
 }
 
-func Parse(body []byte) (Reading, error) {
-	var records []record
+func ParseSenML(body []byte) (SenMLReading, error) {
+	var records []senmlRecord
 	if err := json.Unmarshal(body, &records); err != nil {
-		return Reading{}, fmt.Errorf("invalid JSON: %w", err)
+		return SenMLReading{}, fmt.Errorf("invalid JSON: %w", err)
 	}
 	if len(records) == 0 {
-		return Reading{}, ErrEmptyPayload
+		return SenMLReading{}, ErrEmptyPayload
 	}
 
 	rec := records[0]
 	if rec.BaseTime == 0 {
-		return Reading{}, ErrMissingBaseTime
+		return SenMLReading{}, ErrMissingBaseTime
 	}
 
 	var measurements []Measurement
@@ -64,8 +64,8 @@ func Parse(body []byte) (Reading, error) {
 	}
 
 	if len(measurements) == 0 {
-		return Reading{}, ErrEmptyEntries
+		return SenMLReading{}, ErrEmptyEntries
 	}
 
-	return Reading{BaseTime: rec.BaseTime, Measurements: measurements}, nil
+	return SenMLReading{BaseTime: rec.BaseTime, Measurements: measurements}, nil
 }
