@@ -47,8 +47,8 @@ func Migrate(db *sql.DB, migrationsPath string) error {
 
 func SeedUser(db *sql.DB) error {
 	_, err := db.Exec(`
-		INSERT INTO users (id, email)
-		VALUES ($1, $2)
+		INSERT INTO users (id, email, provider, provider_sub)
+		VALUES ($1, $2, 'local', 'seed')
 		ON CONFLICT (id) DO NOTHING
 	`, seedUserID, seedUserEmail)
 	return err
