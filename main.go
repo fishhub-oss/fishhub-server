@@ -7,12 +7,14 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/fishhub-oss/fishhub-server/internal/auth"
 	"github.com/fishhub-oss/fishhub-server/internal/platform"
 	"github.com/fishhub-oss/fishhub-server/internal/sensors"
 	"github.com/go-chi/chi/v5"
+	"github.com/go-chi/cors"
 )
 
 func main() {
@@ -77,7 +79,18 @@ func main() {
 		Writer: writer,
 	}
 
+	allowedOrigins := []string{"http://localhost:3001"}
+	if v := os.Getenv("CORS_ALLOWED_ORIGINS"); v != "" {
+		allowedOrigins = strings.Split(v, ",")
+	}
+
 	r := chi.NewRouter()
+	r.Use(cors.Handler(cors.Options{
+		AllowedOrigins:   allowedOrigins,
+		AllowedMethods:   []string{"GET", "POST", "OPTIONS"},
+		AllowedHeaders:   []string{"Content-Type", "Authorization"},
+		AllowCredentials: true,
+	}))
 	r.Get("/health", platform.Health)
 	r.Post("/auth/verify", (&auth.VerifyHandler{Service: authSvc}).ServeHTTP)
 	r.Post("/auth/logout", auth.Logout)
@@ -88,7 +101,7 @@ func main() {
 	})
 	r.Group(func(r chi.Router) {
 		r.Use(platform.SessionAuthenticator(authSvc))
-		// user-facing API routes (web #3, web #4) go here
+		r.Get("/api/devices", (&sensors.DevicesHandler{Store: sensors.NewDeviceStore(db)}).List)
 	})
 
 	port := os.Getenv("PORT")

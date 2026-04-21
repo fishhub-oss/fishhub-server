@@ -7,8 +7,43 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/fishhub-oss/fishhub-server/internal/auth"
 	"github.com/go-chi/render"
 )
+
+type DeviceResponse struct {
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	CreatedAt string `json:"created_at"`
+}
+
+type DevicesHandler struct {
+	Store DeviceStore
+}
+
+func (h *DevicesHandler) List(w http.ResponseWriter, r *http.Request) {
+	claims, ok := auth.ClaimsFromContext(r.Context())
+	if !ok {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	devices, err := h.Store.ListByUserID(r.Context(), claims.UserID)
+	if err != nil {
+		http.Error(w, "internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	resp := make([]DeviceResponse, len(devices))
+	for i, d := range devices {
+		resp[i] = DeviceResponse{
+			ID:        d.ID,
+			Name:      d.Name,
+			CreatedAt: d.CreatedAt.UTC().Format(time.RFC3339),
+		}
+	}
+	render.JSON(w, r, resp)
+}
 
 type TokenResponse struct {
 	Token    string `json:"token"`
