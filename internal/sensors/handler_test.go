@@ -85,6 +85,10 @@ func (s *stubReadingWriter) WriteReading(_ context.Context, r sensors.Reading) e
 
 type stubDeviceStore struct{ info sensors.DeviceInfo }
 
+func (s *stubDeviceStore) ListByUserID(_ context.Context, _ string) ([]sensors.Device, error) {
+	return nil, nil
+}
+
 func (s *stubDeviceStore) LookupByToken(_ context.Context, _ string) (sensors.DeviceInfo, error) {
 	return s.info, nil
 }

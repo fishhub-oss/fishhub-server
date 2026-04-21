@@ -17,6 +17,29 @@ func NewDeviceStore(db *sql.DB) DeviceStore {
 	return &postgresDeviceStore{db: db}
 }
 
+func (s *postgresDeviceStore) ListByUserID(ctx context.Context, userID string) ([]Device, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, COALESCE(name, ''), created_at
+		FROM devices
+		WHERE user_id = $1
+		ORDER BY created_at DESC
+	`, userID)
+	if err != nil {
+		return nil, fmt.Errorf("list devices: %w", err)
+	}
+	defer rows.Close()
+
+	devices := []Device{}
+	for rows.Next() {
+		var d Device
+		if err := rows.Scan(&d.ID, &d.Name, &d.CreatedAt); err != nil {
+			return nil, fmt.Errorf("scan device: %w", err)
+		}
+		devices = append(devices, d)
+	}
+	return devices, rows.Err()
+}
+
 func (s *postgresDeviceStore) LookupByToken(ctx context.Context, token string) (DeviceInfo, error) {
 	var info DeviceInfo
 	err := s.db.QueryRowContext(ctx, `

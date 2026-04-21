@@ -34,6 +34,10 @@ func (s *stubDeviceStore) LookupByToken(_ context.Context, _ string) (sensors.De
 	return s.info, s.err
 }
 
+func (s *stubDeviceStore) ListByUserID(_ context.Context, _ string) ([]sensors.Device, error) {
+	return nil, nil
+}
+
 func TestSessionAuthenticator(t *testing.T) {
 	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		claims, ok := auth.ClaimsFromContext(r.Context())
