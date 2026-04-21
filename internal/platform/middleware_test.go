@@ -38,6 +38,10 @@ func (s *stubDeviceStore) ListByUserID(_ context.Context, _ string) ([]sensors.D
 	return nil, nil
 }
 
+func (s *stubDeviceStore) FindByIDAndUserID(_ context.Context, _, _ string) (sensors.Device, error) {
+	return sensors.Device{}, nil
+}
+
 func TestSessionAuthenticator(t *testing.T) {
 	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		claims, ok := auth.ClaimsFromContext(r.Context())
