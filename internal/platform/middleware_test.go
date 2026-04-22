@@ -43,6 +43,10 @@ func (s *stubDeviceStore) ListByUserID(_ context.Context, _, _ string) ([]sensor
 	return nil, nil
 }
 
+func (s *stubDeviceStore) PatchDevice(_ context.Context, _, _, _ string) (sensors.Device, error) {
+	return sensors.Device{}, nil
+}
+
 func (s *stubDeviceStore) FindByIDAndUserID(_ context.Context, _, _ string) (sensors.Device, error) {
 	return sensors.Device{}, nil
 }
