@@ -2,6 +2,9 @@ package auth
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"time"
@@ -11,31 +14,35 @@ import (
 )
 
 var ErrUnsupportedProvider = errors.New("unsupported provider")
-var ErrInvalidIDToken = errors.New("invalid id token")
+var ErrInvalidIDToken      = errors.New("invalid id token")
+
+const refreshTokenTTL = 30 * 24 * time.Hour
 
 type OIDCConfig struct {
-	// Providers maps provider name (e.g. "google") to its client ID.
-	Providers map[string]string
-	Store     UserStore
-	JWTSecret string
-	JWTTTL    time.Duration
+	Providers    map[string]string
+	Store        UserStore
+	RefreshStore RefreshTokenStore
+	JWTSecret    string
+	JWTTTL       time.Duration
 }
 
 type AuthService interface {
 	VerifyAndUpsert(ctx context.Context, provider, idToken string) (User, error)
 	IssueSessionJWT(userID string) (string, error)
 	ValidateSessionJWT(token string) (string, error)
+	IssueRefreshToken(ctx context.Context, userID string) (string, error)
+	RotateRefreshToken(ctx context.Context, rawToken string) (newRawToken, sessionJWT string, err error)
+	RevokeRefreshToken(ctx context.Context, rawToken string) error
 }
 
 type oidcService struct {
-	verifiers map[string]*gooidc.IDTokenVerifier
-	store     UserStore
-	jwtSecret []byte
-	jwtTTL    time.Duration
+	verifiers    map[string]*gooidc.IDTokenVerifier
+	store        UserStore
+	refreshStore RefreshTokenStore
+	jwtSecret    []byte
+	jwtTTL       time.Duration
 }
 
-// NewOIDCService builds verifiers for each configured provider eagerly.
-// Providers whose client ID is empty are silently skipped.
 func NewOIDCService(ctx context.Context, cfg OIDCConfig) (AuthService, error) {
 	verifiers := make(map[string]*gooidc.IDTokenVerifier, len(cfg.Providers))
 	for name, clientID := range cfg.Providers {
@@ -53,10 +60,11 @@ func NewOIDCService(ctx context.Context, cfg OIDCConfig) (AuthService, error) {
 		verifiers[name] = provider.Verifier(&gooidc.Config{ClientID: clientID})
 	}
 	return &oidcService{
-		verifiers: verifiers,
-		store:     cfg.Store,
-		jwtSecret: []byte(cfg.JWTSecret),
-		jwtTTL:    cfg.JWTTTL,
+		verifiers:    verifiers,
+		store:        cfg.Store,
+		refreshStore: cfg.RefreshStore,
+		jwtSecret:    []byte(cfg.JWTSecret),
+		jwtTTL:       cfg.JWTTTL,
 	}, nil
 }
 
@@ -125,4 +133,74 @@ func (s *oidcService) ValidateSessionJWT(raw string) (string, error) {
 		return "", errors.New("missing sub claim")
 	}
 	return sub, nil
+}
+
+func (s *oidcService) IssueRefreshToken(ctx context.Context, userID string) (string, error) {
+	raw, hash, err := generateRefreshToken()
+	if err != nil {
+		return "", err
+	}
+	_, err = s.refreshStore.Create(ctx, userID, hash, time.Now().Add(refreshTokenTTL))
+	if err != nil {
+		return "", fmt.Errorf("store refresh token: %w", err)
+	}
+	return raw, nil
+}
+
+func (s *oidcService) RotateRefreshToken(ctx context.Context, rawToken string) (string, string, error) {
+	hash := hashToken(rawToken)
+	rt, err := s.refreshStore.FindByHash(ctx, hash)
+	if err != nil {
+		return "", "", err
+	}
+	if rt.RevokedAt != nil {
+		return "", "", ErrTokenRevoked
+	}
+	if time.Now().After(rt.ExpiresAt) {
+		return "", "", ErrTokenExpired
+	}
+
+	if err := s.refreshStore.Revoke(ctx, rt.ID); err != nil {
+		return "", "", fmt.Errorf("revoke old refresh token: %w", err)
+	}
+
+	newRaw, newHash, err := generateRefreshToken()
+	if err != nil {
+		return "", "", err
+	}
+	_, err = s.refreshStore.Create(ctx, rt.UserID, newHash, time.Now().Add(refreshTokenTTL))
+	if err != nil {
+		return "", "", fmt.Errorf("store new refresh token: %w", err)
+	}
+
+	sessionJWT, err := s.IssueSessionJWT(rt.UserID)
+	if err != nil {
+		return "", "", err
+	}
+
+	return newRaw, sessionJWT, nil
+}
+
+func (s *oidcService) RevokeRefreshToken(ctx context.Context, rawToken string) error {
+	hash := hashToken(rawToken)
+	rt, err := s.refreshStore.FindByHash(ctx, hash)
+	if err != nil {
+		return err
+	}
+	return s.refreshStore.Revoke(ctx, rt.ID)
+}
+
+func generateRefreshToken() (raw, hash string, err error) {
+	b := make([]byte, 32)
+	if _, err = rand.Read(b); err != nil {
+		return "", "", fmt.Errorf("generate refresh token: %w", err)
+	}
+	raw = hex.EncodeToString(b)
+	hash = hashToken(raw)
+	return raw, hash, nil
+}
+
+func hashToken(raw string) string {
+	sum := sha256.Sum256([]byte(raw))
+	return hex.EncodeToString(sum[:])
 }

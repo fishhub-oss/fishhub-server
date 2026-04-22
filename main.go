@@ -62,9 +62,10 @@ func main() {
 		Providers: map[string]string{
 			"google": os.Getenv("GOOGLE_CLIENT_ID"),
 		},
-		Store:     auth.NewPostgresStore(db),
-		JWTSecret: os.Getenv("JWT_SECRET"),
-		JWTTTL:    jwtTTL,
+		Store:        auth.NewPostgresStore(db),
+		RefreshStore: auth.NewPostgresRefreshTokenStore(db),
+		JWTSecret:    os.Getenv("JWT_SECRET"),
+		JWTTTL:       jwtTTL,
 	})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "auth init: %v\n", err)
@@ -93,7 +94,8 @@ func main() {
 	}))
 	r.Get("/health", platform.Health)
 	r.Post("/auth/verify", (&auth.VerifyHandler{Service: authSvc}).ServeHTTP)
-	r.Post("/auth/logout", auth.Logout)
+	r.Post("/auth/refresh", (&auth.RefreshHandler{Service: authSvc}).ServeHTTP)
+	r.Post("/auth/logout", (&auth.LogoutHandler{Service: authSvc}).ServeHTTP)
 	r.Post("/tokens", tokens.Create)
 	r.Group(func(r chi.Router) {
 		r.Use(platform.DeviceAuthenticator(sensors.NewDeviceStore(db)))
