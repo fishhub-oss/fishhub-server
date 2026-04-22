@@ -69,6 +69,23 @@ func (s *postgresDeviceStore) FindByIDAndUserID(ctx context.Context, deviceID, u
 	return d, nil
 }
 
+func (s *postgresDeviceStore) PatchDevice(ctx context.Context, deviceID, userID, name string) (Device, error) {
+	var d Device
+	err := s.db.QueryRowContext(ctx, `
+		UPDATE devices
+		SET name = $1
+		WHERE id = $2 AND user_id = $3
+		RETURNING id, COALESCE(name, ''), created_at
+	`, name, deviceID, userID).Scan(&d.ID, &d.Name, &d.CreatedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Device{}, ErrDeviceNotFound
+	}
+	if err != nil {
+		return Device{}, fmt.Errorf("patch device: %w", err)
+	}
+	return d, nil
+}
+
 func (s *postgresDeviceStore) LookupByToken(ctx context.Context, token string) (DeviceInfo, error) {
 	var info DeviceInfo
 	err := s.db.QueryRowContext(ctx, `

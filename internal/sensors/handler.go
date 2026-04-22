@@ -214,6 +214,46 @@ func (h *ReadingsHandler) Create(w http.ResponseWriter, r *http.Request) {
 	render.JSON(w, r, map[string]string{})
 }
 
+// PatchDeviceHandler handles PATCH /api/devices/{id} (session auth).
+type PatchDeviceHandler struct {
+	Store DeviceStore
+}
+
+type patchDeviceRequest struct {
+	Name string `json:"name"`
+}
+
+func (h *PatchDeviceHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	claims, ok := auth.ClaimsFromContext(r.Context())
+	if !ok {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	var req patchDeviceRequest
+	if err := render.DecodeJSON(r.Body, &req); err != nil || req.Name == "" {
+		http.Error(w, "name is required", http.StatusBadRequest)
+		return
+	}
+
+	deviceID := chi.URLParam(r, "id")
+	device, err := h.Store.PatchDevice(r.Context(), deviceID, claims.UserID, req.Name)
+	if err != nil {
+		if errors.Is(err, ErrDeviceNotFound) {
+			http.Error(w, "not found", http.StatusNotFound)
+			return
+		}
+		http.Error(w, "internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	render.JSON(w, r, DeviceResponse{
+		ID:        device.ID,
+		Name:      device.Name,
+		CreatedAt: device.CreatedAt.UTC().Format(time.RFC3339),
+	})
+}
+
 // ProvisionHandler handles POST /devices/provision (session auth).
 type ProvisionHandler struct {
 	Store ProvisioningStore

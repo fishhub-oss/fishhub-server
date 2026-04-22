@@ -91,7 +91,7 @@ func main() {
 	r := chi.NewRouter()
 	r.Use(cors.Handler(cors.Options{
 		AllowedOrigins:   allowedOrigins,
-		AllowedMethods:   []string{"GET", "POST", "OPTIONS"},
+		AllowedMethods:   []string{"GET", "POST", "PATCH", "OPTIONS"},
 		AllowedHeaders:   []string{"Content-Type", "Authorization"},
 		AllowCredentials: true,
 	}))
@@ -113,6 +113,7 @@ func main() {
 		deviceStore := sensors.NewDeviceStore(db)
 		r.Post("/api/devices/provision", (&sensors.ProvisionHandler{Store: provisioningStore}).ServeHTTP)
 		r.Get("/api/devices", (&sensors.DevicesHandler{Store: deviceStore}).List)
+		r.Patch("/api/devices/{id}", (&sensors.PatchDeviceHandler{Store: deviceStore}).ServeHTTP)
 		r.Get("/api/devices/{id}/readings", (&sensors.ReadingsQueryHandler{
 			Querier: influxClient,
 			Devices: deviceStore,
