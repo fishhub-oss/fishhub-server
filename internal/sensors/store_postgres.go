@@ -40,6 +40,22 @@ func (s *postgresDeviceStore) ListByUserID(ctx context.Context, userID string) (
 	return devices, rows.Err()
 }
 
+func (s *postgresDeviceStore) FindByIDAndUserID(ctx context.Context, deviceID, userID string) (Device, error) {
+	var d Device
+	err := s.db.QueryRowContext(ctx, `
+		SELECT id, COALESCE(name, ''), created_at
+		FROM devices
+		WHERE id = $1 AND user_id = $2
+	`, deviceID, userID).Scan(&d.ID, &d.Name, &d.CreatedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Device{}, ErrDeviceNotFound
+	}
+	if err != nil {
+		return Device{}, fmt.Errorf("find device: %w", err)
+	}
+	return d, nil
+}
+
 func (s *postgresDeviceStore) LookupByToken(ctx context.Context, token string) (DeviceInfo, error) {
 	var info DeviceInfo
 	err := s.db.QueryRowContext(ctx, `

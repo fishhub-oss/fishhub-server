@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/fishhub-oss/fishhub-server/internal/auth"
+	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/render"
 )
 
@@ -73,6 +74,92 @@ func (h *TokensHandler) Create(w http.ResponseWriter, r *http.Request) {
 
 type ReadingsHandler struct {
 	Writer ReadingWriter
+}
+
+type ReadingsQueryHandler struct {
+	Querier ReadingQuerier
+	Devices DeviceStore
+}
+
+type ReadingPointResponse struct {
+	Timestamp   string  `json:"timestamp"`
+	Temperature float64 `json:"temperature"`
+}
+
+type ReadingsQueryResponse struct {
+	DeviceID string                 `json:"device_id"`
+	From     string                 `json:"from"`
+	To       string                 `json:"to"`
+	Readings []ReadingPointResponse `json:"readings"`
+}
+
+func (h *ReadingsQueryHandler) List(w http.ResponseWriter, r *http.Request) {
+	claims, ok := auth.ClaimsFromContext(r.Context())
+	if !ok {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	deviceID := chi.URLParam(r, "id")
+
+	now := time.Now().UTC()
+	from := now.Add(-24 * time.Hour)
+	to := now
+	window := "5m"
+
+	if v := r.URL.Query().Get("from"); v != "" {
+		t, err := time.Parse(time.RFC3339, v)
+		if err != nil {
+			http.Error(w, "invalid 'from' param: must be RFC3339", http.StatusBadRequest)
+			return
+		}
+		from = t
+	}
+	if v := r.URL.Query().Get("to"); v != "" {
+		t, err := time.Parse(time.RFC3339, v)
+		if err != nil {
+			http.Error(w, "invalid 'to' param: must be RFC3339", http.StatusBadRequest)
+			return
+		}
+		to = t
+	}
+	if v := r.URL.Query().Get("window"); v != "" {
+		window = v
+	}
+
+	if _, err := h.Devices.FindByIDAndUserID(r.Context(), deviceID, claims.UserID); err != nil {
+		if errors.Is(err, ErrDeviceNotFound) {
+			http.Error(w, "not found", http.StatusNotFound)
+			return
+		}
+		http.Error(w, "internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	points, err := h.Querier.QueryReadings(r.Context(), ReadingQuery{
+		DeviceID: deviceID,
+		From:     from,
+		To:       to,
+		Window:   window,
+	})
+	if err != nil {
+		http.Error(w, "internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	resp := ReadingsQueryResponse{
+		DeviceID: deviceID,
+		From:     from.UTC().Format(time.RFC3339),
+		To:       to.UTC().Format(time.RFC3339),
+		Readings: make([]ReadingPointResponse, len(points)),
+	}
+	for i, p := range points {
+		resp.Readings[i] = ReadingPointResponse{
+			Timestamp:   p.Timestamp.UTC().Format(time.RFC3339),
+			Temperature: p.Temperature,
+		}
+	}
+	render.JSON(w, r, resp)
 }
 
 func (h *ReadingsHandler) Create(w http.ResponseWriter, r *http.Request) {

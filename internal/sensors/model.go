@@ -6,6 +6,7 @@ import (
 )
 
 var ErrTokenNotFound = errors.New("token not found")
+var ErrDeviceNotFound = errors.New("device not found")
 
 type DeviceInfo struct {
 	DeviceID string

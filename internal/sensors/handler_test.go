@@ -8,9 +8,12 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/fishhub-oss/fishhub-server/internal/auth"
 	"github.com/fishhub-oss/fishhub-server/internal/platform"
 	"github.com/fishhub-oss/fishhub-server/internal/sensors"
+	"github.com/go-chi/chi/v5"
 )
 
 type stubTokenStore struct {
@@ -83,7 +86,11 @@ func (s *stubReadingWriter) WriteReading(_ context.Context, r sensors.Reading) e
 	return s.err
 }
 
-type stubDeviceStore struct{ info sensors.DeviceInfo }
+type stubDeviceStore struct {
+	info         sensors.DeviceInfo
+	device       sensors.Device
+	findErr      error
+}
 
 func (s *stubDeviceStore) ListByUserID(_ context.Context, _ string) ([]sensors.Device, error) {
 	return nil, nil
@@ -91,6 +98,19 @@ func (s *stubDeviceStore) ListByUserID(_ context.Context, _ string) ([]sensors.D
 
 func (s *stubDeviceStore) LookupByToken(_ context.Context, _ string) (sensors.DeviceInfo, error) {
 	return s.info, nil
+}
+
+func (s *stubDeviceStore) FindByIDAndUserID(_ context.Context, _, _ string) (sensors.Device, error) {
+	return s.device, s.findErr
+}
+
+type stubReadingQuerier struct {
+	points []sensors.ReadingPoint
+	err    error
+}
+
+func (s *stubReadingQuerier) QueryReadings(_ context.Context, _ sensors.ReadingQuery) ([]sensors.ReadingPoint, error) {
+	return s.points, s.err
 }
 
 func withDevice(r *http.Request, info sensors.DeviceInfo) *http.Request {
@@ -202,6 +222,117 @@ func TestReadingsHandler_Create(t *testing.T) {
 		h.Create(rec, req)
 		if rec.Code != http.StatusUnauthorized {
 			t.Errorf("expected 401, got %d", rec.Code)
+		}
+	})
+}
+
+func withClaims(r *http.Request, userID string) *http.Request {
+	ctx := auth.ContextWithClaims(r.Context(), auth.Claims{UserID: userID})
+	return r.WithContext(ctx)
+}
+
+func withChiParam(r *http.Request, key, val string) *http.Request {
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add(key, val)
+	return r.WithContext(context.WithValue(r.Context(), chi.RouteCtxKey, rctx))
+}
+
+func TestReadingsQueryHandler_List(t *testing.T) {
+	ts := time.Date(2026, 4, 20, 12, 0, 0, 0, time.UTC)
+	points := []sensors.ReadingPoint{{Timestamp: ts, Temperature: 25.4}}
+
+	makeReq := func(deviceID, query string) *http.Request {
+		req := httptest.NewRequest(http.MethodGet, "/api/devices/"+deviceID+"/readings"+query, nil)
+		req = withClaims(req, "user-uuid")
+		req = withChiParam(req, "id", deviceID)
+		return req
+	}
+
+	t.Run("valid request returns 200 with readings", func(t *testing.T) {
+		h := &sensors.ReadingsQueryHandler{
+			Querier: &stubReadingQuerier{points: points},
+			Devices: &stubDeviceStore{device: sensors.Device{ID: "dev-1"}},
+		}
+		rec := httptest.NewRecorder()
+		h.List(rec, makeReq("dev-1", "?from=2026-04-20T00:00:00Z&to=2026-04-21T00:00:00Z"))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d", rec.Code)
+		}
+		var body sensors.ReadingsQueryResponse
+		if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		if body.DeviceID != "dev-1" {
+			t.Errorf("expected device_id dev-1, got %s", body.DeviceID)
+		}
+		if len(body.Readings) != 1 {
+			t.Fatalf("expected 1 reading, got %d", len(body.Readings))
+		}
+		if body.Readings[0].Temperature != 25.4 {
+			t.Errorf("expected temperature 25.4, got %f", body.Readings[0].Temperature)
+		}
+	})
+
+	t.Run("device not owned by user returns 404", func(t *testing.T) {
+		h := &sensors.ReadingsQueryHandler{
+			Querier: &stubReadingQuerier{},
+			Devices: &stubDeviceStore{findErr: sensors.ErrDeviceNotFound},
+		}
+		rec := httptest.NewRecorder()
+		h.List(rec, makeReq("dev-other", ""))
+		if rec.Code != http.StatusNotFound {
+			t.Errorf("expected 404, got %d", rec.Code)
+		}
+	})
+
+	t.Run("invalid from param returns 400", func(t *testing.T) {
+		h := &sensors.ReadingsQueryHandler{
+			Querier: &stubReadingQuerier{},
+			Devices: &stubDeviceStore{device: sensors.Device{ID: "dev-1"}},
+		}
+		rec := httptest.NewRecorder()
+		h.List(rec, makeReq("dev-1", "?from=not-a-date"))
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("expected 400, got %d", rec.Code)
+		}
+	})
+
+	t.Run("empty readings returns 200 with empty array", func(t *testing.T) {
+		h := &sensors.ReadingsQueryHandler{
+			Querier: &stubReadingQuerier{points: []sensors.ReadingPoint{}},
+			Devices: &stubDeviceStore{device: sensors.Device{ID: "dev-1"}},
+		}
+		rec := httptest.NewRecorder()
+		h.List(rec, makeReq("dev-1", ""))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d", rec.Code)
+		}
+		var body sensors.ReadingsQueryResponse
+		if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		if body.Readings == nil || len(body.Readings) != 0 {
+			t.Errorf("expected empty readings slice, got %v", body.Readings)
+		}
+	})
+
+	t.Run("default params applied when omitted", func(t *testing.T) {
+		q := &stubReadingQuerier{points: points}
+		h := &sensors.ReadingsQueryHandler{
+			Querier: q,
+			Devices: &stubDeviceStore{device: sensors.Device{ID: "dev-1"}},
+		}
+		rec := httptest.NewRecorder()
+		h.List(rec, makeReq("dev-1", ""))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d", rec.Code)
+		}
+		var body sensors.ReadingsQueryResponse
+		if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		if body.From == "" || body.To == "" {
+			t.Error("expected from/to to be set to defaults")
 		}
 	})
 }

@@ -35,18 +35,18 @@ func main() {
 		os.Exit(1)
 	}
 
-	var writer sensors.ReadingWriter
+	var influxClient sensors.InfluxClient
 	influxHost := os.Getenv("INFLUXDB3_HOST")
 	influxToken := os.Getenv("INFLUXDB3_TOKEN")
 	influxDatabase := os.Getenv("INFLUXDB3_DATABASE")
 	if influxHost != "" && influxToken != "" && influxDatabase != "" {
-		w, err := sensors.NewReadingWriter(influxHost, influxToken, influxDatabase)
+		c, err := sensors.NewInfluxClient(influxHost, influxToken, influxDatabase)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "influx init: %v\n", err)
 			os.Exit(1)
 		}
-		writer = w
-		log.Printf("InfluxDB writer configured: host=%s database=%s", influxHost, influxDatabase)
+		influxClient = c
+		log.Printf("InfluxDB client configured: host=%s database=%s", influxHost, influxDatabase)
 	} else {
 		log.Printf("warning: INFLUXDB3_HOST/TOKEN/DATABASE not set — readings will not be persisted to InfluxDB")
 	}
@@ -76,7 +76,7 @@ func main() {
 		UserID: platform.SeedUserID(),
 	}
 	readings := &sensors.ReadingsHandler{
-		Writer: writer,
+		Writer: influxClient,
 	}
 
 	allowedOrigins := []string{"http://localhost:3001"}
@@ -101,7 +101,12 @@ func main() {
 	})
 	r.Group(func(r chi.Router) {
 		r.Use(platform.SessionAuthenticator(authSvc))
-		r.Get("/api/devices", (&sensors.DevicesHandler{Store: sensors.NewDeviceStore(db)}).List)
+		deviceStore := sensors.NewDeviceStore(db)
+		r.Get("/api/devices", (&sensors.DevicesHandler{Store: deviceStore}).List)
+		r.Get("/api/devices/{id}/readings", (&sensors.ReadingsQueryHandler{
+			Querier: influxClient,
+			Devices: deviceStore,
+		}).List)
 	})
 
 	port := os.Getenv("PORT")
