@@ -76,14 +76,12 @@ func (c *influxDBClient) WriteReading(ctx context.Context, r Reading) error {
 
 func (c *influxDBClient) QueryReadings(ctx context.Context, q ReadingQuery) ([]ReadingPoint, error) {
 	sql := fmt.Sprintf(
-		`SELECT DATE_BIN(INTERVAL '%s', time, '1970-01-01') AS time, MEAN(temperature) AS temperature`+
+		`SELECT time, temperature`+
 			` FROM sensors`+
 			` WHERE device_id = '%s'`+
 			` AND time >= '%s'`+
 			` AND time < '%s'`+
-			` GROUP BY 1`+
-			` ORDER BY 1 ASC`,
-		q.Window,
+			` ORDER BY time ASC`,
 		q.DeviceID,
 		q.From.UTC().Format(time.RFC3339),
 		q.To.UTC().Format(time.RFC3339),
