@@ -3,6 +3,7 @@ package auth_test
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/fishhub-oss/fishhub-server/internal/auth"
 	"github.com/fishhub-oss/fishhub-server/internal/testutil"
@@ -81,6 +82,76 @@ func TestPostgresStore_Integration(t *testing.T) {
 		_, err := store.FindByID(ctx, "00000000-0000-0000-0000-000000000000")
 		if err != auth.ErrUserNotFound {
 			t.Errorf("expected ErrUserNotFound, got %v", err)
+		}
+	})
+}
+
+func TestPostgresRefreshTokenStore_Integration(t *testing.T) {
+	db := testutil.NewTestDB(t)
+	userStore := auth.NewPostgresStore(db)
+	rtStore := auth.NewPostgresRefreshTokenStore(db)
+	ctx := context.Background()
+
+	// create a user to satisfy the FK constraint
+	user, err := userStore.Upsert(ctx, "refresh@example.com", "google", "google-sub-refresh")
+	if err != nil {
+		t.Fatalf("upsert user: %v", err)
+	}
+
+	t.Run("Create and FindByHash round-trip", func(t *testing.T) {
+		rt, err := rtStore.Create(ctx, user.ID, "deadbeef01", time.Now().Add(30*24*time.Hour))
+		if err != nil {
+			t.Fatalf("create: %v", err)
+		}
+		if rt.ID == "" {
+			t.Error("expected non-empty ID")
+		}
+		if rt.RevokedAt != nil {
+			t.Error("expected RevokedAt to be nil")
+		}
+
+		found, err := rtStore.FindByHash(ctx, "deadbeef01")
+		if err != nil {
+			t.Fatalf("find: %v", err)
+		}
+		if found.ID != rt.ID {
+			t.Errorf("ID mismatch: got %q, want %q", found.ID, rt.ID)
+		}
+		if found.UserID != user.ID {
+			t.Errorf("UserID mismatch: got %q, want %q", found.UserID, user.ID)
+		}
+	})
+
+	t.Run("FindByHash returns ErrTokenNotFound for unknown hash", func(t *testing.T) {
+		_, err := rtStore.FindByHash(ctx, "nonexistent-hash")
+		if err != auth.ErrTokenNotFound {
+			t.Errorf("expected ErrTokenNotFound, got %v", err)
+		}
+	})
+
+	t.Run("Revoke sets revoked_at", func(t *testing.T) {
+		rt, err := rtStore.Create(ctx, user.ID, "deadbeef02", time.Now().Add(30*24*time.Hour))
+		if err != nil {
+			t.Fatalf("create: %v", err)
+		}
+
+		if err := rtStore.Revoke(ctx, rt.ID); err != nil {
+			t.Fatalf("revoke: %v", err)
+		}
+
+		found, err := rtStore.FindByHash(ctx, "deadbeef02")
+		if err != nil {
+			t.Fatalf("find after revoke: %v", err)
+		}
+		if found.RevokedAt == nil {
+			t.Error("expected RevokedAt to be set after revoke")
+		}
+	})
+
+	t.Run("Revoke returns ErrTokenNotFound for unknown id", func(t *testing.T) {
+		err := rtStore.Revoke(ctx, "00000000-0000-0000-0000-000000000000")
+		if err != auth.ErrTokenNotFound {
+			t.Errorf("expected ErrTokenNotFound, got %v", err)
 		}
 	})
 }
