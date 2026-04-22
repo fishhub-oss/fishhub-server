@@ -17,7 +17,12 @@ dev:
 	until docker compose exec postgres pg_isready -U fishhub; do sleep 1; done
 	until curl -sf -H "Authorization: Bearer $(INFLUXDB3_TOKEN)" $(INFLUXDB3_HOST)/health > /dev/null; do sleep 1; done
 	until curl -sf http://localhost:3000/api/health > /dev/null; do sleep 1; done
-	go run ./...
+	@echo "\n📡 Server IP addresses:"
+	@ipconfig getifaddr en0 2>/dev/null && echo "  (Wi-Fi)" || true
+	@ipconfig getifaddr en1 2>/dev/null && echo "  (Ethernet)" || true
+	@echo ""
+	go run ./... || true
+	docker compose down
 
 influx-setup:
 	docker compose exec influxdb influxdb3 create database \
