@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/fishhub-oss/fishhub-server/internal/account"
 	"github.com/fishhub-oss/fishhub-server/internal/auth"
 	"github.com/fishhub-oss/fishhub-server/internal/platform"
 	"github.com/fishhub-oss/fishhub-server/internal/sensors"
@@ -58,12 +59,14 @@ func main() {
 		jwtTTL = time.Duration(h) * time.Hour
 	}
 
+	accountStore := account.NewPostgresStore(db)
 	authSvc, err := auth.NewOIDCService(ctx, auth.OIDCConfig{
 		Providers: map[string]string{
 			"google": os.Getenv("GOOGLE_CLIENT_ID"),
 		},
 		Store:        auth.NewPostgresStore(db),
 		RefreshStore: auth.NewPostgresRefreshTokenStore(db),
+		EventHandler: &account.AccountEventHandler{Store: accountStore},
 		JWTSecret:    os.Getenv("JWT_SECRET"),
 		JWTTTL:       jwtTTL,
 	})
@@ -103,6 +106,7 @@ func main() {
 	})
 	r.Group(func(r chi.Router) {
 		r.Use(platform.SessionAuthenticator(authSvc))
+		r.Get("/api/me", (&account.MeHandler{Store: accountStore}).ServeHTTP)
 		deviceStore := sensors.NewDeviceStore(db)
 		r.Get("/api/devices", (&sensors.DevicesHandler{Store: deviceStore}).List)
 		r.Get("/api/devices/{id}/readings", (&sensors.ReadingsQueryHandler{
