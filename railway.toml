@@ -1,0 +1,9 @@
+[build]
+builder = "nixpacks"
+buildCommand = "go build -o /app/fishhub-server ."
+
+[deploy]
+startCommand = "/app/fishhub-server"
+healthcheckPath = "/health"
+healthcheckTimeout = 30
+restartPolicyType = "on_failure"
