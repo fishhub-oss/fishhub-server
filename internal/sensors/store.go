@@ -17,6 +17,9 @@ type DeviceStore interface {
 	// devices with that status are returned.
 	ListByUserID(ctx context.Context, userID, status string) ([]Device, error)
 	FindByIDAndUserID(ctx context.Context, deviceID, userID string) (Device, error)
+	// PatchDevice updates the name of the device owned by userID.
+	// Returns ErrDeviceNotFound if the device does not exist or is not owned by the user.
+	PatchDevice(ctx context.Context, deviceID, userID, name string) (Device, error)
 }
 
 type TokenStore interface {

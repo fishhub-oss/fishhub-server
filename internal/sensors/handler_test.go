@@ -87,9 +87,11 @@ func (s *stubReadingWriter) WriteReading(_ context.Context, r sensors.Reading) e
 }
 
 type stubDeviceStore struct {
-	info         sensors.DeviceInfo
-	device       sensors.Device
-	findErr      error
+	info        sensors.DeviceInfo
+	device      sensors.Device
+	findErr     error
+	patchDevice sensors.Device
+	patchErr    error
 }
 
 func (s *stubDeviceStore) ListByUserID(_ context.Context, _, _ string) ([]sensors.Device, error) {
@@ -102,6 +104,10 @@ func (s *stubDeviceStore) LookupByToken(_ context.Context, _ string) (sensors.De
 
 func (s *stubDeviceStore) FindByIDAndUserID(_ context.Context, _, _ string) (sensors.Device, error) {
 	return s.device, s.findErr
+}
+
+func (s *stubDeviceStore) PatchDevice(_ context.Context, _, _, _ string) (sensors.Device, error) {
+	return s.patchDevice, s.patchErr
 }
 
 type stubReadingQuerier struct {
@@ -333,6 +339,78 @@ func TestReadingsQueryHandler_List(t *testing.T) {
 		}
 		if body.From == "" || body.To == "" {
 			t.Error("expected from/to to be set to defaults")
+		}
+	})
+}
+
+// --- PatchDeviceHandler ---
+
+func TestPatchDeviceHandler(t *testing.T) {
+	ts := time.Date(2026, 4, 20, 12, 0, 0, 0, time.UTC)
+
+	makeReq := func(deviceID, body string) *http.Request {
+		req := httptest.NewRequest(http.MethodPatch, "/api/devices/"+deviceID, strings.NewReader(body))
+		req = withClaims(req, "user-uuid")
+		req = withChiParam(req, "id", deviceID)
+		return req
+	}
+
+	t.Run("valid name returns 200 with updated device", func(t *testing.T) {
+		updated := sensors.Device{ID: "dev-1", Name: "Tank A", CreatedAt: ts}
+		h := &sensors.PatchDeviceHandler{Store: &stubDeviceStore{patchDevice: updated}}
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, makeReq("dev-1", `{"name":"Tank A"}`))
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d", rec.Code)
+		}
+		var body sensors.DeviceResponse
+		if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		if body.Name != "Tank A" {
+			t.Errorf("expected name 'Tank A', got %q", body.Name)
+		}
+		if body.ID != "dev-1" {
+			t.Errorf("expected id 'dev-1', got %q", body.ID)
+		}
+	})
+
+	t.Run("empty name returns 400", func(t *testing.T) {
+		h := &sensors.PatchDeviceHandler{Store: &stubDeviceStore{}}
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, makeReq("dev-1", `{"name":""}`))
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("expected 400, got %d", rec.Code)
+		}
+	})
+
+	t.Run("device not found returns 404", func(t *testing.T) {
+		h := &sensors.PatchDeviceHandler{Store: &stubDeviceStore{patchErr: sensors.ErrDeviceNotFound}}
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, makeReq("dev-x", `{"name":"Tank A"}`))
+		if rec.Code != http.StatusNotFound {
+			t.Errorf("expected 404, got %d", rec.Code)
+		}
+	})
+
+	t.Run("store error returns 500", func(t *testing.T) {
+		h := &sensors.PatchDeviceHandler{Store: &stubDeviceStore{patchErr: errors.New("db down")}}
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, makeReq("dev-1", `{"name":"Tank A"}`))
+		if rec.Code != http.StatusInternalServerError {
+			t.Errorf("expected 500, got %d", rec.Code)
+		}
+	})
+
+	t.Run("missing claims returns 401", func(t *testing.T) {
+		h := &sensors.PatchDeviceHandler{Store: &stubDeviceStore{}}
+		req := httptest.NewRequest(http.MethodPatch, "/api/devices/dev-1", strings.NewReader(`{"name":"Tank A"}`))
+		req = withChiParam(req, "id", "dev-1")
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if rec.Code != http.StatusUnauthorized {
+			t.Errorf("expected 401, got %d", rec.Code)
 		}
 	})
 }

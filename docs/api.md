@@ -262,6 +262,38 @@ Cookie: session=<session-jwt>
 
 ---
 
+## PATCH /api/devices/{id}
+
+Updates the name of a device owned by the authenticated user.
+
+**Headers** (one of):
+```
+Authorization: Bearer <session-jwt>
+Cookie: session=<session-jwt>
+```
+
+**Request body**
+```json
+{
+  "name": "Tank A"
+}
+```
+
+**Response `200`**
+```json
+{"id": "...", "name": "Tank A", "created_at": "2024-04-13T12:00:00Z"}
+```
+
+**Response `400`** — missing or empty `name`
+
+**Response `401`** — not authenticated
+
+**Response `404`** — device not found or not owned by the authenticated user
+
+**Response `500`** — DB failure
+
+---
+
 ## GET /api/devices/{id}/readings
 
 Returns temperature readings for a device within a time window.
