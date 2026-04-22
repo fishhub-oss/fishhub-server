@@ -20,10 +20,15 @@ type stubAuthService struct {
 func (s *stubAuthService) VerifyAndUpsert(_ context.Context, _, _ string) (auth.User, error) {
 	return auth.User{}, nil
 }
-func (s *stubAuthService) IssueSessionJWT(_ string) (string, error) { return "", nil }
-func (s *stubAuthService) ValidateSessionJWT(_ string) (string, error) {
-	return s.userID, s.err
+func (s *stubAuthService) IssueSessionJWT(_ string) (string, error)   { return "", nil }
+func (s *stubAuthService) ValidateSessionJWT(_ string) (string, error) { return s.userID, s.err }
+func (s *stubAuthService) IssueRefreshToken(_ context.Context, _ string) (string, error) {
+	return "", nil
 }
+func (s *stubAuthService) RotateRefreshToken(_ context.Context, _ string) (string, string, error) {
+	return "", "", nil
+}
+func (s *stubAuthService) RevokeRefreshToken(_ context.Context, _ string) error { return nil }
 
 type stubDeviceStore struct {
 	info sensors.DeviceInfo
