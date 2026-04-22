@@ -8,40 +8,58 @@ fishhub-server/
 ├── db/
 │   └── migrations/          # SQL migration files (golang-migrate format)
 └── internal/
-    ├── auth/                # Bearer token middleware, context helpers
-    ├── db/                  # DB connection, migration runner, seed
-    ├── handler/             # HTTP handlers (health, tokens, readings)
-    ├── senml/               # SenML RFC 8428 parser
-    ├── store/               # Data access layer (Postgres)
-    └── testutil/            # Shared test helpers (test DB via testcontainers)
+    ├── sensors/             # domain: device tokens, readings ingestion + query, InfluxDB, SenML
+    │   ├── handler.go               TokensHandler, ReadingsHandler, ReadingsQueryHandler, DevicesHandler
+    │   ├── store.go                 DeviceStore + TokenStore interfaces
+    │   ├── store_postgres.go        Postgres implementations
+    │   ├── influx.go                InfluxClient (ReadingWriter + ReadingQuerier), influxDBClient
+    │   ├── senml.go                 SenML RFC 8428 parser
+    │   └── model.go                 DeviceInfo, TokenResult, Reading, context helpers
+    ├── auth/                # domain: OIDC verification, JWT sessions, refresh token rotation
+    │   ├── handler.go               VerifyHandler, RefreshHandler, LogoutHandler
+    │   ├── service.go               AuthService interface, oidcService implementation
+    │   ├── store.go                 UserStore + RefreshTokenStore interfaces
+    │   ├── store_postgres.go        Postgres implementations
+    │   └── model.go                 User, RefreshToken, error sentinels
+    ├── account/             # domain: account profile (created on first login via event)
+    │   ├── handler.go               MeHandler
+    │   ├── store.go                 AccountStore interface
+    │   ├── store_postgres.go        Postgres implementation
+    │   ├── model.go                 Account struct
+    │   └── events.go                AccountEventHandler (implements auth.UserEventHandler)
+    ├── platform/            # cross-cutting: DB setup, middleware, health
+    │   ├── db.go                    Open(), Migrate(), SeedUser(), SeedUserID()
+    │   └── middleware.go            DeviceAuthenticator(), SessionAuthenticator(), Health()
+    └── testutil/
+        └── db.go                    NewTestDB(t) — starts Postgres container, runs migrations
 ```
 
 ## Dependency graph
 
 ```
 main.go
- ├── internal/db        — open connection, run migrations, seed user
- ├── internal/store     — TokenStore, DeviceStore (Postgres implementations)
- ├── internal/auth      — Authenticator middleware (depends on DeviceStore interface)
- └── internal/handler   — HTTP handlers (depend on store interfaces)
-      └── internal/senml — SenML parsing (pure, no external deps)
+ ├── platform     — DB connection, migrations, seed, middleware
+ ├── sensors      — device tokens, readings ingestion + query (InfluxDB), SenML
+ ├── auth         — OIDC verification, JWT + refresh token issuance
+ └── account      — account profiles, MeHandler
+      └── implements auth.UserEventHandler (called after OIDC verify)
 ```
-
-`internal/senml` and `internal/testutil` have no dependencies on other internal packages.
 
 ## Design principles
 
-**Dependency injection everywhere.** Handlers receive their stores as struct fields. No package-level singletons.
+**Dependency injection everywhere.** Handlers receive dependencies as struct fields — no package-level singletons.
 
-**Depend on interfaces, not concrete types.** Each handler declares the smallest interface it needs. This is why `TokensHandler` has a `TokenStore` field typed as the interface, not `*postgresTokenStore`. Same for `DeviceStore` in the auth middleware.
+**Depend on interfaces, not concrete types.** Each handler declares the smallest interface it needs (e.g. `TokenStore`, `DeviceStore`, `ReadingWriter`, `AuthService`). `main.go` is the only wiring point.
 
-**Context-based auth.** The auth middleware stores `DeviceInfo` in the request context via `context.WithValue`. Downstream handlers retrieve it with `auth.DeviceFromContext()` — no need to re-query the DB.
+**Domain packages never import each other.** `sensors`, `auth`, and `account` are fully isolated. Cross-domain dependencies use interfaces (e.g. `auth.UserEventHandler` is satisfied by `account.AccountEventHandler`).
 
-**Transactional safety.** Token creation (device row + token row) is wrapped in a single transaction. A failure at any step rolls back cleanly.
+**`platform` may be imported by any domain.** It has no domain knowledge — only DB setup and middleware.
+
+**Context-based auth.** Device auth middleware stores `DeviceInfo` in the request context. Session auth middleware stores `auth.Claims`. Downstream handlers retrieve them without re-querying the DB.
 
 ## Request lifecycle
 
-### POST /tokens
+### POST /tokens (no auth)
 ```
 TokensHandler.Create
   └── TokenStore.CreateToken(userID)
@@ -51,30 +69,42 @@ TokensHandler.Create
   └── 201 {"token":"...","device_id":"...","user_id":"..."}
 ```
 
-### POST /readings
+### POST /readings (device Bearer token)
 ```
-Authenticator middleware
+DeviceAuthenticator middleware
   ├── parse "Bearer <token>" from Authorization header
-  ├── DeviceStore.LookupByToken(token)
-  │     └── JOIN device_tokens + devices WHERE token = $1
-  ├── 401 if missing or invalid
-  └── store DeviceInfo in request context
+  ├── DeviceStore.LookupByToken(token) → JOIN device_tokens + devices
+  ├── 401 if missing/invalid
+  └── store DeviceInfo{DeviceID, UserID} in context
 
 ReadingsHandler.Create
-  ├── auth.DeviceFromContext(ctx) → DeviceInfo
-  ├── senml.Parse(body) → Reading{Temperature, BaseTime}
+  ├── DeviceFromContext(ctx)
+  ├── ParseSenML(body) → Reading{Measurements, BaseTime}
   ├── 400 on malformed payload
-  ├── log reading (device_id, temperature, base_time)
-  └── 201 {}
+  └── InfluxClient.WriteReading(ctx, Reading) → InfluxDB 3 Core
 ```
 
-### GET /health
+### GET /api/devices and /api/devices/{id}/readings (session JWT)
 ```
-handler.Health → 200 {"status":"ok"}
+SessionAuthenticator middleware
+  ├── read "Bearer <token>" header OR "session" cookie
+  ├── AuthService.ValidateSessionJWT(token) → userID
+  ├── 401 if missing/invalid
+  └── store Claims{UserID} in context
+
+DevicesHandler.List / ReadingsQueryHandler.List
+  ├── ClaimsFromContext(ctx)
+  ├── DeviceStore.ListByUserID / FindByIDAndUserID
+  └── InfluxClient.QueryReadings (for readings endpoint)
 ```
 
-## What's not yet implemented
-
-- **InfluxDB persistence** — readings are logged to stdout but not stored (issue #4)
-- **Grafana stack** — Docker Compose doesn't include InfluxDB/Grafana yet (issue #5)
-- **Token security** — tokens stored as plaintext; hashing/JWT under evaluation (issue #6)
+### POST /auth/verify → session issuance
+```
+VerifyHandler
+  ├── AuthService.VerifyAndUpsert(provider, idToken)
+  │     ├── OIDC ID token verification (go-oidc)
+  │     ├── UserStore.Upsert(email, provider, sub)
+  │     └── UserEventHandler.OnUserVerified → AccountStore.Upsert
+  ├── AuthService.IssueSessionJWT(userID) → signed HS256 JWT
+  └── AuthService.IssueRefreshToken(ctx, userID) → stored hash, return raw
+```
