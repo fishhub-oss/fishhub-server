@@ -22,6 +22,7 @@ type OIDCConfig struct {
 	Providers    map[string]string
 	Store        UserStore
 	RefreshStore RefreshTokenStore
+	EventHandler UserEventHandler
 	JWTSecret    string
 	JWTTTL       time.Duration
 }
@@ -39,6 +40,7 @@ type oidcService struct {
 	verifiers    map[string]*gooidc.IDTokenVerifier
 	store        UserStore
 	refreshStore RefreshTokenStore
+	eventHandler UserEventHandler
 	jwtSecret    []byte
 	jwtTTL       time.Duration
 }
@@ -63,6 +65,7 @@ func NewOIDCService(ctx context.Context, cfg OIDCConfig) (AuthService, error) {
 		verifiers:    verifiers,
 		store:        cfg.Store,
 		refreshStore: cfg.RefreshStore,
+		eventHandler: cfg.EventHandler,
 		jwtSecret:    []byte(cfg.JWTSecret),
 		jwtTTL:       cfg.JWTTTL,
 	}, nil
@@ -91,12 +94,28 @@ func (s *oidcService) VerifyAndUpsert(ctx context.Context, provider, rawIDToken 
 	var claims struct {
 		Email string `json:"email"`
 		Sub   string `json:"sub"`
+		Name  string `json:"name"`
 	}
 	if err := idToken.Claims(&claims); err != nil {
 		return User{}, fmt.Errorf("extract claims: %w", err)
 	}
 
-	return s.store.Upsert(ctx, claims.Email, provider, claims.Sub)
+	user, err := s.store.Upsert(ctx, claims.Email, provider, claims.Sub)
+	if err != nil {
+		return User{}, err
+	}
+
+	if s.eventHandler != nil {
+		name := claims.Name
+		if name == "" {
+			name = claims.Email
+		}
+		if err := s.eventHandler.OnUserVerified(ctx, user.ID, user.Email, name); err != nil {
+			return User{}, fmt.Errorf("user event handler: %w", err)
+		}
+	}
+
+	return user, nil
 }
 
 func (s *oidcService) IssueSessionJWT(userID string) (string, error) {
