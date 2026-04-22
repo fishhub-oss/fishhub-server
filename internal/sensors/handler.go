@@ -29,7 +29,8 @@ func (h *DevicesHandler) List(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	devices, err := h.Store.ListByUserID(r.Context(), claims.UserID)
+	status := r.URL.Query().Get("status")
+	devices, err := h.Store.ListByUserID(r.Context(), claims.UserID, status)
 	if err != nil {
 		http.Error(w, "internal server error", http.StatusInternalServerError)
 		return
@@ -211,4 +212,81 @@ func (h *ReadingsHandler) Create(w http.ResponseWriter, r *http.Request) {
 
 	render.Status(r, http.StatusCreated)
 	render.JSON(w, r, map[string]string{})
+}
+
+// ProvisionHandler handles POST /devices/provision (session auth).
+type ProvisionHandler struct {
+	Store ProvisioningStore
+}
+
+type provisionResponse struct {
+	Code     string `json:"code"`
+	DeviceID string `json:"device_id"`
+}
+
+func (h *ProvisionHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	claims, ok := auth.ClaimsFromContext(r.Context())
+	if !ok {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	deviceID, code, err := h.Store.GetOrCreatePending(r.Context(), claims.UserID)
+	if err != nil {
+		http.Error(w, "internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	render.Status(r, http.StatusCreated)
+	render.JSON(w, r, provisionResponse{Code: code, DeviceID: deviceID})
+}
+
+// ActivateHandler handles POST /devices/activate (no auth — called by the device).
+type ActivateHandler struct {
+	Store ProvisioningStore
+}
+
+type activateRequest struct {
+	Code string `json:"code"`
+}
+
+type activateResponse struct {
+	Token    string `json:"token"`
+	DeviceID string `json:"device_id"`
+}
+
+func (h *ActivateHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	var req activateRequest
+	if err := render.DecodeJSON(r.Body, &req); err != nil || req.Code == "" {
+		http.Error(w, "code is required", http.StatusBadRequest)
+		return
+	}
+
+	deviceID, err := h.Store.ClaimCode(r.Context(), req.Code)
+	if err != nil {
+		if errors.Is(err, ErrCodeNotFound) {
+			http.Error(w, "provisioning code not found", http.StatusNotFound)
+			return
+		}
+		if errors.Is(err, ErrCodeAlreadyUsed) {
+			http.Error(w, "provisioning code already used", http.StatusConflict)
+			return
+		}
+		http.Error(w, "internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	token, err := generateToken()
+	if err != nil {
+		http.Error(w, "internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	if err := h.Store.Activate(r.Context(), deviceID, token); err != nil {
+		http.Error(w, "internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	render.Status(r, http.StatusCreated)
+	render.JSON(w, r, activateResponse{Token: token, DeviceID: deviceID})
 }

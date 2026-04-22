@@ -92,7 +92,7 @@ type stubDeviceStore struct {
 	findErr      error
 }
 
-func (s *stubDeviceStore) ListByUserID(_ context.Context, _ string) ([]sensors.Device, error) {
+func (s *stubDeviceStore) ListByUserID(_ context.Context, _, _ string) ([]sensors.Device, error) {
 	return nil, nil
 }
 
@@ -333,6 +333,156 @@ func TestReadingsQueryHandler_List(t *testing.T) {
 		}
 		if body.From == "" || body.To == "" {
 			t.Error("expected from/to to be set to defaults")
+		}
+	})
+}
+
+// --- ProvisionHandler ---
+
+type stubProvisioningStore struct {
+	deviceID string
+	code     string
+	getErr   error
+
+	claimedDeviceID string
+	claimErr        error
+
+	activateErr error
+}
+
+func (s *stubProvisioningStore) GetOrCreatePending(_ context.Context, _ string) (string, string, error) {
+	return s.deviceID, s.code, s.getErr
+}
+
+func (s *stubProvisioningStore) ClaimCode(_ context.Context, _ string) (string, error) {
+	return s.claimedDeviceID, s.claimErr
+}
+
+func (s *stubProvisioningStore) Activate(_ context.Context, _, _ string) error {
+	return s.activateErr
+}
+
+func TestProvisionHandler(t *testing.T) {
+	t.Run("returns 201 with code and device_id", func(t *testing.T) {
+		h := &sensors.ProvisionHandler{
+			Store: &stubProvisioningStore{deviceID: "dev-uuid", code: "ABC123"},
+		}
+		req := withClaims(httptest.NewRequest(http.MethodPost, "/api/devices/provision", nil), "user-uuid")
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("expected 201, got %d", rec.Code)
+		}
+		var body map[string]string
+		if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		if body["code"] != "ABC123" {
+			t.Errorf("expected code ABC123, got %s", body["code"])
+		}
+		if body["device_id"] != "dev-uuid" {
+			t.Errorf("expected device_id dev-uuid, got %s", body["device_id"])
+		}
+	})
+
+	t.Run("missing claims returns 401", func(t *testing.T) {
+		h := &sensors.ProvisionHandler{Store: &stubProvisioningStore{}}
+		req := httptest.NewRequest(http.MethodPost, "/api/devices/provision", nil)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if rec.Code != http.StatusUnauthorized {
+			t.Errorf("expected 401, got %d", rec.Code)
+		}
+	})
+
+	t.Run("store error returns 500", func(t *testing.T) {
+		h := &sensors.ProvisionHandler{
+			Store: &stubProvisioningStore{getErr: errors.New("db down")},
+		}
+		req := withClaims(httptest.NewRequest(http.MethodPost, "/api/devices/provision", nil), "user-uuid")
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if rec.Code != http.StatusInternalServerError {
+			t.Errorf("expected 500, got %d", rec.Code)
+		}
+	})
+}
+
+// --- ActivateHandler ---
+
+func TestActivateHandler(t *testing.T) {
+	validBody := `{"code":"ABC123"}`
+
+	t.Run("returns 201 with token and device_id", func(t *testing.T) {
+		h := &sensors.ActivateHandler{
+			Store: &stubProvisioningStore{claimedDeviceID: "dev-uuid"},
+		}
+		req := httptest.NewRequest(http.MethodPost, "/devices/activate", strings.NewReader(validBody))
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("expected 201, got %d", rec.Code)
+		}
+		var body map[string]string
+		if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		if body["device_id"] != "dev-uuid" {
+			t.Errorf("expected device_id dev-uuid, got %s", body["device_id"])
+		}
+		if len(body["token"]) != 64 {
+			t.Errorf("expected 64-char token, got %d chars", len(body["token"]))
+		}
+	})
+
+	t.Run("missing code returns 400", func(t *testing.T) {
+		h := &sensors.ActivateHandler{Store: &stubProvisioningStore{}}
+		req := httptest.NewRequest(http.MethodPost, "/devices/activate", strings.NewReader(`{}`))
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("expected 400, got %d", rec.Code)
+		}
+	})
+
+	t.Run("unknown code returns 404", func(t *testing.T) {
+		h := &sensors.ActivateHandler{
+			Store: &stubProvisioningStore{claimErr: sensors.ErrCodeNotFound},
+		}
+		req := httptest.NewRequest(http.MethodPost, "/devices/activate", strings.NewReader(validBody))
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if rec.Code != http.StatusNotFound {
+			t.Errorf("expected 404, got %d", rec.Code)
+		}
+	})
+
+	t.Run("already used code returns 409", func(t *testing.T) {
+		h := &sensors.ActivateHandler{
+			Store: &stubProvisioningStore{claimErr: sensors.ErrCodeAlreadyUsed},
+		}
+		req := httptest.NewRequest(http.MethodPost, "/devices/activate", strings.NewReader(validBody))
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if rec.Code != http.StatusConflict {
+			t.Errorf("expected 409, got %d", rec.Code)
+		}
+	})
+
+	t.Run("activate error returns 500", func(t *testing.T) {
+		h := &sensors.ActivateHandler{
+			Store: &stubProvisioningStore{
+				claimedDeviceID: "dev-uuid",
+				activateErr:     errors.New("db down"),
+			},
+		}
+		req := httptest.NewRequest(http.MethodPost, "/devices/activate", strings.NewReader(validBody))
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if rec.Code != http.StatusInternalServerError {
+			t.Errorf("expected 500, got %d", rec.Code)
 		}
 	})
 }

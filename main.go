@@ -99,7 +99,10 @@ func main() {
 	r.Post("/auth/verify", (&auth.VerifyHandler{Service: authSvc}).ServeHTTP)
 	r.Post("/auth/refresh", (&auth.RefreshHandler{Service: authSvc}).ServeHTTP)
 	r.Post("/auth/logout", (&auth.LogoutHandler{Service: authSvc}).ServeHTTP)
+	provisioningStore := sensors.NewProvisioningStore(db)
+
 	r.Post("/tokens", tokens.Create)
+	r.Post("/devices/activate", (&sensors.ActivateHandler{Store: provisioningStore}).ServeHTTP)
 	r.Group(func(r chi.Router) {
 		r.Use(platform.DeviceAuthenticator(sensors.NewDeviceStore(db)))
 		r.Post("/readings", readings.Create)
@@ -108,6 +111,7 @@ func main() {
 		r.Use(platform.SessionAuthenticator(authSvc))
 		r.Get("/api/me", (&account.MeHandler{Store: accountStore}).ServeHTTP)
 		deviceStore := sensors.NewDeviceStore(db)
+		r.Post("/api/devices/provision", (&sensors.ProvisionHandler{Store: provisioningStore}).ServeHTTP)
 		r.Get("/api/devices", (&sensors.DevicesHandler{Store: deviceStore}).List)
 		r.Get("/api/devices/{id}/readings", (&sensors.ReadingsQueryHandler{
 			Querier: influxClient,

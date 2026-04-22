@@ -170,15 +170,88 @@ Cookie: session=<session-jwt>
 
 ---
 
-## GET /api/devices
+## POST /api/devices/provision
 
-Returns all devices belonging to the authenticated user.
+Creates (or returns the existing) pending device for the authenticated user, along with a 6-character pairing code. Idempotent — repeated calls return the same pending device and code until the device is activated.
 
 **Headers** (one of):
 ```
 Authorization: Bearer <session-jwt>
 Cookie: session=<session-jwt>
 ```
+
+No request body required.
+
+**Response `201`**
+```json
+{
+  "code":      "A1B2C3",
+  "device_id": "a1b2c3d4-..."
+}
+```
+
+| Field | Description |
+|---|---|
+| `code` | 6-char alphanumeric pairing code. Display this to the user (e.g. QR code or text) so they can enter it on the device captive portal. |
+| `device_id` | UUID of the pending device. |
+
+**Response `401`** — not authenticated
+
+**Response `500`** — DB failure
+
+---
+
+## POST /devices/activate
+
+Called by the ESP32 after the user enters the pairing code on the captive portal. No session auth required — the code itself is the credential. Marks the device active and issues a Bearer token.
+
+No auth header required.
+
+**Request body**
+```json
+{
+  "code": "A1B2C3"
+}
+```
+
+**Response `201`**
+```json
+{
+  "token":     "b0a1aba84035c6844d739100e3a93f5911f7ecaf82cbf5bbb33306a1509854a5",
+  "device_id": "a1b2c3d4-..."
+}
+```
+
+| Field | Description |
+|---|---|
+| `token` | 64-char hex Bearer token. The device stores this in NVS and uses it for all subsequent `/readings` calls. |
+| `device_id` | UUID of the now-active device. |
+
+**Response `400`** — missing or empty `code`
+
+**Response `404`** — code not found
+
+**Response `409`** — code already used
+
+**Response `500`** — DB or token-generation failure
+
+---
+
+## GET /api/devices
+
+Returns devices belonging to the authenticated user. Pass `?status=active` (recommended) to exclude pending devices.
+
+**Headers** (one of):
+```
+Authorization: Bearer <session-jwt>
+Cookie: session=<session-jwt>
+```
+
+**Query parameters**
+
+| Param | Values | Default | Description |
+|---|---|---|---|
+| `status` | `active`, `pending`, _(empty)_ | _(empty)_ | Filter by device status. Omit to return all devices. |
 
 **Response `200`**
 ```json

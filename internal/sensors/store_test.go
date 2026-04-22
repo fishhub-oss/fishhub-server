@@ -154,7 +154,7 @@ func TestListByUserID_integration(t *testing.T) {
 			t.Fatalf("setup token 2: %v", err)
 		}
 
-		devices, err := store.ListByUserID(ctx, userID)
+		devices, err := store.ListByUserID(ctx, userID, "")
 		if err != nil {
 			t.Fatalf("list: %v", err)
 		}
@@ -183,7 +183,7 @@ func TestListByUserID_integration(t *testing.T) {
 			t.Fatalf("insert user: %v", err)
 		}
 
-		devices, err := store.ListByUserID(ctx, newUserID)
+		devices, err := store.ListByUserID(ctx, newUserID, "")
 		if err != nil {
 			t.Fatalf("list: %v", err)
 		}

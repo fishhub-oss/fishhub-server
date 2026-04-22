@@ -39,7 +39,7 @@ func (s *stubDeviceStore) LookupByToken(_ context.Context, _ string) (sensors.De
 	return s.info, s.err
 }
 
-func (s *stubDeviceStore) ListByUserID(_ context.Context, _ string) ([]sensors.Device, error) {
+func (s *stubDeviceStore) ListByUserID(_ context.Context, _, _ string) ([]sensors.Device, error) {
 	return nil, nil
 }
 
