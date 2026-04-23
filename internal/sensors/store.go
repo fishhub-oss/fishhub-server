@@ -12,9 +12,6 @@ type Device struct {
 }
 
 type DeviceStore interface {
-	// Deprecated: device auth now uses JWT verification. LookupByToken and the
-	// device_tokens table will be removed in cleanup issue #46.
-	LookupByToken(ctx context.Context, token string) (DeviceInfo, error)
 	// ListByUserID returns devices owned by userID. If status is non-empty, only
 	// devices with that status are returned.
 	ListByUserID(ctx context.Context, userID, status string) ([]Device, error)
@@ -22,10 +19,6 @@ type DeviceStore interface {
 	// PatchDevice updates the name of the device owned by userID.
 	// Returns ErrDeviceNotFound if the device does not exist or is not owned by the user.
 	PatchDevice(ctx context.Context, deviceID, userID, name string) (Device, error)
-}
-
-type TokenStore interface {
-	CreateToken(ctx context.Context, userID string) (TokenResult, error)
 }
 
 type ProvisioningStore interface {
