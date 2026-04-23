@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/fishhub-oss/fishhub-server/internal/auth"
+	"github.com/fishhub-oss/fishhub-server/internal/devicejwt"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/render"
 )
@@ -283,7 +284,8 @@ func (h *ProvisionHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 // ActivateHandler handles POST /devices/activate (no auth — called by the device).
 type ActivateHandler struct {
-	Store ProvisioningStore
+	Store  ProvisioningStore
+	Signer devicejwt.Signer
 }
 
 type activateRequest struct {
@@ -291,8 +293,9 @@ type activateRequest struct {
 }
 
 type activateResponse struct {
-	Token    string `json:"token"`
-	DeviceID string `json:"device_id"`
+	Token     string `json:"token"`
+	DeviceID  string `json:"device_id"`
+	MQTTToken string `json:"mqtt_token,omitempty"`
 }
 
 func (h *ActivateHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -327,6 +330,17 @@ func (h *ActivateHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	resp := activateResponse{Token: token, DeviceID: deviceID}
+	if h.Signer != nil {
+		mqttToken, err := h.Signer.Sign(deviceID)
+		if err != nil {
+			log.Printf("devicejwt sign error: %v", err)
+			http.Error(w, "internal server error", http.StatusInternalServerError)
+			return
+		}
+		resp.MQTTToken = mqttToken
+	}
+
 	render.Status(r, http.StatusCreated)
-	render.JSON(w, r, activateResponse{Token: token, DeviceID: deviceID})
+	render.JSON(w, r, resp)
 }

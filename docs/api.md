@@ -217,8 +217,9 @@ No auth header required.
 **Response `201`**
 ```json
 {
-  "token":     "b0a1aba84035c6844d739100e3a93f5911f7ecaf82cbf5bbb33306a1509854a5",
-  "device_id": "a1b2c3d4-..."
+  "token":      "b0a1aba84035c6844d739100e3a93f5911f7ecaf82cbf5bbb33306a1509854a5",
+  "device_id":  "a1b2c3d4-...",
+  "mqtt_token": "<signed-jwt>"
 }
 ```
 
@@ -226,6 +227,7 @@ No auth header required.
 |---|---|
 | `token` | 64-char hex Bearer token. The device stores this in NVS and uses it for all subsequent `/readings` calls. |
 | `device_id` | UUID of the now-active device. |
+| `mqtt_token` | RS256-signed JWT (`sub`=`device_id`, `iss`=`IDP_HOST`). The device stores this in NVS and uses it as the MQTT password when connecting to HiveMQ. Omitted if `DEVICE_JWT_PRIVATE_KEY` is not configured on the server. |
 
 **Response `400`** — missing or empty `code`
 
@@ -234,6 +236,30 @@ No auth header required.
 **Response `409`** — code already used
 
 **Response `500`** — DB or token-generation failure
+
+---
+
+## GET /.well-known/jwks.json
+
+Returns the server's public key set in JWK format. Used by HiveMQ to verify device MQTT JWTs. No authentication required.
+
+**Response `200`**
+```json
+{
+  "keys": [
+    {
+      "kty": "RSA",
+      "kid": "<DEVICE_JWT_KID>",
+      "use": "sig",
+      "alg": "RS256",
+      "n":   "<base64url-encoded modulus>",
+      "e":   "<base64url-encoded exponent>"
+    }
+  ]
+}
+```
+
+Returns `{"keys":[]}` if `DEVICE_JWT_PRIVATE_KEY` is not configured.
 
 ---
 
