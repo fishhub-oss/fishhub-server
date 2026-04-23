@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/fishhub-oss/fishhub-server/internal/auth"
-	"github.com/fishhub-oss/fishhub-server/internal/platform"
 	"github.com/fishhub-oss/fishhub-server/internal/sensors"
 	"github.com/go-chi/chi/v5"
 )
@@ -121,20 +120,8 @@ func (s *stubReadingQuerier) QueryReadings(_ context.Context, _ sensors.ReadingQ
 }
 
 func withDevice(r *http.Request, info sensors.DeviceInfo) *http.Request {
-	var enriched *http.Request
-	called := false
-	mw := platform.DeviceAuthenticator(&stubDeviceStore{info: info})
-	inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		enriched = r
-		called = true
-	})
-	r.Header.Set("Authorization", "Bearer anytoken")
-	w := httptest.NewRecorder()
-	mw(inner).ServeHTTP(w, r)
-	if !called {
-		panic("middleware did not call next")
-	}
-	return enriched
+	ctx := context.WithValue(r.Context(), sensors.DeviceContextKey, info)
+	return r.WithContext(ctx)
 }
 
 const validSenML = `[{"bn":"fishhub/device/","bt":1713000000,"e":[{"n":"temperature","u":"Cel","v":23.4}]}]`
@@ -433,11 +420,11 @@ func (s *stubProvisioningStore) GetOrCreatePending(_ context.Context, _ string) 
 	return s.deviceID, s.code, s.getErr
 }
 
-func (s *stubProvisioningStore) ClaimCode(_ context.Context, _ string) (string, error) {
-	return s.claimedDeviceID, s.claimErr
+func (s *stubProvisioningStore) ClaimCode(_ context.Context, _ string) (string, string, error) {
+	return s.claimedDeviceID, "user-uuid", s.claimErr
 }
 
-func (s *stubProvisioningStore) Activate(_ context.Context, _, _ string) error {
+func (s *stubProvisioningStore) Activate(_ context.Context, _ string) error {
 	return s.activateErr
 }
 
@@ -494,7 +481,7 @@ type stubSigner struct {
 	err   error
 }
 
-func (s *stubSigner) Sign(_ string) (string, error)          { return s.token, s.err }
+func (s *stubSigner) Sign(_, _ string) (string, error)       { return s.token, s.err }
 func (s *stubSigner) PublicKey() *rsa.PublicKey              { return nil }
 func (s *stubSigner) KID() string                            { return "" }
 func (s *stubSigner) Issuer() string                         { return "" }
@@ -504,30 +491,7 @@ func (s *stubSigner) Issuer() string                         { return "" }
 func TestActivateHandler(t *testing.T) {
 	validBody := `{"code":"ABC123"}`
 
-	t.Run("returns 201 with token and device_id", func(t *testing.T) {
-		h := &sensors.ActivateHandler{
-			Store: &stubProvisioningStore{claimedDeviceID: "dev-uuid"},
-		}
-		req := httptest.NewRequest(http.MethodPost, "/devices/activate", strings.NewReader(validBody))
-		rec := httptest.NewRecorder()
-		h.ServeHTTP(rec, req)
-
-		if rec.Code != http.StatusCreated {
-			t.Fatalf("expected 201, got %d", rec.Code)
-		}
-		var body map[string]string
-		if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
-			t.Fatalf("decode: %v", err)
-		}
-		if body["device_id"] != "dev-uuid" {
-			t.Errorf("expected device_id dev-uuid, got %s", body["device_id"])
-		}
-		if len(body["token"]) != 64 {
-			t.Errorf("expected 64-char token, got %d chars", len(body["token"]))
-		}
-	})
-
-	t.Run("includes mqtt_token when signer configured", func(t *testing.T) {
+	t.Run("returns 201 with jwt token and device_id", func(t *testing.T) {
 		h := &sensors.ActivateHandler{
 			Store:  &stubProvisioningStore{claimedDeviceID: "dev-uuid"},
 			Signer: &stubSigner{token: "signed.jwt.token"},
@@ -543,29 +507,11 @@ func TestActivateHandler(t *testing.T) {
 		if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
 			t.Fatalf("decode: %v", err)
 		}
-		if body["mqtt_token"] != "signed.jwt.token" {
-			t.Errorf("expected mqtt_token, got %q", body["mqtt_token"])
+		if body["device_id"] != "dev-uuid" {
+			t.Errorf("expected device_id dev-uuid, got %s", body["device_id"])
 		}
-	})
-
-	t.Run("omits mqtt_token when signer returns empty string", func(t *testing.T) {
-		h := &sensors.ActivateHandler{
-			Store:  &stubProvisioningStore{claimedDeviceID: "dev-uuid"},
-			Signer: &stubSigner{token: ""},
-		}
-		req := httptest.NewRequest(http.MethodPost, "/devices/activate", strings.NewReader(validBody))
-		rec := httptest.NewRecorder()
-		h.ServeHTTP(rec, req)
-
-		if rec.Code != http.StatusCreated {
-			t.Fatalf("expected 201, got %d", rec.Code)
-		}
-		var body map[string]string
-		if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
-			t.Fatalf("decode: %v", err)
-		}
-		if _, ok := body["mqtt_token"]; ok {
-			t.Error("expected mqtt_token to be absent")
+		if body["token"] != "signed.jwt.token" {
+			t.Errorf("expected token=signed.jwt.token, got %q", body["token"])
 		}
 	})
 

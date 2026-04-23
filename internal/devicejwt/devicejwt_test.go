@@ -42,7 +42,7 @@ func TestRSASigner_Sign(t *testing.T) {
 		t.Fatalf("NewRSASigner: %v", err)
 	}
 
-	signed, err := signer.Sign("device-uuid")
+	signed, err := signer.Sign("device-uuid", "user-uuid")
 	if err != nil {
 		t.Fatalf("Sign: %v", err)
 	}
@@ -101,7 +101,7 @@ func TestRSASigner_PublicKey(t *testing.T) {
 func TestNoOpSigner(t *testing.T) {
 	signer := devicejwt.NewNoOp()
 
-	token, err := signer.Sign("device-uuid")
+	token, err := signer.Sign("device-uuid", "user-uuid")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

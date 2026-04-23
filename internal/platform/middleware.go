@@ -6,30 +6,58 @@ import (
 	"strings"
 
 	"github.com/fishhub-oss/fishhub-server/internal/auth"
+	"github.com/fishhub-oss/fishhub-server/internal/devicejwt"
 	"github.com/fishhub-oss/fishhub-server/internal/sensors"
 	"github.com/go-chi/render"
+	"github.com/golang-jwt/jwt/v5"
 )
 
-func DeviceAuthenticator(devices sensors.DeviceStore) func(http.Handler) http.Handler {
+// DeviceAuthenticator validates a device JWT from the Authorization header.
+// It extracts sub (device_id) and user_id claims and stores DeviceInfo in the request context.
+// Deprecated: LookupByToken / DeviceStore path removed — see cleanup issue #46.
+func DeviceAuthenticator(signer devicejwt.Signer) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			token := bearerToken(r)
-			if token == "" {
+			raw := bearerToken(r)
+			if raw == "" {
 				http.Error(w, "missing or malformed authorization header", http.StatusUnauthorized)
 				return
 			}
 
-			info, err := devices.LookupByToken(r.Context(), token)
-			if err != nil {
-				if strings.Contains(err.Error(), sensors.ErrTokenNotFound.Error()) {
-					http.Error(w, "invalid token", http.StatusUnauthorized)
-					return
-				}
-				http.Error(w, "internal server error", http.StatusInternalServerError)
+			pub := signer.PublicKey()
+			if pub == nil {
+				http.Error(w, "device auth not configured", http.StatusUnauthorized)
 				return
 			}
 
-			ctx := context.WithValue(r.Context(), sensors.DeviceContextKey, info)
+			token, err := jwt.Parse(raw, func(t *jwt.Token) (any, error) {
+				if _, ok := t.Method.(*jwt.SigningMethodRSA); !ok {
+					return nil, jwt.ErrSignatureInvalid
+				}
+				return pub, nil
+			}, jwt.WithValidMethods([]string{"RS256"}))
+			if err != nil || !token.Valid {
+				http.Error(w, "invalid token", http.StatusUnauthorized)
+				return
+			}
+
+			claims, ok := token.Claims.(jwt.MapClaims)
+			if !ok {
+				http.Error(w, "invalid token claims", http.StatusUnauthorized)
+				return
+			}
+
+			deviceID, _ := claims["sub"].(string)
+			userID, _ := claims["user_id"].(string)
+			if deviceID == "" || userID == "" {
+				http.Error(w, "invalid token claims", http.StatusUnauthorized)
+				return
+			}
+
+			ctx := context.WithValue(r.Context(), sensors.DeviceContextKey, sensors.DeviceInfo{
+				DeviceID: deviceID,
+				UserID:   userID,
+			})
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}

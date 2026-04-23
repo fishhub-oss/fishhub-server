@@ -2,12 +2,17 @@ package platform_test
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
+	"encoding/pem"
 	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
 	"github.com/fishhub-oss/fishhub-server/internal/auth"
+	"github.com/fishhub-oss/fishhub-server/internal/devicejwt"
 	"github.com/fishhub-oss/fishhub-server/internal/platform"
 	"github.com/fishhub-oss/fishhub-server/internal/sensors"
 )
@@ -20,7 +25,7 @@ type stubAuthService struct {
 func (s *stubAuthService) VerifyAndUpsert(_ context.Context, _, _ string) (auth.User, error) {
 	return auth.User{}, nil
 }
-func (s *stubAuthService) IssueSessionJWT(_ string) (string, error)   { return "", nil }
+func (s *stubAuthService) IssueSessionJWT(_ string) (string, error)    { return "", nil }
 func (s *stubAuthService) ValidateSessionJWT(_ string) (string, error) { return s.userID, s.err }
 func (s *stubAuthService) IssueRefreshToken(_ context.Context, _ string) (string, error) {
 	return "", nil
@@ -30,25 +35,21 @@ func (s *stubAuthService) RotateRefreshToken(_ context.Context, _ string) (strin
 }
 func (s *stubAuthService) RevokeRefreshToken(_ context.Context, _ string) error { return nil }
 
-type stubDeviceStore struct {
-	info sensors.DeviceInfo
-	err  error
-}
-
-func (s *stubDeviceStore) LookupByToken(_ context.Context, _ string) (sensors.DeviceInfo, error) {
-	return s.info, s.err
-}
-
-func (s *stubDeviceStore) ListByUserID(_ context.Context, _, _ string) ([]sensors.Device, error) {
-	return nil, nil
-}
-
-func (s *stubDeviceStore) PatchDevice(_ context.Context, _, _, _ string) (sensors.Device, error) {
-	return sensors.Device{}, nil
-}
-
-func (s *stubDeviceStore) FindByIDAndUserID(_ context.Context, _, _ string) (sensors.Device, error) {
-	return sensors.Device{}, nil
+func newTestSigner(t *testing.T) devicejwt.Signer {
+	t.Helper()
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
+	pemBytes := pem.EncodeToMemory(&pem.Block{
+		Type:  "RSA PRIVATE KEY",
+		Bytes: x509.MarshalPKCS1PrivateKey(key),
+	})
+	s, err := devicejwt.NewRSASigner(string(pemBytes), "kid-test", "https://test.example")
+	if err != nil {
+		t.Fatalf("NewRSASigner: %v", err)
+	}
+	return s
 }
 
 func TestSessionAuthenticator(t *testing.T) {
@@ -129,7 +130,7 @@ func TestSessionAuthenticator(t *testing.T) {
 }
 
 func TestDeviceAuthenticator(t *testing.T) {
-	validInfo := sensors.DeviceInfo{DeviceID: "device-uuid", UserID: "user-uuid"}
+	signer := newTestSigner(t)
 
 	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		info, ok := sensors.DeviceFromContext(r.Context())
@@ -137,17 +138,22 @@ func TestDeviceAuthenticator(t *testing.T) {
 			http.Error(w, "no device in context", http.StatusInternalServerError)
 			return
 		}
-		if info.DeviceID != validInfo.DeviceID {
-			http.Error(w, "wrong device", http.StatusInternalServerError)
+		if info.DeviceID != "device-uuid" || info.UserID != "user-uuid" {
+			http.Error(w, "wrong device info", http.StatusInternalServerError)
 			return
 		}
 		w.WriteHeader(http.StatusOK)
 	})
 
-	t.Run("valid token passes through with device in context", func(t *testing.T) {
-		mw := platform.DeviceAuthenticator(&stubDeviceStore{info: validInfo})
+	validJWT, err := signer.Sign("device-uuid", "user-uuid")
+	if err != nil {
+		t.Fatalf("sign: %v", err)
+	}
+
+	t.Run("valid JWT passes through with device in context", func(t *testing.T) {
+		mw := platform.DeviceAuthenticator(signer)
 		req := httptest.NewRequest(http.MethodPost, "/readings", nil)
-		req.Header.Set("Authorization", "Bearer validtoken")
+		req.Header.Set("Authorization", "Bearer "+validJWT)
 		w := httptest.NewRecorder()
 
 		mw(next).ServeHTTP(w, req)
@@ -158,7 +164,7 @@ func TestDeviceAuthenticator(t *testing.T) {
 	})
 
 	t.Run("missing authorization header returns 401", func(t *testing.T) {
-		mw := platform.DeviceAuthenticator(&stubDeviceStore{info: validInfo})
+		mw := platform.DeviceAuthenticator(signer)
 		req := httptest.NewRequest(http.MethodPost, "/readings", nil)
 		w := httptest.NewRecorder()
 
@@ -169,10 +175,10 @@ func TestDeviceAuthenticator(t *testing.T) {
 		}
 	})
 
-	t.Run("invalid token returns 401", func(t *testing.T) {
-		mw := platform.DeviceAuthenticator(&stubDeviceStore{err: sensors.ErrTokenNotFound})
+	t.Run("invalid JWT returns 401", func(t *testing.T) {
+		mw := platform.DeviceAuthenticator(signer)
 		req := httptest.NewRequest(http.MethodPost, "/readings", nil)
-		req.Header.Set("Authorization", "Bearer badtoken")
+		req.Header.Set("Authorization", "Bearer not.a.valid.jwt")
 		w := httptest.NewRecorder()
 
 		mw(next).ServeHTTP(w, req)
@@ -183,9 +189,22 @@ func TestDeviceAuthenticator(t *testing.T) {
 	})
 
 	t.Run("malformed authorization header returns 401", func(t *testing.T) {
-		mw := platform.DeviceAuthenticator(&stubDeviceStore{info: validInfo})
+		mw := platform.DeviceAuthenticator(signer)
 		req := httptest.NewRequest(http.MethodPost, "/readings", nil)
 		req.Header.Set("Authorization", "notbearer token")
+		w := httptest.NewRecorder()
+
+		mw(next).ServeHTTP(w, req)
+
+		if w.Code != http.StatusUnauthorized {
+			t.Errorf("expected 401, got %d", w.Code)
+		}
+	})
+
+	t.Run("no-op signer returns 401", func(t *testing.T) {
+		mw := platform.DeviceAuthenticator(devicejwt.NewNoOp())
+		req := httptest.NewRequest(http.MethodPost, "/readings", nil)
+		req.Header.Set("Authorization", "Bearer "+validJWT)
 		w := httptest.NewRecorder()
 
 		mw(next).ServeHTTP(w, req)

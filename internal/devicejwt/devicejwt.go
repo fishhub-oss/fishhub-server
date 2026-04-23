@@ -13,8 +13,8 @@ import (
 
 // Signer issues signed JWTs for devices and exposes the public key for JWKS.
 type Signer interface {
-	// Sign returns a signed JWT with sub=deviceID. Returns "" when unconfigured.
-	Sign(deviceID string) (string, error)
+	// Sign returns a signed JWT with sub=deviceID and user_id claim. Returns "" when unconfigured.
+	Sign(deviceID, userID string) (string, error)
 	// PublicKey returns the RSA public key for JWKS serialisation. Returns nil when unconfigured.
 	PublicKey() *rsa.PublicKey
 	// KID returns the key ID embedded in the JWT header and JWKS entry.
@@ -61,12 +61,13 @@ func NewRSASigner(pemKey, kid, issuer string) (Signer, error) {
 	return &rsaSigner{privateKey: privateKey, kid: kid, issuer: issuer}, nil
 }
 
-func (s *rsaSigner) Sign(deviceID string) (string, error) {
+func (s *rsaSigner) Sign(deviceID, userID string) (string, error) {
 	now := time.Now()
 	token := jwt.NewWithClaims(jwt.SigningMethodRS256, jwt.MapClaims{
-		"iss": s.issuer,
-		"sub": deviceID,
-		"iat": now.Unix(),
+		"iss":     s.issuer,
+		"sub":     deviceID,
+		"user_id": userID,
+		"iat":     now.Unix(),
 		// No exp — known limitation, see fishhub-oss/fishhub-server#43
 	})
 	token.Header["kid"] = s.kid
@@ -86,7 +87,7 @@ func (s *rsaSigner) Issuer() string            { return s.issuer }
 type noopSigner struct{}
 
 func NewNoOp() Signer                         { return &noopSigner{} }
-func (n *noopSigner) Sign(_ string) (string, error) { return "", nil }
+func (n *noopSigner) Sign(_, _ string) (string, error) { return "", nil }
 func (n *noopSigner) PublicKey() *rsa.PublicKey      { return nil }
 func (n *noopSigner) KID() string                    { return "" }
 func (n *noopSigner) Issuer() string                 { return "" }

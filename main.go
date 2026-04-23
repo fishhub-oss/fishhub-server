@@ -119,7 +119,7 @@ func main() {
 	r.Post("/tokens", tokens.Create)
 	r.Post("/devices/activate", (&sensors.ActivateHandler{Store: provisioningStore, Signer: signer}).ServeHTTP)
 	r.Group(func(r chi.Router) {
-		r.Use(platform.DeviceAuthenticator(sensors.NewDeviceStore(db)))
+		r.Use(platform.DeviceAuthenticator(signer))
 		r.Post("/readings", readings.Create)
 	})
 	r.Group(func(r chi.Router) {
