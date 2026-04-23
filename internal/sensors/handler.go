@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/fishhub-oss/fishhub-server/internal/auth"
+	"github.com/fishhub-oss/fishhub-server/internal/devicejwt"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/render"
 )
@@ -283,7 +284,8 @@ func (h *ProvisionHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 // ActivateHandler handles POST /devices/activate (no auth — called by the device).
 type ActivateHandler struct {
-	Store ProvisioningStore
+	Store  ProvisioningStore
+	Signer devicejwt.Signer
 }
 
 type activateRequest struct {
@@ -302,7 +304,7 @@ func (h *ActivateHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	deviceID, err := h.Store.ClaimCode(r.Context(), req.Code)
+	deviceID, userID, err := h.Store.ClaimCode(r.Context(), req.Code)
 	if err != nil {
 		if errors.Is(err, ErrCodeNotFound) {
 			http.Error(w, "provisioning code not found", http.StatusNotFound)
@@ -316,17 +318,18 @@ func (h *ActivateHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	token, err := generateToken()
-	if err != nil {
+	if err := h.Store.Activate(r.Context(), deviceID); err != nil {
 		http.Error(w, "internal server error", http.StatusInternalServerError)
 		return
 	}
 
-	if err := h.Store.Activate(r.Context(), deviceID, token); err != nil {
+	jwtToken, err := h.Signer.Sign(deviceID, userID)
+	if err != nil {
+		log.Printf("devicejwt sign error: %v", err)
 		http.Error(w, "internal server error", http.StatusInternalServerError)
 		return
 	}
 
 	render.Status(r, http.StatusCreated)
-	render.JSON(w, r, activateResponse{Token: token, DeviceID: deviceID})
+	render.JSON(w, r, activateResponse{Token: jwtToken, DeviceID: deviceID})
 }

@@ -72,62 +72,47 @@ func (s *postgresProvisioningStore) GetOrCreatePending(ctx context.Context, user
 	return deviceID, code, nil
 }
 
-func (s *postgresProvisioningStore) ClaimCode(ctx context.Context, code string) (string, error) {
+func (s *postgresProvisioningStore) ClaimCode(ctx context.Context, code string) (string, string, error) {
 	// check existence and used state before attempting update
 	var usedAt sql.NullTime
 	err := s.db.QueryRowContext(ctx, `
 		SELECT used_at FROM provisioning_codes WHERE code = $1
 	`, code).Scan(&usedAt)
 	if errors.Is(err, sql.ErrNoRows) {
-		return "", ErrCodeNotFound
+		return "", "", ErrCodeNotFound
 	}
 	if err != nil {
-		return "", fmt.Errorf("lookup code: %w", err)
+		return "", "", fmt.Errorf("lookup code: %w", err)
 	}
 	if usedAt.Valid {
-		return "", ErrCodeAlreadyUsed
+		return "", "", ErrCodeAlreadyUsed
 	}
 
-	var deviceID string
+	var deviceID, userID string
 	err = s.db.QueryRowContext(ctx, `
 		UPDATE provisioning_codes
 		SET used_at = now()
 		WHERE code = $1 AND used_at IS NULL
-		RETURNING device_id
-	`, code).Scan(&deviceID)
+		RETURNING device_id, (SELECT user_id FROM devices WHERE id = device_id)
+	`, code).Scan(&deviceID, &userID)
 	if errors.Is(err, sql.ErrNoRows) {
 		// raced — another request claimed it between our SELECT and UPDATE
-		return "", ErrCodeAlreadyUsed
+		return "", "", ErrCodeAlreadyUsed
 	}
 	if err != nil {
-		return "", fmt.Errorf("claim code: %w", err)
+		return "", "", fmt.Errorf("claim code: %w", err)
 	}
-	return deviceID, nil
+	return deviceID, userID, nil
 }
 
-func (s *postgresProvisioningStore) Activate(ctx context.Context, deviceID, token string) error {
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("begin tx: %w", err)
-	}
-	defer tx.Rollback()
-
-	if _, err := tx.ExecContext(ctx, `
-		INSERT INTO device_tokens (device_id, token) VALUES ($1, $2)
-	`, deviceID, token); err != nil {
-		return fmt.Errorf("insert device token: %w", err)
-	}
-
-	if _, err := tx.ExecContext(ctx, `
+// Activate sets the device status to active.
+// Note: device_tokens is no longer written here — JWT-based auth supersedes Bearer tokens.
+// The device_tokens table and LookupByToken are deprecated; see cleanup issue #46.
+func (s *postgresProvisioningStore) Activate(ctx context.Context, deviceID string) error {
+	_, err := s.db.ExecContext(ctx, `
 		UPDATE devices SET status = 'active' WHERE id = $1
-	`, deviceID); err != nil {
-		return fmt.Errorf("activate device: %w", err)
-	}
-
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("commit tx: %w", err)
-	}
-	return nil
+	`, deviceID)
+	return err
 }
 
 func generateCode() (string, error) {

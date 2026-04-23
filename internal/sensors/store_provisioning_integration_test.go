@@ -82,7 +82,7 @@ func TestClaimCode_integration(t *testing.T) {
 			t.Fatalf("setup: %v", err)
 		}
 
-		claimedDeviceID, err := store.ClaimCode(ctx, code)
+		claimedDeviceID, _, err := store.ClaimCode(ctx, code)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -98,18 +98,18 @@ func TestClaimCode_integration(t *testing.T) {
 			t.Fatalf("setup: %v", err)
 		}
 
-		if _, err := store.ClaimCode(ctx, code); err != nil {
+		if _, _, err := store.ClaimCode(ctx, code); err != nil {
 			t.Fatalf("first claim: %v", err)
 		}
 
-		_, err = store.ClaimCode(ctx, code)
+		_, _, err = store.ClaimCode(ctx, code)
 		if !errors.Is(err, sensors.ErrCodeAlreadyUsed) {
 			t.Errorf("expected ErrCodeAlreadyUsed, got %v", err)
 		}
 	})
 
 	t.Run("unknown code returns ErrCodeNotFound", func(t *testing.T) {
-		_, err := store.ClaimCode(ctx, "XXXXXX")
+		_, _, err := store.ClaimCode(ctx, "XXXXXX")
 		if !errors.Is(err, sensors.ErrCodeNotFound) {
 			t.Errorf("expected ErrCodeNotFound, got %v", err)
 		}
@@ -123,26 +123,32 @@ func TestActivate_integration(t *testing.T) {
 	ctx := context.Background()
 	userID := platform.SeedUserID()
 
-	t.Run("sets device status to active and stores token", func(t *testing.T) {
+	t.Run("sets device status to active", func(t *testing.T) {
 		deviceID, code, err := store.GetOrCreatePending(ctx, userID)
 		if err != nil {
 			t.Fatalf("setup provision: %v", err)
 		}
-		if _, err := store.ClaimCode(ctx, code); err != nil {
+		if _, _, err := store.ClaimCode(ctx, code); err != nil {
 			t.Fatalf("setup claim: %v", err)
 		}
 
-		token := "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2"
-		if err := store.Activate(ctx, deviceID, token); err != nil {
+		if err := store.Activate(ctx, deviceID); err != nil {
 			t.Fatalf("activate: %v", err)
 		}
 
-		info, err := deviceStore.LookupByToken(ctx, token)
+		devices, err := deviceStore.ListByUserID(ctx, userID, "active")
 		if err != nil {
-			t.Fatalf("lookup: %v", err)
+			t.Fatalf("list active: %v", err)
 		}
-		if info.DeviceID != deviceID {
-			t.Errorf("expected device_id %s, got %s", deviceID, info.DeviceID)
+		found := false
+		for _, d := range devices {
+			if d.ID == deviceID {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("expected device %s to be active", deviceID)
 		}
 	})
 
@@ -160,11 +166,10 @@ func TestActivate_integration(t *testing.T) {
 		if err != nil {
 			t.Fatalf("setup provision: %v", err)
 		}
-		if _, err := store.ClaimCode(ctx, code); err != nil {
+		if _, _, err := store.ClaimCode(ctx, code); err != nil {
 			t.Fatalf("setup claim: %v", err)
 		}
-		token := "b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3"
-		if err := store.Activate(ctx, deviceID, token); err != nil {
+		if err := store.Activate(ctx, deviceID); err != nil {
 			t.Fatalf("activate: %v", err)
 		}
 

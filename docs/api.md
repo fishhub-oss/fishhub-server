@@ -17,7 +17,7 @@ Health check. No authentication required.
 
 ## POST /tokens
 
-Creates a new device and issues a Bearer token for it. The token is hardcoded into the ESP32 firmware (`DEVICE_TOKEN` in `config.h`). Always creates the device under the seed user for the PoC.
+> **Deprecated.** Legacy endpoint that creates a device and issues a hex Bearer token. Superseded by the `POST /api/devices/provision` → `POST /devices/activate` flow. Will be removed in a future cleanup (see issue #46).
 
 No request body required.
 
@@ -30,12 +30,6 @@ No request body required.
 }
 ```
 
-| Field | Description |
-|---|---|
-| `token` | 64-char hex string. Copy into firmware `config.h` as `DEVICE_TOKEN`. |
-| `device_id` | UUID of the newly created device record. |
-| `user_id` | UUID of the owning user (always the seed user for the PoC). |
-
 **Response `500`** — DB failure
 
 ---
@@ -46,7 +40,7 @@ Accepts a SenML temperature reading from an authenticated device.
 
 **Headers**
 ```
-Authorization: Bearer <device-token>
+Authorization: Bearer <device-jwt>
 Content-Type: application/json
 ```
 
@@ -71,7 +65,7 @@ Content-Type: application/json
 
 **Response `400`** — malformed JSON, missing `bt`, or no `temperature` entry
 
-**Response `401`** — missing or invalid Bearer token
+**Response `401`** — missing or invalid device JWT
 
 **Response `500`** — InfluxDB write failure
 
@@ -203,7 +197,7 @@ No request body required.
 
 ## POST /devices/activate
 
-Called by the ESP32 after the user enters the pairing code on the captive portal. No session auth required — the code itself is the credential. Marks the device active and issues a Bearer token.
+Called by the ESP32 after the user enters the pairing code on the captive portal. No session auth required — the code itself is the credential. Marks the device active and issues a signed device JWT.
 
 No auth header required.
 
@@ -217,14 +211,14 @@ No auth header required.
 **Response `201`**
 ```json
 {
-  "token":     "b0a1aba84035c6844d739100e3a93f5911f7ecaf82cbf5bbb33306a1509854a5",
+  "token":     "<signed-jwt>",
   "device_id": "a1b2c3d4-..."
 }
 ```
 
 | Field | Description |
 |---|---|
-| `token` | 64-char hex Bearer token. The device stores this in NVS and uses it for all subsequent `/readings` calls. |
+| `token` | RS256-signed JWT (`sub`=`device_id`, `user_id`, `iss`=`IDP_HOST`, `iat`). The device stores this in NVS and uses it as the `Authorization: Bearer` header for `/readings` calls and as the MQTT password when connecting to HiveMQ. Empty string if `DEVICE_JWT_PRIVATE_KEY` is not configured on the server. |
 | `device_id` | UUID of the now-active device. |
 
 **Response `400`** — missing or empty `code`
@@ -234,6 +228,30 @@ No auth header required.
 **Response `409`** — code already used
 
 **Response `500`** — DB or token-generation failure
+
+---
+
+## GET /.well-known/jwks.json
+
+Returns the server's public key set in JWK format. Used by HiveMQ to verify device MQTT JWTs. No authentication required.
+
+**Response `200`**
+```json
+{
+  "keys": [
+    {
+      "kty": "RSA",
+      "kid": "<DEVICE_JWT_KID>",
+      "use": "sig",
+      "alg": "RS256",
+      "n":   "<base64url-encoded modulus>",
+      "e":   "<base64url-encoded exponent>"
+    }
+  ]
+}
+```
+
+Returns `{"keys":[]}` if `DEVICE_JWT_PRIVATE_KEY` is not configured.
 
 ---
 

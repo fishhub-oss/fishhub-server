@@ -2,6 +2,7 @@ package sensors_test
 
 import (
 	"context"
+	"crypto/rsa"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -11,7 +12,6 @@ import (
 	"time"
 
 	"github.com/fishhub-oss/fishhub-server/internal/auth"
-	"github.com/fishhub-oss/fishhub-server/internal/platform"
 	"github.com/fishhub-oss/fishhub-server/internal/sensors"
 	"github.com/go-chi/chi/v5"
 )
@@ -120,20 +120,8 @@ func (s *stubReadingQuerier) QueryReadings(_ context.Context, _ sensors.ReadingQ
 }
 
 func withDevice(r *http.Request, info sensors.DeviceInfo) *http.Request {
-	var enriched *http.Request
-	called := false
-	mw := platform.DeviceAuthenticator(&stubDeviceStore{info: info})
-	inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		enriched = r
-		called = true
-	})
-	r.Header.Set("Authorization", "Bearer anytoken")
-	w := httptest.NewRecorder()
-	mw(inner).ServeHTTP(w, r)
-	if !called {
-		panic("middleware did not call next")
-	}
-	return enriched
+	ctx := context.WithValue(r.Context(), sensors.DeviceContextKey, info)
+	return r.WithContext(ctx)
 }
 
 const validSenML = `[{"bn":"fishhub/device/","bt":1713000000,"e":[{"n":"temperature","u":"Cel","v":23.4}]}]`
@@ -432,11 +420,11 @@ func (s *stubProvisioningStore) GetOrCreatePending(_ context.Context, _ string) 
 	return s.deviceID, s.code, s.getErr
 }
 
-func (s *stubProvisioningStore) ClaimCode(_ context.Context, _ string) (string, error) {
-	return s.claimedDeviceID, s.claimErr
+func (s *stubProvisioningStore) ClaimCode(_ context.Context, _ string) (string, string, error) {
+	return s.claimedDeviceID, "user-uuid", s.claimErr
 }
 
-func (s *stubProvisioningStore) Activate(_ context.Context, _, _ string) error {
+func (s *stubProvisioningStore) Activate(_ context.Context, _ string) error {
 	return s.activateErr
 }
 
@@ -487,14 +475,26 @@ func TestProvisionHandler(t *testing.T) {
 	})
 }
 
+// stubSigner implements devicejwt.Signer for tests.
+type stubSigner struct {
+	token string
+	err   error
+}
+
+func (s *stubSigner) Sign(_, _ string) (string, error)       { return s.token, s.err }
+func (s *stubSigner) PublicKey() *rsa.PublicKey              { return nil }
+func (s *stubSigner) KID() string                            { return "" }
+func (s *stubSigner) Issuer() string                         { return "" }
+
 // --- ActivateHandler ---
 
 func TestActivateHandler(t *testing.T) {
 	validBody := `{"code":"ABC123"}`
 
-	t.Run("returns 201 with token and device_id", func(t *testing.T) {
+	t.Run("returns 201 with jwt token and device_id", func(t *testing.T) {
 		h := &sensors.ActivateHandler{
-			Store: &stubProvisioningStore{claimedDeviceID: "dev-uuid"},
+			Store:  &stubProvisioningStore{claimedDeviceID: "dev-uuid"},
+			Signer: &stubSigner{token: "signed.jwt.token"},
 		}
 		req := httptest.NewRequest(http.MethodPost, "/devices/activate", strings.NewReader(validBody))
 		rec := httptest.NewRecorder()
@@ -510,8 +510,21 @@ func TestActivateHandler(t *testing.T) {
 		if body["device_id"] != "dev-uuid" {
 			t.Errorf("expected device_id dev-uuid, got %s", body["device_id"])
 		}
-		if len(body["token"]) != 64 {
-			t.Errorf("expected 64-char token, got %d chars", len(body["token"]))
+		if body["token"] != "signed.jwt.token" {
+			t.Errorf("expected token=signed.jwt.token, got %q", body["token"])
+		}
+	})
+
+	t.Run("signer error returns 500", func(t *testing.T) {
+		h := &sensors.ActivateHandler{
+			Store:  &stubProvisioningStore{claimedDeviceID: "dev-uuid"},
+			Signer: &stubSigner{err: errors.New("sign failed")},
+		}
+		req := httptest.NewRequest(http.MethodPost, "/devices/activate", strings.NewReader(validBody))
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if rec.Code != http.StatusInternalServerError {
+			t.Errorf("expected 500, got %d", rec.Code)
 		}
 	})
 
