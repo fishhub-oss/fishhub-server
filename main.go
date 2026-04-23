@@ -94,10 +94,6 @@ func main() {
 		log.Printf("warning: DEVICE_JWT_PRIVATE_KEY not set — token will not be issued at activation")
 	}
 
-	tokens := &sensors.TokensHandler{
-		Store:  sensors.NewTokenStore(db),
-		UserID: platform.SeedUserID(),
-	}
 	readings := &sensors.ReadingsHandler{
 		Writer: influxClient,
 	}
@@ -121,7 +117,6 @@ func main() {
 	provisioningStore := sensors.NewProvisioningStore(db)
 
 	r.Get("/.well-known/jwks.json", (&jwtutil.JWKSHandler{Signer: jwkSigner}).ServeHTTP)
-	r.Post("/tokens", tokens.Create)
 	r.Post("/devices/activate", (&sensors.ActivateHandler{Store: provisioningStore, Signer: deviceSigner}).ServeHTTP)
 	r.Group(func(r chi.Router) {
 		r.Use(platform.DeviceAuthenticator(deviceSigner))

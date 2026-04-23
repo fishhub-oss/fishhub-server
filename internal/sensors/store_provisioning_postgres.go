@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/rand"
 	"database/sql"
-	"encoding/hex"
 	"errors"
 	"fmt"
 )
@@ -127,11 +126,3 @@ func generateCode() (string, error) {
 	return string(code), nil
 }
 
-// generateToken produces a 64-char hex Bearer token.
-func generateToken() (string, error) {
-	raw := make([]byte, 32)
-	if _, err := rand.Read(raw); err != nil {
-		return "", fmt.Errorf("generate token: %w", err)
-	}
-	return hex.EncodeToString(raw), nil
-}

@@ -48,31 +48,6 @@ func (h *DevicesHandler) List(w http.ResponseWriter, r *http.Request) {
 	render.JSON(w, r, resp)
 }
 
-type TokenResponse struct {
-	Token    string `json:"token"`
-	DeviceID string `json:"device_id"`
-	UserID   string `json:"user_id"`
-}
-
-type TokensHandler struct {
-	Store  TokenStore
-	UserID string
-}
-
-func (h *TokensHandler) Create(w http.ResponseWriter, r *http.Request) {
-	result, err := h.Store.CreateToken(r.Context(), h.UserID)
-	if err != nil {
-		http.Error(w, "failed to create token", http.StatusInternalServerError)
-		return
-	}
-
-	render.Status(r, http.StatusCreated)
-	render.JSON(w, r, TokenResponse{
-		Token:    result.Token,
-		DeviceID: result.DeviceID,
-		UserID:   result.UserID,
-	})
-}
 
 type ReadingsHandler struct {
 	Writer ReadingWriter
