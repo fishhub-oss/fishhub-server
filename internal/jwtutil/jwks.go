@@ -1,4 +1,4 @@
-package devicejwt
+package jwtutil
 
 import (
 	"encoding/base64"
@@ -20,7 +20,7 @@ type jwkSet struct {
 	Keys []jwk `json:"keys"`
 }
 
-// JWKSHandler serves GET /.well-known/jwks.json.
+// JWKSHandler serves GET /.well-known/jwks.json for a given Signer.
 type JWKSHandler struct {
 	Signer Signer
 }
@@ -34,7 +34,7 @@ func (h *JWKSHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	set := jwkSet{
+	json.NewEncoder(w).Encode(jwkSet{
 		Keys: []jwk{
 			{
 				Kty: "RSA",
@@ -45,6 +45,5 @@ func (h *JWKSHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				E:   base64.RawURLEncoding.EncodeToString(big.NewInt(int64(pub.E)).Bytes()),
 			},
 		},
-	}
-	json.NewEncoder(w).Encode(set)
+	})
 }

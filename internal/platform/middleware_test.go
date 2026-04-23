@@ -13,6 +13,7 @@ import (
 
 	"github.com/fishhub-oss/fishhub-server/internal/auth"
 	"github.com/fishhub-oss/fishhub-server/internal/devicejwt"
+	"github.com/fishhub-oss/fishhub-server/internal/jwtutil"
 	"github.com/fishhub-oss/fishhub-server/internal/platform"
 	"github.com/fishhub-oss/fishhub-server/internal/sensors"
 )
@@ -45,11 +46,11 @@ func newTestSigner(t *testing.T) devicejwt.Signer {
 		Type:  "RSA PRIVATE KEY",
 		Bytes: x509.MarshalPKCS1PrivateKey(key),
 	})
-	s, err := devicejwt.NewRSASigner(string(pemBytes), "kid-test", "https://test.example")
+	inner, err := jwtutil.NewRSASigner(string(pemBytes), "kid-test")
 	if err != nil {
 		t.Fatalf("NewRSASigner: %v", err)
 	}
-	return s
+	return devicejwt.New(inner, "https://test.example")
 }
 
 func TestSessionAuthenticator(t *testing.T) {

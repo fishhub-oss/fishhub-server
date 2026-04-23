@@ -2,92 +2,55 @@ package devicejwt
 
 import (
 	"crypto/rsa"
-	"crypto/x509"
-	"encoding/pem"
-	"errors"
 	"fmt"
 	"time"
 
-	"github.com/golang-jwt/jwt/v5"
+	"github.com/fishhub-oss/fishhub-server/internal/jwtutil"
 )
 
-// Signer issues signed JWTs for devices and exposes the public key for JWKS.
+// Signer issues signed JWTs for devices. It is a domain wrapper over jwtutil.Signer
+// that assembles device-specific claims (sub, user_id, iss, iat).
 type Signer interface {
-	// Sign returns a signed JWT with sub=deviceID and user_id claim. Returns "" when unconfigured.
+	// Sign returns a signed JWT with sub=deviceID and user_id claim.
+	// Returns "" when unconfigured.
 	Sign(deviceID, userID string) (string, error)
 	// PublicKey returns the RSA public key for JWKS serialisation. Returns nil when unconfigured.
 	PublicKey() *rsa.PublicKey
 	// KID returns the key ID embedded in the JWT header and JWKS entry.
 	KID() string
-	// Issuer returns the iss claim value.
-	Issuer() string
 }
 
-type rsaSigner struct {
-	privateKey *rsa.PrivateKey
-	kid        string
-	issuer     string
+type deviceSigner struct {
+	inner  jwtutil.Signer
+	issuer string
 }
 
-// NewRSASigner parses a PEM-encoded RSA private key and returns a Signer.
-func NewRSASigner(pemKey, kid, issuer string) (Signer, error) {
-	block, _ := pem.Decode([]byte(pemKey))
-	if block == nil {
-		return nil, errors.New("devicejwt: failed to decode PEM block")
-	}
-
-	var privateKey *rsa.PrivateKey
-	switch block.Type {
-	case "RSA PRIVATE KEY":
-		k, err := x509.ParsePKCS1PrivateKey(block.Bytes)
-		if err != nil {
-			return nil, fmt.Errorf("devicejwt: parse PKCS1 key: %w", err)
-		}
-		privateKey = k
-	case "PRIVATE KEY":
-		k, err := x509.ParsePKCS8PrivateKey(block.Bytes)
-		if err != nil {
-			return nil, fmt.Errorf("devicejwt: parse PKCS8 key: %w", err)
-		}
-		rsaKey, ok := k.(*rsa.PrivateKey)
-		if !ok {
-			return nil, errors.New("devicejwt: PKCS8 key is not RSA")
-		}
-		privateKey = rsaKey
-	default:
-		return nil, fmt.Errorf("devicejwt: unsupported PEM block type %q", block.Type)
-	}
-
-	return &rsaSigner{privateKey: privateKey, kid: kid, issuer: issuer}, nil
+// New wraps a jwtutil.Signer with device-specific claim assembly.
+func New(inner jwtutil.Signer, issuer string) Signer {
+	return &deviceSigner{inner: inner, issuer: issuer}
 }
 
-func (s *rsaSigner) Sign(deviceID, userID string) (string, error) {
-	now := time.Now()
-	token := jwt.NewWithClaims(jwt.SigningMethodRS256, jwt.MapClaims{
+func (s *deviceSigner) Sign(deviceID, userID string) (string, error) {
+	token, err := s.inner.Sign(map[string]any{
 		"iss":     s.issuer,
 		"sub":     deviceID,
 		"user_id": userID,
-		"iat":     now.Unix(),
+		"iat":     time.Now().Unix(),
 		// No exp — known limitation, see fishhub-oss/fishhub-server#43
 	})
-	token.Header["kid"] = s.kid
-
-	signed, err := token.SignedString(s.privateKey)
 	if err != nil {
-		return "", fmt.Errorf("devicejwt: sign: %w", err)
+		return "", fmt.Errorf("devicejwt: %w", err)
 	}
-	return signed, nil
+	return token, nil
 }
 
-func (s *rsaSigner) PublicKey() *rsa.PublicKey { return &s.privateKey.PublicKey }
-func (s *rsaSigner) KID() string               { return s.kid }
-func (s *rsaSigner) Issuer() string            { return s.issuer }
+func (s *deviceSigner) PublicKey() *rsa.PublicKey { return s.inner.PublicKey() }
+func (s *deviceSigner) KID() string               { return s.inner.KID() }
 
-// noopSigner is returned when DEVICE_JWT_PRIVATE_KEY is not configured.
+// noopSigner is returned when no private key is configured.
 type noopSigner struct{}
 
-func NewNoOp() Signer                         { return &noopSigner{} }
+func NewNoOp() Signer                                   { return &noopSigner{} }
 func (n *noopSigner) Sign(_, _ string) (string, error) { return "", nil }
-func (n *noopSigner) PublicKey() *rsa.PublicKey      { return nil }
-func (n *noopSigner) KID() string                    { return "" }
-func (n *noopSigner) Issuer() string                 { return "" }
+func (n *noopSigner) PublicKey() *rsa.PublicKey         { return nil }
+func (n *noopSigner) KID() string                       { return "" }

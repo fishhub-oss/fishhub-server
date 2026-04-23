@@ -13,6 +13,7 @@ import (
 	"github.com/fishhub-oss/fishhub-server/internal/account"
 	"github.com/fishhub-oss/fishhub-server/internal/auth"
 	"github.com/fishhub-oss/fishhub-server/internal/devicejwt"
+	"github.com/fishhub-oss/fishhub-server/internal/jwtutil"
 	"github.com/fishhub-oss/fishhub-server/internal/platform"
 	"github.com/fishhub-oss/fishhub-server/internal/sensors"
 	"github.com/go-chi/chi/v5"
@@ -76,17 +77,21 @@ func main() {
 		os.Exit(1)
 	}
 
-	signer := devicejwt.Signer(devicejwt.NewNoOp())
+	jwkSigner := jwtutil.Signer(jwtutil.NewNoOp())
+	deviceSigner := devicejwt.Signer(devicejwt.NewNoOp())
 	if pemKey := os.Getenv("DEVICE_JWT_PRIVATE_KEY"); pemKey != "" {
-		s, err := devicejwt.NewRSASigner(pemKey, os.Getenv("DEVICE_JWT_KID"), os.Getenv("IDP_HOST"))
+		kid := os.Getenv("DEVICE_JWT_KID")
+		issuer := os.Getenv("IDP_HOST")
+		inner, err := jwtutil.NewRSASigner(pemKey, kid)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "devicejwt init: %v\n", err)
 			os.Exit(1)
 		}
-		signer = s
-		log.Printf("device JWT signer configured: kid=%s issuer=%s", os.Getenv("DEVICE_JWT_KID"), os.Getenv("IDP_HOST"))
+		jwkSigner = inner
+		deviceSigner = devicejwt.New(inner, issuer)
+		log.Printf("device JWT signer configured: kid=%s issuer=%s", kid, issuer)
 	} else {
-		log.Printf("warning: DEVICE_JWT_PRIVATE_KEY not set — mqtt_token will not be issued at activation")
+		log.Printf("warning: DEVICE_JWT_PRIVATE_KEY not set — token will not be issued at activation")
 	}
 
 	tokens := &sensors.TokensHandler{
@@ -115,11 +120,11 @@ func main() {
 	r.Post("/auth/logout", (&auth.LogoutHandler{Service: authSvc}).ServeHTTP)
 	provisioningStore := sensors.NewProvisioningStore(db)
 
-	r.Get("/.well-known/jwks.json", (&devicejwt.JWKSHandler{Signer: signer}).ServeHTTP)
+	r.Get("/.well-known/jwks.json", (&jwtutil.JWKSHandler{Signer: jwkSigner}).ServeHTTP)
 	r.Post("/tokens", tokens.Create)
-	r.Post("/devices/activate", (&sensors.ActivateHandler{Store: provisioningStore, Signer: signer}).ServeHTTP)
+	r.Post("/devices/activate", (&sensors.ActivateHandler{Store: provisioningStore, Signer: deviceSigner}).ServeHTTP)
 	r.Group(func(r chi.Router) {
-		r.Use(platform.DeviceAuthenticator(signer))
+		r.Use(platform.DeviceAuthenticator(deviceSigner))
 		r.Post("/readings", readings.Create)
 	})
 	r.Group(func(r chi.Router) {
