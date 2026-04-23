@@ -12,17 +12,13 @@ var (
 	ErrEmptyEntries    = errors.New("payload must contain at least one entry")
 )
 
-type senmlEntry struct {
+type senmlRecord struct {
+	BaseName  string   `json:"bn"`
+	BaseTime  int64    `json:"bt"`
 	Name      string   `json:"n"`
 	Unit      string   `json:"u"`
 	Value     *float64 `json:"v"`
 	BoolValue *bool    `json:"vb"`
-}
-
-type senmlRecord struct {
-	BaseName string       `json:"bn"`
-	BaseTime int64        `json:"bt"`
-	Entries  []senmlEntry `json:"e"`
 }
 
 type Measurement struct {
@@ -41,25 +37,25 @@ func ParseSenML(body []byte) (SenMLReading, error) {
 	if err := json.Unmarshal(body, &records); err != nil {
 		return SenMLReading{}, fmt.Errorf("invalid JSON: %w", err)
 	}
-	if len(records) == 0 {
+	if len(records) < 2 {
 		return SenMLReading{}, ErrEmptyPayload
 	}
 
-	rec := records[0]
-	if rec.BaseTime == 0 {
+	base := records[0]
+	if base.BaseTime == 0 {
 		return SenMLReading{}, ErrMissingBaseTime
 	}
 
 	var measurements []Measurement
-	for _, e := range rec.Entries {
-		if e.Name == "" {
+	for _, r := range records[1:] {
+		if r.Name == "" {
 			continue
 		}
 		switch {
-		case e.Value != nil:
-			measurements = append(measurements, Measurement{Name: e.Name, Unit: e.Unit, Value: *e.Value})
-		case e.BoolValue != nil:
-			measurements = append(measurements, Measurement{Name: e.Name, Unit: e.Unit, Value: *e.BoolValue})
+		case r.Value != nil:
+			measurements = append(measurements, Measurement{Name: r.Name, Unit: r.Unit, Value: *r.Value})
+		case r.BoolValue != nil:
+			measurements = append(measurements, Measurement{Name: r.Name, Unit: r.Unit, Value: *r.BoolValue})
 		}
 	}
 
@@ -67,5 +63,5 @@ func ParseSenML(body []byte) (SenMLReading, error) {
 		return SenMLReading{}, ErrEmptyEntries
 	}
 
-	return SenMLReading{BaseTime: rec.BaseTime, Measurements: measurements}, nil
+	return SenMLReading{BaseTime: base.BaseTime, Measurements: measurements}, nil
 }
