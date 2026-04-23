@@ -24,8 +24,11 @@ devices
 ├── id          UUID  PK  default gen_random_uuid()
 ├── user_id     UUID  FK → users.id  NOT NULL
 ├── name        TEXT  (nullable)
+├── status      TEXT  NOT NULL  default 'pending'  -- 'pending' | 'active'
 └── created_at  TIMESTAMPTZ  default now()
 ```
+
+A device starts as `pending` when created via `POST /api/devices/provision`. It transitions to `active` when the ESP32 claims the pairing code via `POST /devices/activate`.
 
 ### `device_tokens`
 ```
@@ -37,6 +40,18 @@ device_tokens
 ```
 
 One token per device (enforced by UNIQUE on `device_id`). Tokens are stored as plaintext 64-char hex strings.
+
+### `provisioning_codes`
+```
+provisioning_codes
+├── id         UUID  PK  default gen_random_uuid()
+├── code       CHAR(6)  UNIQUE NOT NULL
+├── device_id  UUID  FK → devices.id  NOT NULL
+├── used_at    TIMESTAMPTZ  (nullable)
+└── created_at TIMESTAMPTZ  default now()
+```
+
+Created alongside the pending device in `POST /api/devices/provision`. The `code` is a 6-character alphanumeric string displayed to the user (e.g. as a QR code) so they can enter it on the device captive portal. `used_at` is set atomically by `ProvisioningStore.ClaimCode` — the `WHERE used_at IS NULL` guard makes the claim race-safe. Once claimed the device is activated and the code cannot be reused.
 
 ### `refresh_tokens`
 ```
@@ -70,6 +85,7 @@ Created/updated automatically via `account.AccountEventHandler.OnUserVerified` o
 
 ```
 users ──< devices ──< device_tokens
+               └──< provisioning_codes
 users ──< refresh_tokens
 users ──  accounts  (1:1 via user_id UNIQUE)
 ```
@@ -93,6 +109,8 @@ They run automatically on server startup via `platform.Migrate()`. Current migra
 | 004 | Add `provider` + `provider_sub` columns to `users` |
 | 005 | Create `refresh_tokens` table |
 | 006 | Create `accounts` table |
+| 007 | Add `status` column to `devices` table (`pending` \| `active`, default `pending`) |
+| 008 | Create `provisioning_codes` table |
 
 To add a migration, create the next numbered `.up.sql` / `.down.sql` pair in `db/migrations/`. Migrations run on the next server startup.
 

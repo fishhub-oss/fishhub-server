@@ -28,3 +28,4 @@ curl -s localhost:8080/health                # verify server is up
 - **Migrations:** golang-migrate
 - **Auth:** Google OIDC → JWT session + refresh token rotation; device Bearer tokens
 - **Tests:** unit (stubs) + integration (testcontainers)
+- **Deployment:** Railway (`railway.toml` — builds Go binary with `go build`, starts server, health-checks `/health`; binds to `PORT` env var)
