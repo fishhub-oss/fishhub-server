@@ -5,13 +5,20 @@
 ```
 fishhub-server/
 ├── main.go                  # entry point: wires everything together
+├── railway.toml             # Railway deployment config (build + start commands, health check)
 ├── db/
 │   └── migrations/          # SQL migration files (golang-migrate format)
 └── internal/
     ├── sensors/             # domain: device tokens, readings ingestion + query, InfluxDB, SenML
-    │   ├── handler.go               TokensHandler, ReadingsHandler, ReadingsQueryHandler, DevicesHandler
-    │   ├── store.go                 DeviceStore + TokenStore interfaces
-    │   ├── store_postgres.go        Postgres implementations
+    │   ├── handler.go               TokensHandler, ReadingsHandler, ReadingsQueryHandler,
+    │   │                            DevicesHandler, ProvisionHandler, ActivateHandler,
+    │   │                            PatchDeviceHandler
+    │   ├── store.go                 DeviceStore, TokenStore, ProvisioningStore interfaces
+    │   │                            + error sentinels (ErrCodeNotFound, ErrCodeAlreadyUsed,
+    │   │                            ErrDeviceNotFound, ErrTokenNotFound)
+    │   ├── store_postgres.go        DeviceStore + TokenStore Postgres impls (incl. PatchDevice)
+    │   ├── store_provisioning_postgres.go  ProvisioningStore Postgres impl
+    │   │                            (GetOrCreatePending, ClaimCode, Activate)
     │   ├── influx.go                InfluxClient (ReadingWriter + ReadingQuerier), influxDBClient
     │   ├── senml.go                 SenML RFC 8428 parser
     │   └── model.go                 DeviceInfo, TokenResult, Reading, context helpers
@@ -94,8 +101,52 @@ SessionAuthenticator middleware
 
 DevicesHandler.List / ReadingsQueryHandler.List
   ├── ClaimsFromContext(ctx)
-  ├── DeviceStore.ListByUserID / FindByIDAndUserID
+  ├── DeviceStore.ListByUserID (accepts optional ?status filter) / FindByIDAndUserID
   └── InfluxClient.QueryReadings (for readings endpoint)
+```
+
+### POST /api/devices/provision → device pairing (session JWT)
+```
+SessionAuthenticator middleware
+  └── store Claims{UserID} in context
+
+ProvisionHandler
+  ├── ClaimsFromContext(ctx)
+  └── ProvisioningStore.GetOrCreatePending(ctx, userID)
+        ├── atomic upsert: INSERT INTO devices WHERE NOT EXISTS pending for user
+        ├── INSERT INTO provisioning_codes (code CHAR(6), device_id) ON CONFLICT DO NOTHING
+        └── return (code, device_id)
+  └── 201 {"code":"...","device_id":"..."}
+```
+
+### POST /devices/activate → firmware token issuance (no auth)
+```
+ActivateHandler
+  ├── decode body {code}
+  ├── 400 if code missing
+  ├── ProvisioningStore.ClaimCode(ctx, code)
+  │     ├── UPDATE provisioning_codes SET used_at=now() WHERE code=? AND used_at IS NULL
+  │     ├── 404 (ErrCodeNotFound) if no row matched
+  │     └── 409 (ErrCodeAlreadyUsed) if row exists but used_at already set
+  ├── crypto/rand → 32 bytes → 64-char hex Bearer token
+  └── ProvisioningStore.Activate(ctx, deviceID, token)
+        ├── INSERT INTO device_tokens (device_id, token)
+        └── UPDATE devices SET status='active' WHERE id=deviceID
+  └── 201 {"token":"...","device_id":"..."}
+```
+
+### PATCH /api/devices/{id} → rename device (session JWT)
+```
+SessionAuthenticator middleware
+  └── store Claims{UserID} in context
+
+PatchDeviceHandler
+  ├── ClaimsFromContext(ctx)
+  ├── decode body {name}; 400 if empty
+  ├── DeviceStore.PatchDevice(ctx, deviceID, userID, name)
+  │     ├── UPDATE devices SET name=? WHERE id=? AND user_id=?
+  │     └── 404 (ErrDeviceNotFound) if no row matched
+  └── 200 {"id":"...","name":"...","created_at":"..."}
 ```
 
 ### POST /auth/verify → session issuance
@@ -107,4 +158,5 @@ VerifyHandler
   │     └── UserEventHandler.OnUserVerified → AccountStore.Upsert
   ├── AuthService.IssueSessionJWT(userID) → signed HS256 JWT
   └── AuthService.IssueRefreshToken(ctx, userID) → stored hash, return raw
+  └── 200 {"token":"<jwt>","refresh_token":"<64-char-hex>"}
 ```

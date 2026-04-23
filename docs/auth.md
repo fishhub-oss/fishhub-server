@@ -8,11 +8,17 @@ FishHub has two separate authentication paths: **device Bearer tokens** (ESP32 �
 
 ### Token lifecycle
 
-1. **Issue** — call `POST /tokens`. The server creates a device row and generates a cryptographically random 64-char hex token (32 bytes from `crypto/rand`).
-2. **Flash** — copy the token into the ESP32 firmware's `include/config.h` as `DEVICE_TOKEN`.
-3. **Authenticate** — the firmware sends `Authorization: Bearer <token>` on every `POST /readings`.
+There are two paths for a device to obtain a Bearer token:
 
-For the PoC there is no revocation. Tokens are valid until the `devices` row is deleted.
+**Legacy / seed path** — `POST /tokens`. The server creates a device row and generates a cryptographically random 64-char hex token (32 bytes from `crypto/rand`). Copy the token into the ESP32 firmware's `include/config.h` as `DEVICE_TOKEN`. Used for the initial PoC setup.
+
+**Provisioning path** (production flow):
+1. Web user calls `POST /api/devices/provision` (session JWT required) — receives a 6-char pairing `code` and a `device_id`.
+2. User enters the code on the device captive portal (or transmits it via QR code).
+3. ESP32 calls `POST /devices/activate` with `{ "code": "..." }` (no auth). The server claims the code atomically, generates a 64-char hex Bearer token, activates the device, and returns `{ token, device_id }`.
+4. The firmware stores the token in NVS and sends `Authorization: Bearer <token>` on every `POST /readings`.
+
+For the PoC there is no revocation. Tokens are valid until the `device_tokens` row is deleted.
 
 ### `DeviceAuthenticator` middleware (`internal/platform/middleware.go`)
 
@@ -54,10 +60,12 @@ Browser                    Next.js (fishhub-web)       fishhub-server
   |                  |                         |-- DB upsert user
   |                  |                         |-- create/update account
   |                  |                         |-- issue session JWT + refresh token
-  |                  |<-- {token, refresh_token}             |
-  |                  |-- set httpOnly cookies: session, refresh_token
+  |                  |<-- 200 {token, refresh_token}         |
+  |                  |-- store JWT in localStorage; set httpOnly cookie: session
   |<-- redirect /devices          |                          |
 ```
+
+`POST /auth/verify` returns `{ "token": "<session-jwt>", "refresh_token": "<64-char-hex>" }` as JSON (status 200). The Next.js callback handler stores the JWT in `localStorage` for client-side API calls and also sets a `session` httpOnly cookie so SSR pages can read it.
 
 ### `AuthService` (`internal/auth/service.go`)
 
@@ -97,7 +105,7 @@ claims, ok := auth.ClaimsFromContext(r.Context())
 
 ### Refresh token rotation (web frontend)
 
-The web frontend's `apiFetch` wrapper automatically retries on `401` by calling `POST /api/auth/refresh` (a Next.js API route), which calls `POST /auth/refresh` on the server. The server rotates the refresh token and issues a new session JWT; the Next.js route updates the `session` cookie.
+The web frontend's `apiFetch` wrapper automatically retries on `401` by calling `POST /api/auth/refresh` (a Next.js API route), which calls `POST /auth/refresh` on the server. The server rotates the refresh token and issues a new `{ token, refresh_token }` pair; the Next.js route updates `localStorage` and the `session` cookie with the new JWT.
 
 ### Providers
 
