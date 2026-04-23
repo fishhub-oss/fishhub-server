@@ -64,8 +64,8 @@ func withDevice(r *http.Request, info sensors.DeviceInfo) *http.Request {
 	return r.WithContext(ctx)
 }
 
-const validSenML = `[{"bn":"fishhub/device/","bt":1713000000,"e":[{"n":"temperature","u":"Cel","v":23.4}]}]`
-const multiSenML = `[{"bn":"fishhub/device/","bt":1713000000,"e":[{"n":"temperature","u":"Cel","v":23.4},{"n":"ph","u":"pH","v":7.2}]}]`
+const validSenML = `[{"bn":"fishhub/device/","bt":1713000000},{"n":"temperature","u":"Cel","v":23.4}]`
+const multiSenML = `[{"bn":"fishhub/device/","bt":1713000000},{"n":"temperature","u":"Cel","v":23.4},{"n":"ph","u":"pH","v":7.2}]`
 
 func TestReadingsHandler_Create(t *testing.T) {
 	device := sensors.DeviceInfo{DeviceID: "device-uuid", UserID: "user-uuid"}
@@ -140,7 +140,7 @@ func TestReadingsHandler_Create(t *testing.T) {
 
 	t.Run("missing base time returns 400", func(t *testing.T) {
 		h := &sensors.ReadingsHandler{}
-		body := `[{"bn":"fishhub/device/","e":[{"n":"temperature","v":23.4}]}]`
+		body := `[{"bn":"fishhub/device/"},{"n":"temperature","v":23.4}]`
 		req := withDevice(httptest.NewRequest(http.MethodPost, "/readings", strings.NewReader(body)), device)
 		rec := httptest.NewRecorder()
 		h.Create(rec, req)
