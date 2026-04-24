@@ -67,8 +67,8 @@ func TestDeviceSigner_Sign(t *testing.T) {
 	if claims["iat"] == nil {
 		t.Error("expected iat claim to be set")
 	}
-	if claims["exp"] != nil {
-		t.Error("expected no exp claim (known limitation, see #43)")
+	if claims["exp"] == nil {
+		t.Error("expected exp claim to be set")
 	}
 	if token.Header["kid"] != "kid-1" {
 		t.Errorf("expected kid=kid-1, got %v", token.Header["kid"])

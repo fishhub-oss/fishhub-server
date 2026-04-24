@@ -35,8 +35,8 @@ func (s *deviceSigner) Sign(deviceID, userID string) (string, error) {
 		"iss":     s.issuer,
 		"sub":     deviceID,
 		"user_id": userID,
-		"iat":     time.Now().Unix(),
-		// No exp — known limitation, see fishhub-oss/fishhub-server#43
+		"iat": time.Now().Unix(),
+		"exp": time.Now().Add(10 * 365 * 24 * time.Hour).Unix(),
 	})
 	if err != nil {
 		return "", fmt.Errorf("devicejwt: %w", err)
