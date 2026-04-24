@@ -31,8 +31,8 @@ func TestProvisionDevice(t *testing.T) {
 		if calls[0] != "POST /mqtt/credentials" {
 			t.Errorf("expected first call POST /mqtt/credentials, got %s", calls[0])
 		}
-		if calls[1] != "POST /user/dev-1/roles/role-id/attach" {
-			t.Errorf("expected second call POST /user/dev-1/roles/role-id/attach, got %s", calls[1])
+		if calls[1] != "PUT /user/dev-1/roles/role-id/attach" {
+			t.Errorf("expected second call PUT /user/dev-1/roles/role-id/attach, got %s", calls[1])
 		}
 	})
 
@@ -40,7 +40,7 @@ func TestProvisionDevice(t *testing.T) {
 		var calls []string
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			calls = append(calls, r.Method+" "+r.URL.Path)
-			if r.Method == http.MethodPost && r.URL.Path != "/mqtt/credentials" {
+			if r.Method == http.MethodPut {
 				w.WriteHeader(http.StatusInternalServerError)
 				return
 			}
@@ -82,8 +82,8 @@ func TestDeleteDevice(t *testing.T) {
 		if len(calls) != 2 {
 			t.Fatalf("expected 2 calls, got %d: %v", len(calls), calls)
 		}
-		if calls[0] != "DELETE /user/dev-1/roles/role-id/attach" {
-			t.Errorf("expected first call DELETE /user/dev-1/roles/role-id/attach, got %s", calls[0])
+		if calls[0] != "PUT /user/dev-1/roles/role-id/detach" {
+			t.Errorf("expected first call PUT /user/dev-1/roles/role-id/detach, got %s", calls[0])
 		}
 		if calls[1] != "DELETE /mqtt/credentials/dev-1" {
 			t.Errorf("expected second call DELETE /mqtt/credentials/dev-1, got %s", calls[1])
