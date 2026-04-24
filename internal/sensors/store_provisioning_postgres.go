@@ -104,13 +104,10 @@ func (s *postgresProvisioningStore) ClaimCode(ctx context.Context, code string) 
 	return deviceID, userID, nil
 }
 
-// Activate sets the device status to active.
-// Note: device_tokens is no longer written here — JWT-based auth supersedes Bearer tokens.
-// The device_tokens table and LookupByToken are deprecated; see cleanup issue #46.
-func (s *postgresProvisioningStore) Activate(ctx context.Context, deviceID string) error {
+func (s *postgresProvisioningStore) Activate(ctx context.Context, deviceID, mqttUsername, mqttPassword string) error {
 	_, err := s.db.ExecContext(ctx, `
-		UPDATE devices SET status = 'active' WHERE id = $1
-	`, deviceID)
+		UPDATE devices SET status = 'active', mqtt_username = $2, mqtt_password = $3 WHERE id = $1
+	`, deviceID, mqttUsername, mqttPassword)
 	return err
 }
 

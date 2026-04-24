@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/fishhub-oss/fishhub-server/internal/auth"
+	"github.com/fishhub-oss/fishhub-server/internal/hivemq"
 	"github.com/fishhub-oss/fishhub-server/internal/sensors"
 	"github.com/go-chi/chi/v5"
 )
@@ -364,9 +365,15 @@ func (s *stubProvisioningStore) ClaimCode(_ context.Context, _ string) (string, 
 	return s.claimedDeviceID, "user-uuid", s.claimErr
 }
 
-func (s *stubProvisioningStore) Activate(_ context.Context, _ string) error {
+func (s *stubProvisioningStore) Activate(_ context.Context, _, _, _ string) error {
 	return s.activateErr
 }
+
+// stubHiveMQClient implements hivemq.Client for tests.
+type stubHiveMQClient struct{ err error }
+
+func (s *stubHiveMQClient) ProvisionDevice(_ context.Context, _, _ string) error { return s.err }
+func (s *stubHiveMQClient) DeleteDevice(_ context.Context, _ string) error       { return s.err }
 
 func TestProvisionHandler(t *testing.T) {
 	t.Run("returns 201 with code and device_id", func(t *testing.T) {
@@ -431,10 +438,15 @@ func (s *stubSigner) Issuer() string                         { return "" }
 func TestActivateHandler(t *testing.T) {
 	validBody := `{"code":"ABC123"}`
 
-	t.Run("returns 201 with jwt token and device_id", func(t *testing.T) {
+	noopHiveMQ := hivemq.NewNoOp()
+
+	t.Run("returns 201 with token, device_id and mqtt credentials", func(t *testing.T) {
 		h := &sensors.ActivateHandler{
-			Store:  &stubProvisioningStore{claimedDeviceID: "dev-uuid"},
-			Signer: &stubSigner{token: "signed.jwt.token"},
+			Store:    &stubProvisioningStore{claimedDeviceID: "dev-uuid"},
+			Signer:   &stubSigner{token: "signed.jwt.token"},
+			HiveMQ:   noopHiveMQ,
+			MQTTHost: "broker.example.com",
+			MQTTPort: 8883,
 		}
 		req := httptest.NewRequest(http.MethodPost, "/devices/activate", strings.NewReader(validBody))
 		rec := httptest.NewRecorder()
@@ -443,15 +455,41 @@ func TestActivateHandler(t *testing.T) {
 		if rec.Code != http.StatusCreated {
 			t.Fatalf("expected 201, got %d", rec.Code)
 		}
-		var body map[string]string
+		var body map[string]any
 		if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
 			t.Fatalf("decode: %v", err)
 		}
 		if body["device_id"] != "dev-uuid" {
-			t.Errorf("expected device_id dev-uuid, got %s", body["device_id"])
+			t.Errorf("expected device_id dev-uuid, got %v", body["device_id"])
 		}
 		if body["token"] != "signed.jwt.token" {
-			t.Errorf("expected token=signed.jwt.token, got %q", body["token"])
+			t.Errorf("expected token=signed.jwt.token, got %v", body["token"])
+		}
+		if body["mqtt_username"] != "dev-uuid" {
+			t.Errorf("expected mqtt_username=dev-uuid, got %v", body["mqtt_username"])
+		}
+		if body["mqtt_password"] == "" {
+			t.Error("expected non-empty mqtt_password")
+		}
+		if body["mqtt_host"] != "broker.example.com" {
+			t.Errorf("expected mqtt_host=broker.example.com, got %v", body["mqtt_host"])
+		}
+		if body["mqtt_port"] != float64(8883) {
+			t.Errorf("expected mqtt_port=8883, got %v", body["mqtt_port"])
+		}
+	})
+
+	t.Run("hivemq error returns 500", func(t *testing.T) {
+		h := &sensors.ActivateHandler{
+			Store:  &stubProvisioningStore{claimedDeviceID: "dev-uuid"},
+			Signer: &stubSigner{token: "signed.jwt.token"},
+			HiveMQ: &stubHiveMQClient{err: errors.New("api down")},
+		}
+		req := httptest.NewRequest(http.MethodPost, "/devices/activate", strings.NewReader(validBody))
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if rec.Code != http.StatusInternalServerError {
+			t.Errorf("expected 500, got %d", rec.Code)
 		}
 	})
 
@@ -459,6 +497,7 @@ func TestActivateHandler(t *testing.T) {
 		h := &sensors.ActivateHandler{
 			Store:  &stubProvisioningStore{claimedDeviceID: "dev-uuid"},
 			Signer: &stubSigner{err: errors.New("sign failed")},
+			HiveMQ: noopHiveMQ,
 		}
 		req := httptest.NewRequest(http.MethodPost, "/devices/activate", strings.NewReader(validBody))
 		rec := httptest.NewRecorder()
@@ -469,7 +508,7 @@ func TestActivateHandler(t *testing.T) {
 	})
 
 	t.Run("missing code returns 400", func(t *testing.T) {
-		h := &sensors.ActivateHandler{Store: &stubProvisioningStore{}}
+		h := &sensors.ActivateHandler{Store: &stubProvisioningStore{}, HiveMQ: noopHiveMQ}
 		req := httptest.NewRequest(http.MethodPost, "/devices/activate", strings.NewReader(`{}`))
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, req)
@@ -480,7 +519,8 @@ func TestActivateHandler(t *testing.T) {
 
 	t.Run("unknown code returns 404", func(t *testing.T) {
 		h := &sensors.ActivateHandler{
-			Store: &stubProvisioningStore{claimErr: sensors.ErrCodeNotFound},
+			Store:  &stubProvisioningStore{claimErr: sensors.ErrCodeNotFound},
+			HiveMQ: noopHiveMQ,
 		}
 		req := httptest.NewRequest(http.MethodPost, "/devices/activate", strings.NewReader(validBody))
 		rec := httptest.NewRecorder()
@@ -492,7 +532,8 @@ func TestActivateHandler(t *testing.T) {
 
 	t.Run("already used code returns 409", func(t *testing.T) {
 		h := &sensors.ActivateHandler{
-			Store: &stubProvisioningStore{claimErr: sensors.ErrCodeAlreadyUsed},
+			Store:  &stubProvisioningStore{claimErr: sensors.ErrCodeAlreadyUsed},
+			HiveMQ: noopHiveMQ,
 		}
 		req := httptest.NewRequest(http.MethodPost, "/devices/activate", strings.NewReader(validBody))
 		rec := httptest.NewRecorder()
@@ -508,6 +549,7 @@ func TestActivateHandler(t *testing.T) {
 				claimedDeviceID: "dev-uuid",
 				activateErr:     errors.New("db down"),
 			},
+			HiveMQ: noopHiveMQ,
 		}
 		req := httptest.NewRequest(http.MethodPost, "/devices/activate", strings.NewReader(validBody))
 		rec := httptest.NewRecorder()
