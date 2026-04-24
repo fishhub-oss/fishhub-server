@@ -132,7 +132,7 @@ func TestActivate_integration(t *testing.T) {
 			t.Fatalf("setup claim: %v", err)
 		}
 
-		if err := store.Activate(ctx, deviceID); err != nil {
+		if err := store.Activate(ctx, deviceID, "mqtt-user", "mqtt-pass"); err != nil {
 			t.Fatalf("activate: %v", err)
 		}
 
@@ -169,7 +169,7 @@ func TestActivate_integration(t *testing.T) {
 		if _, _, err := store.ClaimCode(ctx, code); err != nil {
 			t.Fatalf("setup claim: %v", err)
 		}
-		if err := store.Activate(ctx, deviceID); err != nil {
+		if err := store.Activate(ctx, deviceID, "mqtt-user", "mqtt-pass"); err != nil {
 			t.Fatalf("activate: %v", err)
 		}
 

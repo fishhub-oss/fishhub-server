@@ -1,6 +1,8 @@
 package sensors
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"io"
 	"log"
@@ -9,6 +11,7 @@ import (
 
 	"github.com/fishhub-oss/fishhub-server/internal/auth"
 	"github.com/fishhub-oss/fishhub-server/internal/devicejwt"
+	"github.com/fishhub-oss/fishhub-server/internal/hivemq"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/render"
 )
@@ -259,8 +262,11 @@ func (h *ProvisionHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 // ActivateHandler handles POST /devices/activate (no auth — called by the device).
 type ActivateHandler struct {
-	Store  ProvisioningStore
-	Signer devicejwt.Signer
+	Store    ProvisioningStore
+	Signer   devicejwt.Signer
+	HiveMQ   hivemq.Client
+	MQTTHost string
+	MQTTPort int
 }
 
 type activateRequest struct {
@@ -268,8 +274,12 @@ type activateRequest struct {
 }
 
 type activateResponse struct {
-	Token    string `json:"token"`
-	DeviceID string `json:"device_id"`
+	Token        string `json:"token"`
+	DeviceID     string `json:"device_id"`
+	MQTTUsername string `json:"mqtt_username,omitempty"`
+	MQTTPassword string `json:"mqtt_password,omitempty"`
+	MQTTHost     string `json:"mqtt_host,omitempty"`
+	MQTTPort     int    `json:"mqtt_port,omitempty"`
 }
 
 func (h *ActivateHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -293,7 +303,22 @@ func (h *ActivateHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.Store.Activate(r.Context(), deviceID); err != nil {
+	mqttUsername := deviceID
+	mqttPasswordBytes := make([]byte, 32)
+	if _, err := rand.Read(mqttPasswordBytes); err != nil {
+		log.Printf("generate mqtt password error: %v", err)
+		http.Error(w, "internal server error", http.StatusInternalServerError)
+		return
+	}
+	mqttPassword := hex.EncodeToString(mqttPasswordBytes)
+
+	if err := h.HiveMQ.ProvisionDevice(r.Context(), mqttUsername, mqttPassword); err != nil {
+		log.Printf("hivemq provision error: %v", err)
+		http.Error(w, "internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	if err := h.Store.Activate(r.Context(), deviceID, mqttUsername, mqttPassword); err != nil {
 		http.Error(w, "internal server error", http.StatusInternalServerError)
 		return
 	}
@@ -306,5 +331,12 @@ func (h *ActivateHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	render.Status(r, http.StatusCreated)
-	render.JSON(w, r, activateResponse{Token: jwtToken, DeviceID: deviceID})
+	render.JSON(w, r, activateResponse{
+		Token:        jwtToken,
+		DeviceID:     deviceID,
+		MQTTUsername: mqttUsername,
+		MQTTPassword: mqttPassword,
+		MQTTHost:     h.MQTTHost,
+		MQTTPort:     h.MQTTPort,
+	})
 }

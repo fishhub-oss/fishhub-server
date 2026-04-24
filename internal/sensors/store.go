@@ -28,7 +28,6 @@ type ProvisioningStore interface {
 	// ClaimCode marks the code as used and returns the associated device ID and user ID.
 	// Returns ErrCodeNotFound if the code is unknown, ErrCodeAlreadyUsed if already claimed.
 	ClaimCode(ctx context.Context, code string) (deviceID, userID string, err error)
-	// Activate sets the device status to active.
-	// Deprecated: device_tokens no longer used; token column ignored, kept for schema compatibility.
-	Activate(ctx context.Context, deviceID string) error
+	// Activate sets the device status to active and stores MQTT credentials.
+	Activate(ctx context.Context, deviceID, mqttUsername, mqttPassword string) error
 }

@@ -13,6 +13,7 @@ import (
 	"github.com/fishhub-oss/fishhub-server/internal/account"
 	"github.com/fishhub-oss/fishhub-server/internal/auth"
 	"github.com/fishhub-oss/fishhub-server/internal/devicejwt"
+	"github.com/fishhub-oss/fishhub-server/internal/hivemq"
 	"github.com/fishhub-oss/fishhub-server/internal/jwtutil"
 	"github.com/fishhub-oss/fishhub-server/internal/platform"
 	"github.com/fishhub-oss/fishhub-server/internal/sensors"
@@ -116,8 +117,31 @@ func main() {
 	r.Post("/auth/logout", (&auth.LogoutHandler{Service: authSvc}).ServeHTTP)
 	provisioningStore := sensors.NewProvisioningStore(db)
 
+	hivemqClient := hivemq.Client(hivemq.NewNoOp())
+	if baseURL := os.Getenv("HIVEMQ_API_BASE_URL"); baseURL != "" {
+		hivemqClient = hivemq.NewAPIClient(
+			baseURL,
+			os.Getenv("HIVEMQ_API_TOKEN"),
+			os.Getenv("HIVEMQ_DEVICE_ROLE_ID"),
+		)
+		log.Printf("HiveMQ API client configured: base_url=%s", baseURL)
+	} else {
+		log.Printf("warning: HIVEMQ_API_BASE_URL not set — MQTT credentials will not be provisioned at activation")
+	}
+
+	mqttPort, _ := strconv.Atoi(os.Getenv("HIVEMQ_PORT"))
+	if mqttPort == 0 {
+		mqttPort = 8883
+	}
+
 	r.Get("/.well-known/jwks.json", (&jwtutil.JWKSHandler{Signer: jwkSigner}).ServeHTTP)
-	r.Post("/devices/activate", (&sensors.ActivateHandler{Store: provisioningStore, Signer: deviceSigner}).ServeHTTP)
+	r.Post("/devices/activate", (&sensors.ActivateHandler{
+		Store:    provisioningStore,
+		Signer:   deviceSigner,
+		HiveMQ:   hivemqClient,
+		MQTTHost: os.Getenv("HIVEMQ_HOST"),
+		MQTTPort: mqttPort,
+	}).ServeHTTP)
 	r.Group(func(r chi.Router) {
 		r.Use(platform.DeviceAuthenticator(deviceSigner))
 		r.Post("/readings", readings.Create)
