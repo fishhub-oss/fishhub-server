@@ -1,9 +1,12 @@
 package sensors
 
 import (
+	"bytes"
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
@@ -339,4 +342,60 @@ func (h *ActivateHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		MQTTHost:     h.MQTTHost,
 		MQTTPort:     h.MQTTPort,
 	})
+}
+
+// CommandPublisher publishes a payload to an MQTT topic.
+type CommandPublisher interface {
+	Publish(ctx context.Context, topic string, payload []byte) error
+}
+
+// CommandHandler handles POST /api/devices/{id}/peripherals/{name}/commands (session auth).
+type CommandHandler struct {
+	Store     DeviceStore
+	Publisher CommandPublisher
+}
+
+type commandRequest struct {
+	Action string `json:"action"`
+}
+
+func (h *CommandHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	claims, ok := auth.ClaimsFromContext(r.Context())
+	if !ok {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	deviceID := chi.URLParam(r, "id")
+	peripheralName := chi.URLParam(r, "name")
+
+	if _, err := h.Store.FindByIDAndUserID(r.Context(), deviceID, claims.UserID); err != nil {
+		if errors.Is(err, ErrDeviceNotFound) {
+			http.Error(w, "not found", http.StatusNotFound)
+			return
+		}
+		http.Error(w, "internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		http.Error(w, "failed to read body", http.StatusBadRequest)
+		return
+	}
+
+	var req commandRequest
+	if err := render.DecodeJSON(io.NopCloser(bytes.NewReader(body)), &req); err != nil || (req.Action != "set" && req.Action != "schedule") {
+		http.Error(w, "action must be 'set' or 'schedule'", http.StatusBadRequest)
+		return
+	}
+
+	topic := fmt.Sprintf("fishhub/%s/commands/%s", deviceID, peripheralName)
+	if err := h.Publisher.Publish(r.Context(), topic, body); err != nil {
+		log.Printf("mqtt publish error: %v", err)
+		http.Error(w, "internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
 }

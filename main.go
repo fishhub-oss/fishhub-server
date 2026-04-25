@@ -15,6 +15,7 @@ import (
 	"github.com/fishhub-oss/fishhub-server/internal/devicejwt"
 	"github.com/fishhub-oss/fishhub-server/internal/hivemq"
 	"github.com/fishhub-oss/fishhub-server/internal/jwtutil"
+	"github.com/fishhub-oss/fishhub-server/internal/mqtt"
 	"github.com/fishhub-oss/fishhub-server/internal/platform"
 	"github.com/fishhub-oss/fishhub-server/internal/sensors"
 	"github.com/go-chi/chi/v5"
@@ -146,6 +147,19 @@ func main() {
 		r.Use(platform.DeviceAuthenticator(deviceSigner))
 		r.Post("/readings", readings.Create)
 	})
+	var mqttPublisher sensors.CommandPublisher = mqtt.NewNoOpPublisher()
+	if mqttHost := os.Getenv("HIVEMQ_HOST"); mqttHost != "" {
+		p, err := mqtt.NewPublisher(mqttHost, mqttPort, os.Getenv("HIVEMQ_SERVER_USERNAME"), os.Getenv("HIVEMQ_SERVER_PASSWORD"))
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "mqtt init: %v\n", err)
+			os.Exit(1)
+		}
+		mqttPublisher = p
+		log.Printf("MQTT publisher connected: host=%s", mqttHost)
+	} else {
+		log.Printf("warning: HIVEMQ_HOST not set — MQTT publishing disabled")
+	}
+
 	r.Group(func(r chi.Router) {
 		r.Use(platform.SessionAuthenticator(authSvc))
 		r.Get("/api/me", (&account.MeHandler{Store: accountStore}).ServeHTTP)
@@ -157,6 +171,10 @@ func main() {
 			Querier: influxClient,
 			Devices: deviceStore,
 		}).List)
+		r.Post("/api/devices/{id}/peripherals/{name}/commands", (&sensors.CommandHandler{
+			Store:     deviceStore,
+			Publisher: mqttPublisher,
+		}).ServeHTTP)
 	})
 
 	port := os.Getenv("PORT")
