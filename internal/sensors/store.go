@@ -19,6 +19,9 @@ type DeviceStore interface {
 	// PatchDevice updates the name of the device owned by userID.
 	// Returns ErrDeviceNotFound if the device does not exist or is not owned by the user.
 	PatchDevice(ctx context.Context, deviceID, userID, name string) (Device, error)
+	// DeleteDevice soft-deletes the device and returns its mqtt_username for cleanup.
+	// Returns ErrDeviceNotFound if the device does not exist or is not owned by the user.
+	DeleteDevice(ctx context.Context, deviceID, userID string) (mqttUsername string, err error)
 }
 
 type ProvisioningStore interface {

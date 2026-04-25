@@ -203,6 +203,39 @@ func (h *ReadingsHandler) Create(w http.ResponseWriter, r *http.Request) {
 	render.JSON(w, r, map[string]string{})
 }
 
+// DeleteDeviceHandler handles DELETE /api/devices/{id} (session auth).
+type DeleteDeviceHandler struct {
+	Store  DeviceStore
+	HiveMQ hivemq.Client
+}
+
+func (h *DeleteDeviceHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	claims, ok := auth.ClaimsFromContext(r.Context())
+	if !ok {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	deviceID := chi.URLParam(r, "id")
+	mqttUsername, err := h.Store.DeleteDevice(r.Context(), deviceID, claims.UserID)
+	if err != nil {
+		if errors.Is(err, ErrDeviceNotFound) {
+			http.Error(w, "not found", http.StatusNotFound)
+			return
+		}
+		http.Error(w, "internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	if mqttUsername != "" {
+		if err := h.HiveMQ.DeleteDevice(r.Context(), mqttUsername); err != nil {
+			log.Printf("hivemq delete device error (device_id=%s): %v", deviceID, err)
+		}
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
 // PatchDeviceHandler handles PATCH /api/devices/{id} (session auth).
 type PatchDeviceHandler struct {
 	Store DeviceStore
