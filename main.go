@@ -167,6 +167,7 @@ func main() {
 		r.Post("/api/devices/provision", (&sensors.ProvisionHandler{Store: provisioningStore}).ServeHTTP)
 		r.Get("/api/devices", (&sensors.DevicesHandler{Store: deviceStore}).List)
 		r.Patch("/api/devices/{id}", (&sensors.PatchDeviceHandler{Store: deviceStore}).ServeHTTP)
+		r.Delete("/api/devices/{id}", (&sensors.DeleteDeviceHandler{Store: deviceStore, HiveMQ: hivemqClient}).ServeHTTP)
 		r.Get("/api/devices/{id}/readings", (&sensors.ReadingsQueryHandler{
 			Querier: influxClient,
 			Devices: deviceStore,

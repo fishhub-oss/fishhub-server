@@ -31,17 +31,18 @@ func (s *stubReadingWriter) WriteReading(_ context.Context, r sensors.Reading) e
 }
 
 type stubDeviceStore struct {
-	info        sensors.DeviceInfo
-	device      sensors.Device
-	findErr     error
-	patchDevice sensors.Device
-	patchErr    error
+	info             sensors.DeviceInfo
+	device           sensors.Device
+	findErr          error
+	patchDevice      sensors.Device
+	patchErr         error
+	deleteMQTTUser   string
+	deleteErr        error
 }
 
 func (s *stubDeviceStore) ListByUserID(_ context.Context, _, _ string) ([]sensors.Device, error) {
 	return nil, nil
 }
-
 
 func (s *stubDeviceStore) FindByIDAndUserID(_ context.Context, _, _ string) (sensors.Device, error) {
 	return s.device, s.findErr
@@ -49,6 +50,10 @@ func (s *stubDeviceStore) FindByIDAndUserID(_ context.Context, _, _ string) (sen
 
 func (s *stubDeviceStore) PatchDevice(_ context.Context, _, _, _ string) (sensors.Device, error) {
 	return s.patchDevice, s.patchErr
+}
+
+func (s *stubDeviceStore) DeleteDevice(_ context.Context, _, _ string) (string, error) {
+	return s.deleteMQTTUser, s.deleteErr
 }
 
 type stubReadingQuerier struct {
@@ -630,6 +635,78 @@ func TestCommandHandler(t *testing.T) {
 		h.ServeHTTP(rec, makeReq(body, "user-1"))
 		if rec.Code != http.StatusInternalServerError {
 			t.Errorf("expected 500, got %d", rec.Code)
+		}
+	})
+}
+
+// --- DeleteDeviceHandler ---
+
+func TestDeleteDeviceHandler(t *testing.T) {
+	makeReq := func(deviceID, userID string) *http.Request {
+		req := httptest.NewRequest(http.MethodDelete, "/api/devices/"+deviceID, nil)
+		if userID != "" {
+			req = withClaims(req, userID)
+		}
+		req = withChiParam(req, "id", deviceID)
+		return req
+	}
+
+	t.Run("204 when device deleted and HiveMQ succeeds", func(t *testing.T) {
+		store := &stubDeviceStore{deleteMQTTUser: "dev-uuid"}
+		h := &sensors.DeleteDeviceHandler{Store: store, HiveMQ: &stubHiveMQClient{}}
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, makeReq("dev-uuid", "user-uuid"))
+		if rec.Code != http.StatusNoContent {
+			t.Errorf("expected 204, got %d", rec.Code)
+		}
+	})
+
+	t.Run("204 when device deleted but HiveMQ fails (non-fatal)", func(t *testing.T) {
+		store := &stubDeviceStore{deleteMQTTUser: "dev-uuid"}
+		h := &sensors.DeleteDeviceHandler{Store: store, HiveMQ: &stubHiveMQClient{err: errors.New("hivemq down")}}
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, makeReq("dev-uuid", "user-uuid"))
+		if rec.Code != http.StatusNoContent {
+			t.Errorf("expected 204, got %d", rec.Code)
+		}
+	})
+
+	t.Run("204 when device has no mqtt_username (HiveMQ skipped)", func(t *testing.T) {
+		store := &stubDeviceStore{deleteMQTTUser: ""}
+		h := &sensors.DeleteDeviceHandler{Store: store, HiveMQ: &stubHiveMQClient{}}
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, makeReq("dev-uuid", "user-uuid"))
+		if rec.Code != http.StatusNoContent {
+			t.Errorf("expected 204, got %d", rec.Code)
+		}
+	})
+
+	t.Run("404 when device not found", func(t *testing.T) {
+		store := &stubDeviceStore{deleteErr: sensors.ErrDeviceNotFound}
+		h := &sensors.DeleteDeviceHandler{Store: store, HiveMQ: &stubHiveMQClient{}}
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, makeReq("dev-x", "user-uuid"))
+		if rec.Code != http.StatusNotFound {
+			t.Errorf("expected 404, got %d", rec.Code)
+		}
+	})
+
+	t.Run("500 on store error", func(t *testing.T) {
+		store := &stubDeviceStore{deleteErr: errors.New("db down")}
+		h := &sensors.DeleteDeviceHandler{Store: store, HiveMQ: &stubHiveMQClient{}}
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, makeReq("dev-uuid", "user-uuid"))
+		if rec.Code != http.StatusInternalServerError {
+			t.Errorf("expected 500, got %d", rec.Code)
+		}
+	})
+
+	t.Run("401 when no claims", func(t *testing.T) {
+		h := &sensors.DeleteDeviceHandler{Store: &stubDeviceStore{}, HiveMQ: &stubHiveMQClient{}}
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, makeReq("dev-uuid", ""))
+		if rec.Code != http.StatusUnauthorized {
+			t.Errorf("expected 401, got %d", rec.Code)
 		}
 	})
 }
