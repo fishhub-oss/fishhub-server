@@ -174,7 +174,7 @@ func withChiParam(r *http.Request, key, val string) *http.Request {
 
 func TestReadingsQueryHandler_List(t *testing.T) {
 	ts := time.Date(2026, 4, 20, 12, 0, 0, 0, time.UTC)
-	points := []sensors.ReadingPoint{{Timestamp: ts, Temperature: 25.4}}
+	points := []sensors.ReadingPoint{{Timestamp: ts, Values: map[string]float64{"temperature": 25.4}}}
 
 	makeReq := func(deviceID, query string) *http.Request {
 		req := httptest.NewRequest(http.MethodGet, "/api/devices/"+deviceID+"/readings"+query, nil)
@@ -203,8 +203,8 @@ func TestReadingsQueryHandler_List(t *testing.T) {
 		if len(body.Readings) != 1 {
 			t.Fatalf("expected 1 reading, got %d", len(body.Readings))
 		}
-		if body.Readings[0].Temperature != 25.4 {
-			t.Errorf("expected temperature 25.4, got %f", body.Readings[0].Temperature)
+		if body.Readings[0].Values["temperature"] != 25.4 {
+			t.Errorf("expected temperature 25.4, got %f", body.Readings[0].Values["temperature"])
 		}
 	})
 

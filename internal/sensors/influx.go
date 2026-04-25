@@ -3,6 +3,7 @@ package sensors
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	influxdb3 "github.com/InfluxCommunity/influxdb3-go/v2/influxdb3"
@@ -16,15 +17,16 @@ type Reading struct {
 }
 
 type ReadingQuery struct {
-	DeviceID string
-	From     time.Time
-	To       time.Time
-	Window   string
+	DeviceID     string
+	From         time.Time
+	To           time.Time
+	Window       string
+	Measurements []string
 }
 
 type ReadingPoint struct {
-	Timestamp   time.Time
-	Temperature float64
+	Timestamp time.Time
+	Values    map[string]float64
 }
 
 type ReadingWriter interface {
@@ -75,13 +77,22 @@ func (c *influxDBClient) WriteReading(ctx context.Context, r Reading) error {
 }
 
 func (c *influxDBClient) QueryReadings(ctx context.Context, q ReadingQuery) ([]ReadingPoint, error) {
+	cols := "*"
+	if len(q.Measurements) > 0 {
+		quoted := make([]string, len(q.Measurements))
+		for i, m := range q.Measurements {
+			quoted[i] = fmt.Sprintf(`"%s"`, m)
+		}
+		cols = "time, " + strings.Join(quoted, ", ")
+	}
+
 	sql := fmt.Sprintf(
-		`SELECT time, temperature`+
-			` FROM sensors`+
+		`SELECT %s FROM sensors`+
 			` WHERE device_id = '%s'`+
 			` AND time >= '%s'`+
 			` AND time < '%s'`+
 			` ORDER BY time ASC`,
+		cols,
 		q.DeviceID,
 		q.From.UTC().Format(time.RFC3339),
 		q.To.UTC().Format(time.RFC3339),
@@ -95,12 +106,17 @@ func (c *influxDBClient) QueryReadings(ctx context.Context, q ReadingQuery) ([]R
 	var points []ReadingPoint
 	for iter.Next() {
 		row := iter.Value()
-		p := ReadingPoint{}
+		p := ReadingPoint{Values: make(map[string]float64)}
 		if t, ok := row["time"].(time.Time); ok {
 			p.Timestamp = t.UTC()
 		}
-		if v, ok := row["temperature"].(float64); ok {
-			p.Temperature = v
+		for k, v := range row {
+			if k == "time" || k == "device_id" || k == "user_id" {
+				continue
+			}
+			if f, ok := v.(float64); ok {
+				p.Values[k] = f
+			}
 		}
 		points = append(points, p)
 	}
