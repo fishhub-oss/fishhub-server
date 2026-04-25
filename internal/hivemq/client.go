@@ -32,7 +32,12 @@ func NewAPIClient(baseURL, apiToken, deviceRoleID string) Client {
 }
 
 func (c *apiClient) ProvisionDevice(ctx context.Context, username, password string) error {
-	body, _ := json.Marshal(map[string]string{"username": username, "password": password})
+	body, _ := json.Marshal(map[string]any{
+		"credentials": map[string]string{
+			"username": username,
+			"password": password,
+		},
+	})
 	if err := c.do(ctx, http.MethodPost, "/mqtt/credentials", body); err != nil {
 		return fmt.Errorf("hivemq: create credential: %w", err)
 	}
