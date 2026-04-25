@@ -192,7 +192,7 @@ func TestQueryReadings_Integration(t *testing.T) {
 	if len(points) == 0 {
 		t.Fatal("expected at least one reading, got none")
 	}
-	if points[0].Temperature != 22.5 {
-		t.Errorf("expected temperature 22.5, got %f", points[0].Temperature)
+	if points[0].Values["temperature"] != 22.5 {
+		t.Errorf("expected temperature 22.5, got %f", points[0].Values["temperature"])
 	}
 }

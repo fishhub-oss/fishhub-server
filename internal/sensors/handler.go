@@ -10,6 +10,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/fishhub-oss/fishhub-server/internal/auth"
@@ -65,8 +66,8 @@ type ReadingsQueryHandler struct {
 }
 
 type ReadingPointResponse struct {
-	Timestamp   string  `json:"timestamp"`
-	Temperature float64 `json:"temperature"`
+	Timestamp string             `json:"timestamp"`
+	Values    map[string]float64 `json:"values"`
 }
 
 type ReadingsQueryResponse struct {
@@ -110,6 +111,11 @@ func (h *ReadingsQueryHandler) List(w http.ResponseWriter, r *http.Request) {
 		window = v
 	}
 
+	var measurements []string
+	if v := r.URL.Query().Get("measurements"); v != "" {
+		measurements = strings.Split(v, ",")
+	}
+
 	if _, err := h.Devices.FindByIDAndUserID(r.Context(), deviceID, claims.UserID); err != nil {
 		if errors.Is(err, ErrDeviceNotFound) {
 			http.Error(w, "not found", http.StatusNotFound)
@@ -120,10 +126,11 @@ func (h *ReadingsQueryHandler) List(w http.ResponseWriter, r *http.Request) {
 	}
 
 	points, err := h.Querier.QueryReadings(r.Context(), ReadingQuery{
-		DeviceID: deviceID,
-		From:     from,
-		To:       to,
-		Window:   window,
+		DeviceID:     deviceID,
+		From:         from,
+		To:           to,
+		Window:       window,
+		Measurements: measurements,
 	})
 	if err != nil {
 		http.Error(w, "internal server error", http.StatusInternalServerError)
@@ -138,8 +145,8 @@ func (h *ReadingsQueryHandler) List(w http.ResponseWriter, r *http.Request) {
 	}
 	for i, p := range points {
 		resp.Readings[i] = ReadingPointResponse{
-			Timestamp:   p.Timestamp.UTC().Format(time.RFC3339),
-			Temperature: p.Temperature,
+			Timestamp: p.Timestamp.UTC().Format(time.RFC3339),
+			Values:    p.Values,
 		}
 	}
 	render.JSON(w, r, resp)

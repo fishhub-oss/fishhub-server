@@ -81,7 +81,7 @@ func main() {
 
 	jwkSigner := jwtutil.Signer(jwtutil.NewNoOp())
 	deviceSigner := devicejwt.Signer(devicejwt.NewNoOp())
-	if pemKey := os.Getenv("DEVICE_JWT_PRIVATE_KEY"); pemKey != "" {
+	if pemKey := strings.ReplaceAll(os.Getenv("DEVICE_JWT_PRIVATE_KEY"), `\n`, "\n"); pemKey != "" {
 		kid := os.Getenv("DEVICE_JWT_KID")
 		issuer := os.Getenv("IDP_HOST")
 		inner, err := jwtutil.NewRSASigner(pemKey, kid)
