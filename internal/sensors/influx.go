@@ -114,9 +114,19 @@ func (c *influxDBClient) QueryReadings(ctx context.Context, q ReadingQuery) ([]R
 			if k == "time" || k == "device_id" || k == "user_id" {
 				continue
 			}
-			if f, ok := v.(float64); ok {
-				p.Values[k] = f
+			switch val := v.(type) {
+			case float64:
+				p.Values[k] = val
+			case bool:
+				if val {
+					p.Values[k] = 1
+				} else {
+					p.Values[k] = 0
+				}
 			}
+		}
+		if len(p.Values) == 0 {
+			continue
 		}
 		points = append(points, p)
 	}
