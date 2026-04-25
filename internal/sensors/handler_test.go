@@ -559,3 +559,77 @@ func TestActivateHandler(t *testing.T) {
 		}
 	})
 }
+
+
+type stubPublisher struct {
+	called bool
+	err    error
+}
+
+func (s *stubPublisher) Publish(_ context.Context, _ string, _ []byte) error {
+	s.called = true
+	return s.err
+}
+
+func withChiParams(r *http.Request, params map[string]string) *http.Request {
+	rctx := chi.NewRouteContext()
+	for k, v := range params {
+		rctx.URLParams.Add(k, v)
+	}
+	return r.WithContext(context.WithValue(r.Context(), chi.RouteCtxKey, rctx))
+}
+
+func TestCommandHandler(t *testing.T) {
+	const body = `{"action":"set","state":true,"id":"cmd-1"}`
+
+	makeReq := func(body, userID string) *http.Request {
+		r := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
+		r = withClaims(r, userID)
+		r = withChiParams(r, map[string]string{"id": "dev-1", "name": "light"})
+		return r
+	}
+
+	t.Run("204 on success", func(t *testing.T) {
+		pub := &stubPublisher{}
+		h := &sensors.CommandHandler{Store: &stubDeviceStore{}, Publisher: pub}
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, makeReq(body, "user-1"))
+		if rec.Code != http.StatusNoContent {
+			t.Errorf("expected 204, got %d", rec.Code)
+		}
+		if !pub.called {
+			t.Error("expected publisher to be called")
+		}
+	})
+
+	t.Run("404 when device not found", func(t *testing.T) {
+		h := &sensors.CommandHandler{
+			Store:     &stubDeviceStore{findErr: sensors.ErrDeviceNotFound},
+			Publisher: &stubPublisher{},
+		}
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, makeReq(body, "user-1"))
+		if rec.Code != http.StatusNotFound {
+			t.Errorf("expected 404, got %d", rec.Code)
+		}
+	})
+
+	t.Run("400 on invalid action", func(t *testing.T) {
+		h := &sensors.CommandHandler{Store: &stubDeviceStore{}, Publisher: &stubPublisher{}}
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, makeReq(`{"action":"invalid"}`, "user-1"))
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("expected 400, got %d", rec.Code)
+		}
+	})
+
+	t.Run("500 on publisher error", func(t *testing.T) {
+		pub := &stubPublisher{err: errors.New("broker down")}
+		h := &sensors.CommandHandler{Store: &stubDeviceStore{}, Publisher: pub}
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, makeReq(body, "user-1"))
+		if rec.Code != http.StatusInternalServerError {
+			t.Errorf("expected 500, got %d", rec.Code)
+		}
+	})
+}
