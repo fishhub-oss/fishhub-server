@@ -3,6 +3,8 @@
 -include .env
 export
 
+DEVICE_JWT_PRIVATE_KEY = $(shell awk '{printf "%s\\n", $$0}' secrets/device_jwt_private_key.pem 2>/dev/null)
+
 INFLUX_TOKEN_FILE := $(CURDIR)/.influxdb-admin-token.json
 
 build:

@@ -1,4 +1,5 @@
 bin/
+secrets/
 .env
 .influxdb-admin-token.json
 *.exe
