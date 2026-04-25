@@ -43,7 +43,7 @@ func (c *apiClient) ProvisionDevice(ctx context.Context, username, password stri
 	}
 
 	attachURL := fmt.Sprintf("/user/%s/roles/%s/attach", username, c.deviceRoleID)
-	if err := c.do(ctx, http.MethodPost, attachURL, nil); err != nil {
+	if err := c.do(ctx, http.MethodPut, attachURL, nil); err != nil {
 		// Roll back — delete the credential we just created
 		_ = c.do(ctx, http.MethodDelete, "/mqtt/credentials/"+username, nil)
 		return fmt.Errorf("hivemq: attach role: %w", err)
@@ -53,8 +53,8 @@ func (c *apiClient) ProvisionDevice(ctx context.Context, username, password stri
 }
 
 func (c *apiClient) DeleteDevice(ctx context.Context, username string) error {
-	detachURL := fmt.Sprintf("/user/%s/roles/%s/attach", username, c.deviceRoleID)
-	if err := c.do(ctx, http.MethodDelete, detachURL, nil); err != nil {
+	detachURL := fmt.Sprintf("/user/%s/roles/%s/detach", username, c.deviceRoleID)
+	if err := c.do(ctx, http.MethodPut, detachURL, nil); err != nil {
 		return fmt.Errorf("hivemq: detach role: %w", err)
 	}
 	if err := c.do(ctx, http.MethodDelete, "/mqtt/credentials/"+username, nil); err != nil {
