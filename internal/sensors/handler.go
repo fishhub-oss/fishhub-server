@@ -40,6 +40,7 @@ func (h *DevicesHandler) List(w http.ResponseWriter, r *http.Request) {
 	status := r.URL.Query().Get("status")
 	devices, err := h.Store.ListByUserID(r.Context(), claims.UserID, status)
 	if err != nil {
+		log.Printf("list devices error: %v", err)
 		http.Error(w, "internal server error", http.StatusInternalServerError)
 		return
 	}
@@ -121,6 +122,7 @@ func (h *ReadingsQueryHandler) List(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "not found", http.StatusNotFound)
 			return
 		}
+		log.Printf("find device error (device_id=%s): %v", deviceID, err)
 		http.Error(w, "internal server error", http.StatusInternalServerError)
 		return
 	}
@@ -133,6 +135,7 @@ func (h *ReadingsQueryHandler) List(w http.ResponseWriter, r *http.Request) {
 		Measurements: measurements,
 	})
 	if err != nil {
+		log.Printf("query readings error (device_id=%s): %v", deviceID, err)
 		http.Error(w, "internal server error", http.StatusInternalServerError)
 		return
 	}
@@ -223,6 +226,7 @@ func (h *DeleteDeviceHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 			http.Error(w, "not found", http.StatusNotFound)
 			return
 		}
+		log.Printf("delete device error (device_id=%s): %v", deviceID, err)
 		http.Error(w, "internal server error", http.StatusInternalServerError)
 		return
 	}
@@ -265,6 +269,7 @@ func (h *PatchDeviceHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "not found", http.StatusNotFound)
 			return
 		}
+		log.Printf("patch device error (device_id=%s): %v", deviceID, err)
 		http.Error(w, "internal server error", http.StatusInternalServerError)
 		return
 	}
@@ -295,6 +300,7 @@ func (h *ProvisionHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	deviceID, code, err := h.Store.GetOrCreatePending(r.Context(), claims.UserID)
 	if err != nil {
+		log.Printf("get or create pending error (user_id=%s): %v", claims.UserID, err)
 		http.Error(w, "internal server error", http.StatusInternalServerError)
 		return
 	}
@@ -342,6 +348,7 @@ func (h *ActivateHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "provisioning code already used", http.StatusConflict)
 			return
 		}
+		log.Printf("claim code error: %v", err)
 		http.Error(w, "internal server error", http.StatusInternalServerError)
 		return
 	}
@@ -362,6 +369,7 @@ func (h *ActivateHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.Store.Activate(r.Context(), deviceID, mqttUsername, mqttPassword); err != nil {
+		log.Printf("activate device error (device_id=%s): %v", deviceID, err)
 		http.Error(w, "internal server error", http.StatusInternalServerError)
 		return
 	}
@@ -414,6 +422,7 @@ func (h *CommandHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "not found", http.StatusNotFound)
 			return
 		}
+		log.Printf("find device error (device_id=%s): %v", deviceID, err)
 		http.Error(w, "internal server error", http.StatusInternalServerError)
 		return
 	}
