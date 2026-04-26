@@ -9,7 +9,7 @@ import (
 )
 
 type MeHandler struct {
-	Store AccountStore
+	Service *AccountService
 }
 
 type meResponse struct {
@@ -27,7 +27,7 @@ func (h *MeHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	account, err := h.Store.FindByUserID(r.Context(), claims.UserID)
+	account, err := h.Service.Me(r.Context(), claims.UserID)
 	if err != nil {
 		if errors.Is(err, ErrAccountNotFound) {
 			http.Error(w, "account not found", http.StatusNotFound)

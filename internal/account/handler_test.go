@@ -42,7 +42,7 @@ func TestMeHandler(t *testing.T) {
 	}
 
 	t.Run("returns account for authenticated user", func(t *testing.T) {
-		h := &account.MeHandler{Store: &stubAccountStore{account: validAccount}}
+		h := &account.MeHandler{Service: &account.AccountService{Store: &stubAccountStore{account: validAccount}}}
 		w := httptest.NewRecorder()
 		h.ServeHTTP(w, requestWithClaims("user-uuid"))
 
@@ -60,7 +60,7 @@ func TestMeHandler(t *testing.T) {
 	})
 
 	t.Run("returns 401 when no claims in context", func(t *testing.T) {
-		h := &account.MeHandler{Store: &stubAccountStore{account: validAccount}}
+		h := &account.MeHandler{Service: &account.AccountService{Store: &stubAccountStore{account: validAccount}}}
 		req := httptest.NewRequest(http.MethodGet, "/api/me", nil)
 		w := httptest.NewRecorder()
 		h.ServeHTTP(w, req)
@@ -71,7 +71,7 @@ func TestMeHandler(t *testing.T) {
 	})
 
 	t.Run("returns 404 when account not found", func(t *testing.T) {
-		h := &account.MeHandler{Store: &stubAccountStore{err: account.ErrAccountNotFound}}
+		h := &account.MeHandler{Service: &account.AccountService{Store: &stubAccountStore{err: account.ErrAccountNotFound}}}
 		w := httptest.NewRecorder()
 		h.ServeHTTP(w, requestWithClaims("user-uuid"))
 
@@ -81,7 +81,7 @@ func TestMeHandler(t *testing.T) {
 	})
 
 	t.Run("returns 500 on store error", func(t *testing.T) {
-		h := &account.MeHandler{Store: &stubAccountStore{err: errors.New("db error")}}
+		h := &account.MeHandler{Service: &account.AccountService{Store: &stubAccountStore{err: errors.New("db error")}}}
 		w := httptest.NewRecorder()
 		h.ServeHTTP(w, requestWithClaims("user-uuid"))
 
