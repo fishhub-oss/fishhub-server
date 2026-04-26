@@ -2,7 +2,6 @@ package sensors_test
 
 import (
 	"context"
-	"crypto/rsa"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -17,68 +16,49 @@ import (
 	"github.com/go-chi/chi/v5"
 )
 
-
-type stubReadingWriter struct {
-	called  bool
-	reading sensors.Reading
-	err     error
-}
-
-func (s *stubReadingWriter) WriteReading(_ context.Context, r sensors.Reading) error {
-	s.called = true
-	s.reading = r
-	return s.err
-}
-
-type stubDeviceStore struct {
-	info             sensors.DeviceInfo
-	device           sensors.Device
-	findErr          error
-	patchDevice      sensors.Device
-	patchErr         error
-	deleteMQTTUser   string
-	deleteErr        error
-}
-
-func (s *stubDeviceStore) ListByUserID(_ context.Context, _, _ string) ([]sensors.Device, error) {
-	return nil, nil
-}
-
-func (s *stubDeviceStore) FindByIDAndUserID(_ context.Context, _, _ string) (sensors.Device, error) {
-	return s.device, s.findErr
-}
-
-func (s *stubDeviceStore) PatchDevice(_ context.Context, _, _, _ string) (sensors.Device, error) {
-	return s.patchDevice, s.patchErr
-}
-
-func (s *stubDeviceStore) DeleteDevice(_ context.Context, _, _ string) (string, error) {
-	return s.deleteMQTTUser, s.deleteErr
-}
-
-type stubReadingQuerier struct {
-	points []sensors.ReadingPoint
-	err    error
-}
-
-func (s *stubReadingQuerier) QueryReadings(_ context.Context, _ sensors.ReadingQuery) ([]sensors.ReadingPoint, error) {
-	return s.points, s.err
-}
+const validSenML = `[{"bn":"fishhub/device/","bt":1713000000},{"n":"temperature","u":"Cel","v":23.4}]`
+const multiSenML = `[{"bn":"fishhub/device/","bt":1713000000},{"n":"temperature","u":"Cel","v":23.4},{"n":"ph","u":"pH","v":7.2}]`
 
 func withDevice(r *http.Request, info sensors.DeviceInfo) *http.Request {
 	ctx := context.WithValue(r.Context(), sensors.DeviceContextKey, info)
 	return r.WithContext(ctx)
 }
 
-const validSenML = `[{"bn":"fishhub/device/","bt":1713000000},{"n":"temperature","u":"Cel","v":23.4}]`
-const multiSenML = `[{"bn":"fishhub/device/","bt":1713000000},{"n":"temperature","u":"Cel","v":23.4},{"n":"ph","u":"pH","v":7.2}]`
+func withClaims(r *http.Request, userID string) *http.Request {
+	ctx := auth.ContextWithClaims(r.Context(), auth.Claims{UserID: userID})
+	return r.WithContext(ctx)
+}
+
+func withChiParam(r *http.Request, key, val string) *http.Request {
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add(key, val)
+	return r.WithContext(context.WithValue(r.Context(), chi.RouteCtxKey, rctx))
+}
+
+func withChiParams(r *http.Request, params map[string]string) *http.Request {
+	rctx := chi.NewRouteContext()
+	for k, v := range params {
+		rctx.URLParams.Add(k, v)
+	}
+	return r.WithContext(context.WithValue(r.Context(), chi.RouteCtxKey, rctx))
+}
+
+func newReadingsService(writer *stubReadingWriter, querier *stubReadingQuerier, store *stubDeviceStore) *sensors.ReadingsService {
+	svc := &sensors.ReadingsService{Devices: store, Querier: querier}
+	if writer != nil {
+		svc.Writer = writer
+	}
+	return svc
+}
+
+// ── ReadingsHandler ───────────────────────────────────────────────────────────
 
 func TestReadingsHandler_Create(t *testing.T) {
 	device := sensors.DeviceInfo{DeviceID: "device-uuid", UserID: "user-uuid"}
 
 	t.Run("valid payload with writer returns 201 and calls writer", func(t *testing.T) {
 		w := &stubReadingWriter{}
-		h := &sensors.ReadingsHandler{Writer: w}
+		h := &sensors.ReadingsHandler{Service: newReadingsService(w, nil, &stubDeviceStore{})}
 		req := withDevice(httptest.NewRequest(http.MethodPost, "/readings", strings.NewReader(validSenML)), device)
 		rec := httptest.NewRecorder()
 		h.Create(rec, req)
@@ -101,7 +81,7 @@ func TestReadingsHandler_Create(t *testing.T) {
 
 	t.Run("multi-sensor payload writes all fields", func(t *testing.T) {
 		w := &stubReadingWriter{}
-		h := &sensors.ReadingsHandler{Writer: w}
+		h := &sensors.ReadingsHandler{Service: newReadingsService(w, nil, &stubDeviceStore{})}
 		req := withDevice(httptest.NewRequest(http.MethodPost, "/readings", strings.NewReader(multiSenML)), device)
 		rec := httptest.NewRecorder()
 		h.Create(rec, req)
@@ -115,7 +95,7 @@ func TestReadingsHandler_Create(t *testing.T) {
 
 	t.Run("writer error returns 500", func(t *testing.T) {
 		w := &stubReadingWriter{err: errors.New("influx down")}
-		h := &sensors.ReadingsHandler{Writer: w}
+		h := &sensors.ReadingsHandler{Service: newReadingsService(w, nil, &stubDeviceStore{})}
 		req := withDevice(httptest.NewRequest(http.MethodPost, "/readings", strings.NewReader(validSenML)), device)
 		rec := httptest.NewRecorder()
 		h.Create(rec, req)
@@ -125,7 +105,7 @@ func TestReadingsHandler_Create(t *testing.T) {
 	})
 
 	t.Run("nil writer returns 201 (degraded mode)", func(t *testing.T) {
-		h := &sensors.ReadingsHandler{Writer: nil}
+		h := &sensors.ReadingsHandler{Service: newReadingsService(nil, nil, &stubDeviceStore{})}
 		req := withDevice(httptest.NewRequest(http.MethodPost, "/readings", strings.NewReader(validSenML)), device)
 		rec := httptest.NewRecorder()
 		h.Create(rec, req)
@@ -135,7 +115,7 @@ func TestReadingsHandler_Create(t *testing.T) {
 	})
 
 	t.Run("malformed JSON returns 400", func(t *testing.T) {
-		h := &sensors.ReadingsHandler{}
+		h := &sensors.ReadingsHandler{Service: newReadingsService(nil, nil, &stubDeviceStore{})}
 		req := withDevice(httptest.NewRequest(http.MethodPost, "/readings", strings.NewReader(`not json`)), device)
 		rec := httptest.NewRecorder()
 		h.Create(rec, req)
@@ -145,7 +125,7 @@ func TestReadingsHandler_Create(t *testing.T) {
 	})
 
 	t.Run("missing base time returns 400", func(t *testing.T) {
-		h := &sensors.ReadingsHandler{}
+		h := &sensors.ReadingsHandler{Service: newReadingsService(nil, nil, &stubDeviceStore{})}
 		body := `[{"bn":"fishhub/device/"},{"n":"temperature","v":23.4}]`
 		req := withDevice(httptest.NewRequest(http.MethodPost, "/readings", strings.NewReader(body)), device)
 		rec := httptest.NewRecorder()
@@ -156,7 +136,7 @@ func TestReadingsHandler_Create(t *testing.T) {
 	})
 
 	t.Run("no device in context returns 401", func(t *testing.T) {
-		h := &sensors.ReadingsHandler{}
+		h := &sensors.ReadingsHandler{Service: newReadingsService(nil, nil, &stubDeviceStore{})}
 		req := httptest.NewRequest(http.MethodPost, "/readings", strings.NewReader(validSenML))
 		rec := httptest.NewRecorder()
 		h.Create(rec, req)
@@ -166,16 +146,7 @@ func TestReadingsHandler_Create(t *testing.T) {
 	})
 }
 
-func withClaims(r *http.Request, userID string) *http.Request {
-	ctx := auth.ContextWithClaims(r.Context(), auth.Claims{UserID: userID})
-	return r.WithContext(ctx)
-}
-
-func withChiParam(r *http.Request, key, val string) *http.Request {
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add(key, val)
-	return r.WithContext(context.WithValue(r.Context(), chi.RouteCtxKey, rctx))
-}
+// ── ReadingsQueryHandler ──────────────────────────────────────────────────────
 
 func TestReadingsQueryHandler_List(t *testing.T) {
 	ts := time.Date(2026, 4, 20, 12, 0, 0, 0, time.UTC)
@@ -190,8 +161,7 @@ func TestReadingsQueryHandler_List(t *testing.T) {
 
 	t.Run("valid request returns 200 with readings", func(t *testing.T) {
 		h := &sensors.ReadingsQueryHandler{
-			Querier: &stubReadingQuerier{points: points},
-			Devices: &stubDeviceStore{device: sensors.Device{ID: "dev-1"}},
+			Service: newReadingsService(nil, &stubReadingQuerier{points: points}, &stubDeviceStore{device: newDevice("dev-1")}),
 		}
 		rec := httptest.NewRecorder()
 		h.List(rec, makeReq("dev-1", "?from=2026-04-20T00:00:00Z&to=2026-04-21T00:00:00Z"))
@@ -215,8 +185,7 @@ func TestReadingsQueryHandler_List(t *testing.T) {
 
 	t.Run("device not owned by user returns 404", func(t *testing.T) {
 		h := &sensors.ReadingsQueryHandler{
-			Querier: &stubReadingQuerier{},
-			Devices: &stubDeviceStore{findErr: sensors.ErrDeviceNotFound},
+			Service: newReadingsService(nil, &stubReadingQuerier{}, &stubDeviceStore{findErr: sensors.ErrDeviceNotFound}),
 		}
 		rec := httptest.NewRecorder()
 		h.List(rec, makeReq("dev-other", ""))
@@ -227,8 +196,7 @@ func TestReadingsQueryHandler_List(t *testing.T) {
 
 	t.Run("invalid from param returns 400", func(t *testing.T) {
 		h := &sensors.ReadingsQueryHandler{
-			Querier: &stubReadingQuerier{},
-			Devices: &stubDeviceStore{device: sensors.Device{ID: "dev-1"}},
+			Service: newReadingsService(nil, &stubReadingQuerier{}, &stubDeviceStore{device: newDevice("dev-1")}),
 		}
 		rec := httptest.NewRecorder()
 		h.List(rec, makeReq("dev-1", "?from=not-a-date"))
@@ -239,8 +207,7 @@ func TestReadingsQueryHandler_List(t *testing.T) {
 
 	t.Run("empty readings returns 200 with empty array", func(t *testing.T) {
 		h := &sensors.ReadingsQueryHandler{
-			Querier: &stubReadingQuerier{points: []sensors.ReadingPoint{}},
-			Devices: &stubDeviceStore{device: sensors.Device{ID: "dev-1"}},
+			Service: newReadingsService(nil, &stubReadingQuerier{points: []sensors.ReadingPoint{}}, &stubDeviceStore{device: newDevice("dev-1")}),
 		}
 		rec := httptest.NewRecorder()
 		h.List(rec, makeReq("dev-1", ""))
@@ -257,10 +224,8 @@ func TestReadingsQueryHandler_List(t *testing.T) {
 	})
 
 	t.Run("default params applied when omitted", func(t *testing.T) {
-		q := &stubReadingQuerier{points: points}
 		h := &sensors.ReadingsQueryHandler{
-			Querier: q,
-			Devices: &stubDeviceStore{device: sensors.Device{ID: "dev-1"}},
+			Service: newReadingsService(nil, &stubReadingQuerier{points: points}, &stubDeviceStore{device: newDevice("dev-1")}),
 		}
 		rec := httptest.NewRecorder()
 		h.List(rec, makeReq("dev-1", ""))
@@ -277,7 +242,7 @@ func TestReadingsQueryHandler_List(t *testing.T) {
 	})
 }
 
-// --- PatchDeviceHandler ---
+// ── PatchDeviceHandler ────────────────────────────────────────────────────────
 
 func TestPatchDeviceHandler(t *testing.T) {
 	ts := time.Date(2026, 4, 20, 12, 0, 0, 0, time.UTC)
@@ -294,7 +259,6 @@ func TestPatchDeviceHandler(t *testing.T) {
 		h := &sensors.PatchDeviceHandler{Store: &stubDeviceStore{patchDevice: updated}}
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, makeReq("dev-1", `{"name":"Tank A"}`))
-
 		if rec.Code != http.StatusOK {
 			t.Fatalf("expected 200, got %d", rec.Code)
 		}
@@ -349,36 +313,7 @@ func TestPatchDeviceHandler(t *testing.T) {
 	})
 }
 
-// --- ProvisionHandler ---
-
-type stubProvisioningStore struct {
-	deviceID string
-	code     string
-	getErr   error
-
-	claimedDeviceID string
-	claimErr        error
-
-	activateErr error
-}
-
-func (s *stubProvisioningStore) GetOrCreatePending(_ context.Context, _ string) (string, string, error) {
-	return s.deviceID, s.code, s.getErr
-}
-
-func (s *stubProvisioningStore) ClaimCode(_ context.Context, _ string) (string, string, error) {
-	return s.claimedDeviceID, "user-uuid", s.claimErr
-}
-
-func (s *stubProvisioningStore) Activate(_ context.Context, _, _, _ string) error {
-	return s.activateErr
-}
-
-// stubHiveMQClient implements hivemq.Client for tests.
-type stubHiveMQClient struct{ err error }
-
-func (s *stubHiveMQClient) ProvisionDevice(_ context.Context, _, _ string) error { return s.err }
-func (s *stubHiveMQClient) DeleteDevice(_ context.Context, _ string) error       { return s.err }
+// ── ProvisionHandler ──────────────────────────────────────────────────────────
 
 func TestProvisionHandler(t *testing.T) {
 	t.Run("returns 201 with code and device_id", func(t *testing.T) {
@@ -388,7 +323,6 @@ func TestProvisionHandler(t *testing.T) {
 		req := withClaims(httptest.NewRequest(http.MethodPost, "/api/devices/provision", nil), "user-uuid")
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, req)
-
 		if rec.Code != http.StatusCreated {
 			t.Fatalf("expected 201, got %d", rec.Code)
 		}
@@ -427,36 +361,33 @@ func TestProvisionHandler(t *testing.T) {
 	})
 }
 
-// stubSigner implements devicejwt.Signer for tests.
-type stubSigner struct {
-	token string
-	err   error
+// ── ActivateHandler ───────────────────────────────────────────────────────────
+
+func newActivateHandler(store *stubProvisioningStore, mq hivemq.Client, signer *stubSigner) *sensors.ActivateHandler {
+	return &sensors.ActivateHandler{
+		Service: &sensors.ActivationService{
+			Store:    store,
+			HiveMQ:   mq,
+			Signer:   signer,
+			MQTTHost: "broker.example.com",
+			MQTTPort: 8883,
+		},
+	}
 }
-
-func (s *stubSigner) Sign(_, _ string) (string, error)       { return s.token, s.err }
-func (s *stubSigner) PublicKey() *rsa.PublicKey              { return nil }
-func (s *stubSigner) KID() string                            { return "" }
-func (s *stubSigner) Issuer() string                         { return "" }
-
-// --- ActivateHandler ---
 
 func TestActivateHandler(t *testing.T) {
 	validBody := `{"code":"ABC123"}`
-
 	noopHiveMQ := hivemq.NewNoOp()
 
 	t.Run("returns 201 with token, device_id and mqtt credentials", func(t *testing.T) {
-		h := &sensors.ActivateHandler{
-			Store:    &stubProvisioningStore{claimedDeviceID: "dev-uuid"},
-			Signer:   &stubSigner{token: "signed.jwt.token"},
-			HiveMQ:   noopHiveMQ,
-			MQTTHost: "broker.example.com",
-			MQTTPort: 8883,
-		}
+		h := newActivateHandler(
+			&stubProvisioningStore{claimedDeviceID: "dev-uuid"},
+			noopHiveMQ,
+			&stubSigner{token: "signed.jwt.token"},
+		)
 		req := httptest.NewRequest(http.MethodPost, "/devices/activate", strings.NewReader(validBody))
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, req)
-
 		if rec.Code != http.StatusCreated {
 			t.Fatalf("expected 201, got %d", rec.Code)
 		}
@@ -485,11 +416,11 @@ func TestActivateHandler(t *testing.T) {
 	})
 
 	t.Run("hivemq error returns 500", func(t *testing.T) {
-		h := &sensors.ActivateHandler{
-			Store:  &stubProvisioningStore{claimedDeviceID: "dev-uuid"},
-			Signer: &stubSigner{token: "signed.jwt.token"},
-			HiveMQ: &stubHiveMQClient{err: errors.New("api down")},
-		}
+		h := newActivateHandler(
+			&stubProvisioningStore{claimedDeviceID: "dev-uuid"},
+			&stubHiveMQClient{err: errors.New("api down")},
+			&stubSigner{token: "signed.jwt.token"},
+		)
 		req := httptest.NewRequest(http.MethodPost, "/devices/activate", strings.NewReader(validBody))
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, req)
@@ -499,11 +430,11 @@ func TestActivateHandler(t *testing.T) {
 	})
 
 	t.Run("signer error returns 500", func(t *testing.T) {
-		h := &sensors.ActivateHandler{
-			Store:  &stubProvisioningStore{claimedDeviceID: "dev-uuid"},
-			Signer: &stubSigner{err: errors.New("sign failed")},
-			HiveMQ: noopHiveMQ,
-		}
+		h := newActivateHandler(
+			&stubProvisioningStore{claimedDeviceID: "dev-uuid"},
+			noopHiveMQ,
+			&stubSigner{err: errors.New("sign failed")},
+		)
 		req := httptest.NewRequest(http.MethodPost, "/devices/activate", strings.NewReader(validBody))
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, req)
@@ -513,7 +444,7 @@ func TestActivateHandler(t *testing.T) {
 	})
 
 	t.Run("missing code returns 400", func(t *testing.T) {
-		h := &sensors.ActivateHandler{Store: &stubProvisioningStore{}, HiveMQ: noopHiveMQ}
+		h := newActivateHandler(&stubProvisioningStore{}, noopHiveMQ, &stubSigner{})
 		req := httptest.NewRequest(http.MethodPost, "/devices/activate", strings.NewReader(`{}`))
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, req)
@@ -523,10 +454,11 @@ func TestActivateHandler(t *testing.T) {
 	})
 
 	t.Run("unknown code returns 404", func(t *testing.T) {
-		h := &sensors.ActivateHandler{
-			Store:  &stubProvisioningStore{claimErr: sensors.ErrCodeNotFound},
-			HiveMQ: noopHiveMQ,
-		}
+		h := newActivateHandler(
+			&stubProvisioningStore{claimErr: sensors.ErrCodeNotFound},
+			noopHiveMQ,
+			&stubSigner{},
+		)
 		req := httptest.NewRequest(http.MethodPost, "/devices/activate", strings.NewReader(validBody))
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, req)
@@ -536,10 +468,11 @@ func TestActivateHandler(t *testing.T) {
 	})
 
 	t.Run("already used code returns 409", func(t *testing.T) {
-		h := &sensors.ActivateHandler{
-			Store:  &stubProvisioningStore{claimErr: sensors.ErrCodeAlreadyUsed},
-			HiveMQ: noopHiveMQ,
-		}
+		h := newActivateHandler(
+			&stubProvisioningStore{claimErr: sensors.ErrCodeAlreadyUsed},
+			noopHiveMQ,
+			&stubSigner{},
+		)
 		req := httptest.NewRequest(http.MethodPost, "/devices/activate", strings.NewReader(validBody))
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, req)
@@ -549,13 +482,11 @@ func TestActivateHandler(t *testing.T) {
 	})
 
 	t.Run("activate error returns 500", func(t *testing.T) {
-		h := &sensors.ActivateHandler{
-			Store: &stubProvisioningStore{
-				claimedDeviceID: "dev-uuid",
-				activateErr:     errors.New("db down"),
-			},
-			HiveMQ: noopHiveMQ,
-		}
+		h := newActivateHandler(
+			&stubProvisioningStore{claimedDeviceID: "dev-uuid", activateErr: errors.New("db down")},
+			noopHiveMQ,
+			&stubSigner{},
+		)
 		req := httptest.NewRequest(http.MethodPost, "/devices/activate", strings.NewReader(validBody))
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, req)
@@ -565,23 +496,16 @@ func TestActivateHandler(t *testing.T) {
 	})
 }
 
+// ── CommandHandler ────────────────────────────────────────────────────────────
 
-type stubPublisher struct {
-	called bool
-	err    error
-}
-
-func (s *stubPublisher) Publish(_ context.Context, _ string, _ []byte) error {
-	s.called = true
-	return s.err
-}
-
-func withChiParams(r *http.Request, params map[string]string) *http.Request {
-	rctx := chi.NewRouteContext()
-	for k, v := range params {
-		rctx.URLParams.Add(k, v)
+func newCommandHandler(store *stubDeviceStore, pub *stubPublisher) *sensors.CommandHandler {
+	return &sensors.CommandHandler{
+		Service: &sensors.DeviceService{
+			Store:     store,
+			HiveMQ:    &stubHiveMQClient{},
+			Publisher: pub,
+		},
 	}
-	return r.WithContext(context.WithValue(r.Context(), chi.RouteCtxKey, rctx))
 }
 
 func TestCommandHandler(t *testing.T) {
@@ -596,7 +520,7 @@ func TestCommandHandler(t *testing.T) {
 
 	t.Run("204 on success", func(t *testing.T) {
 		pub := &stubPublisher{}
-		h := &sensors.CommandHandler{Store: &stubDeviceStore{}, Publisher: pub}
+		h := newCommandHandler(&stubDeviceStore{}, pub)
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, makeReq(body, "user-1"))
 		if rec.Code != http.StatusNoContent {
@@ -608,10 +532,7 @@ func TestCommandHandler(t *testing.T) {
 	})
 
 	t.Run("404 when device not found", func(t *testing.T) {
-		h := &sensors.CommandHandler{
-			Store:     &stubDeviceStore{findErr: sensors.ErrDeviceNotFound},
-			Publisher: &stubPublisher{},
-		}
+		h := newCommandHandler(&stubDeviceStore{findErr: sensors.ErrDeviceNotFound}, &stubPublisher{})
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, makeReq(body, "user-1"))
 		if rec.Code != http.StatusNotFound {
@@ -620,7 +541,7 @@ func TestCommandHandler(t *testing.T) {
 	})
 
 	t.Run("400 on invalid action", func(t *testing.T) {
-		h := &sensors.CommandHandler{Store: &stubDeviceStore{}, Publisher: &stubPublisher{}}
+		h := newCommandHandler(&stubDeviceStore{}, &stubPublisher{})
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, makeReq(`{"action":"invalid"}`, "user-1"))
 		if rec.Code != http.StatusBadRequest {
@@ -629,8 +550,7 @@ func TestCommandHandler(t *testing.T) {
 	})
 
 	t.Run("500 on publisher error", func(t *testing.T) {
-		pub := &stubPublisher{err: errors.New("broker down")}
-		h := &sensors.CommandHandler{Store: &stubDeviceStore{}, Publisher: pub}
+		h := newCommandHandler(&stubDeviceStore{}, &stubPublisher{err: errors.New("broker down")})
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, makeReq(body, "user-1"))
 		if rec.Code != http.StatusInternalServerError {
@@ -639,7 +559,17 @@ func TestCommandHandler(t *testing.T) {
 	})
 }
 
-// --- DeleteDeviceHandler ---
+// ── DeleteDeviceHandler ───────────────────────────────────────────────────────
+
+func newDeleteHandler(store *stubDeviceStore, mq *stubHiveMQClient) *sensors.DeleteDeviceHandler {
+	return &sensors.DeleteDeviceHandler{
+		Service: &sensors.DeviceService{
+			Store:     store,
+			HiveMQ:    mq,
+			Publisher: &stubPublisher{},
+		},
+	}
+}
 
 func TestDeleteDeviceHandler(t *testing.T) {
 	makeReq := func(deviceID, userID string) *http.Request {
@@ -652,8 +582,7 @@ func TestDeleteDeviceHandler(t *testing.T) {
 	}
 
 	t.Run("204 when device deleted and HiveMQ succeeds", func(t *testing.T) {
-		store := &stubDeviceStore{deleteMQTTUser: "dev-uuid"}
-		h := &sensors.DeleteDeviceHandler{Store: store, HiveMQ: &stubHiveMQClient{}}
+		h := newDeleteHandler(&stubDeviceStore{deleteMQTTUser: "dev-uuid"}, &stubHiveMQClient{})
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, makeReq("dev-uuid", "user-uuid"))
 		if rec.Code != http.StatusNoContent {
@@ -662,8 +591,7 @@ func TestDeleteDeviceHandler(t *testing.T) {
 	})
 
 	t.Run("204 when device deleted but HiveMQ fails (non-fatal)", func(t *testing.T) {
-		store := &stubDeviceStore{deleteMQTTUser: "dev-uuid"}
-		h := &sensors.DeleteDeviceHandler{Store: store, HiveMQ: &stubHiveMQClient{err: errors.New("hivemq down")}}
+		h := newDeleteHandler(&stubDeviceStore{deleteMQTTUser: "dev-uuid"}, &stubHiveMQClient{err: errors.New("hivemq down")})
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, makeReq("dev-uuid", "user-uuid"))
 		if rec.Code != http.StatusNoContent {
@@ -672,8 +600,7 @@ func TestDeleteDeviceHandler(t *testing.T) {
 	})
 
 	t.Run("204 when device has no mqtt_username (HiveMQ skipped)", func(t *testing.T) {
-		store := &stubDeviceStore{deleteMQTTUser: ""}
-		h := &sensors.DeleteDeviceHandler{Store: store, HiveMQ: &stubHiveMQClient{}}
+		h := newDeleteHandler(&stubDeviceStore{deleteMQTTUser: ""}, &stubHiveMQClient{})
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, makeReq("dev-uuid", "user-uuid"))
 		if rec.Code != http.StatusNoContent {
@@ -682,8 +609,7 @@ func TestDeleteDeviceHandler(t *testing.T) {
 	})
 
 	t.Run("404 when device not found", func(t *testing.T) {
-		store := &stubDeviceStore{deleteErr: sensors.ErrDeviceNotFound}
-		h := &sensors.DeleteDeviceHandler{Store: store, HiveMQ: &stubHiveMQClient{}}
+		h := newDeleteHandler(&stubDeviceStore{deleteErr: sensors.ErrDeviceNotFound}, &stubHiveMQClient{})
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, makeReq("dev-x", "user-uuid"))
 		if rec.Code != http.StatusNotFound {
@@ -692,8 +618,7 @@ func TestDeleteDeviceHandler(t *testing.T) {
 	})
 
 	t.Run("500 on store error", func(t *testing.T) {
-		store := &stubDeviceStore{deleteErr: errors.New("db down")}
-		h := &sensors.DeleteDeviceHandler{Store: store, HiveMQ: &stubHiveMQClient{}}
+		h := newDeleteHandler(&stubDeviceStore{deleteErr: errors.New("db down")}, &stubHiveMQClient{})
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, makeReq("dev-uuid", "user-uuid"))
 		if rec.Code != http.StatusInternalServerError {
@@ -702,7 +627,7 @@ func TestDeleteDeviceHandler(t *testing.T) {
 	})
 
 	t.Run("401 when no claims", func(t *testing.T) {
-		h := &sensors.DeleteDeviceHandler{Store: &stubDeviceStore{}, HiveMQ: &stubHiveMQClient{}}
+		h := newDeleteHandler(&stubDeviceStore{}, &stubHiveMQClient{})
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, makeReq("dev-uuid", ""))
 		if rec.Code != http.StatusUnauthorized {

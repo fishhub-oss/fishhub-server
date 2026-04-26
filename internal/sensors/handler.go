@@ -1,12 +1,8 @@
 package sensors
 
 import (
-	"bytes"
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"errors"
-	"fmt"
 	"io"
 	"log"
 	"net/http"
@@ -14,8 +10,6 @@ import (
 	"time"
 
 	"github.com/fishhub-oss/fishhub-server/internal/auth"
-	"github.com/fishhub-oss/fishhub-server/internal/devicejwt"
-	"github.com/fishhub-oss/fishhub-server/internal/hivemq"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/render"
 )
@@ -26,6 +20,7 @@ type DeviceResponse struct {
 	CreatedAt string `json:"created_at"`
 }
 
+// DevicesHandler handles GET /api/devices (session auth).
 type DevicesHandler struct {
 	Store DeviceStore
 }
@@ -56,14 +51,50 @@ func (h *DevicesHandler) List(w http.ResponseWriter, r *http.Request) {
 	render.JSON(w, r, resp)
 }
 
-
+// ReadingsHandler handles POST /readings (device JWT auth).
 type ReadingsHandler struct {
-	Writer ReadingWriter
+	Service *ReadingsService
 }
 
+func (h *ReadingsHandler) Create(w http.ResponseWriter, r *http.Request) {
+	device, ok := DeviceFromContext(r.Context())
+	if !ok {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		http.Error(w, "failed to read body", http.StatusBadRequest)
+		return
+	}
+
+	log.Printf("reading: device_id=%s bytes=%d", device.DeviceID, len(body))
+
+	if err := h.Service.Write(r.Context(), device, body); err != nil {
+		if errors.Is(err, ErrEmptyPayload) ||
+			errors.Is(err, ErrMissingBaseTime) ||
+			errors.Is(err, ErrEmptyEntries) {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if errors.Is(err, ErrInfluxWrite) {
+			log.Printf("influx write error (device_id=%s): %v", device.DeviceID, err)
+			http.Error(w, "failed to persist reading", http.StatusInternalServerError)
+			return
+		}
+		// JSON parse errors and other malformed payload errors.
+		http.Error(w, "invalid payload", http.StatusBadRequest)
+		return
+	}
+
+	render.Status(r, http.StatusCreated)
+	render.JSON(w, r, map[string]string{})
+}
+
+// ReadingsQueryHandler handles GET /api/devices/{id}/readings (session auth).
 type ReadingsQueryHandler struct {
-	Querier ReadingQuerier
-	Devices DeviceStore
+	Service *ReadingsService
 }
 
 type ReadingPointResponse struct {
@@ -117,17 +148,7 @@ func (h *ReadingsQueryHandler) List(w http.ResponseWriter, r *http.Request) {
 		measurements = strings.Split(v, ",")
 	}
 
-	if _, err := h.Devices.FindByIDAndUserID(r.Context(), deviceID, claims.UserID); err != nil {
-		if errors.Is(err, ErrDeviceNotFound) {
-			http.Error(w, "not found", http.StatusNotFound)
-			return
-		}
-		log.Printf("find device error (device_id=%s): %v", deviceID, err)
-		http.Error(w, "internal server error", http.StatusInternalServerError)
-		return
-	}
-
-	points, err := h.Querier.QueryReadings(r.Context(), ReadingQuery{
+	points, err := h.Service.Query(r.Context(), claims.UserID, ReadingQuery{
 		DeviceID:     deviceID,
 		From:         from,
 		To:           to,
@@ -135,6 +156,10 @@ func (h *ReadingsQueryHandler) List(w http.ResponseWriter, r *http.Request) {
 		Measurements: measurements,
 	})
 	if err != nil {
+		if errors.Is(err, ErrDeviceNotFound) {
+			http.Error(w, "not found", http.StatusNotFound)
+			return
+		}
 		log.Printf("query readings error (device_id=%s): %v", deviceID, err)
 		http.Error(w, "internal server error", http.StatusInternalServerError)
 		return
@@ -155,61 +180,9 @@ func (h *ReadingsQueryHandler) List(w http.ResponseWriter, r *http.Request) {
 	render.JSON(w, r, resp)
 }
 
-func (h *ReadingsHandler) Create(w http.ResponseWriter, r *http.Request) {
-	device, ok := DeviceFromContext(r.Context())
-	if !ok {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
-		return
-	}
-
-	body, err := io.ReadAll(r.Body)
-	if err != nil {
-		http.Error(w, "failed to read body", http.StatusBadRequest)
-		return
-	}
-
-	reading, err := ParseSenML(body)
-	if err != nil {
-		if errors.Is(err, ErrEmptyPayload) ||
-			errors.Is(err, ErrMissingBaseTime) ||
-			errors.Is(err, ErrEmptyEntries) {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		http.Error(w, "invalid payload", http.StatusBadRequest)
-		return
-	}
-
-	log.Printf("reading: device_id=%s measurements=%d bt=%d",
-		device.DeviceID, len(reading.Measurements), reading.BaseTime)
-
-	if h.Writer != nil {
-		fields := make(map[string]any, len(reading.Measurements))
-		for _, m := range reading.Measurements {
-			fields[m.Name] = m.Value
-		}
-		if err := h.Writer.WriteReading(r.Context(), Reading{
-			DeviceID:     device.DeviceID,
-			UserID:       device.UserID,
-			Timestamp:    time.Unix(reading.BaseTime, 0).UTC(),
-			Measurements: fields,
-		}); err != nil {
-			log.Printf("influx write error: %v", err)
-			http.Error(w, "failed to persist reading", http.StatusInternalServerError)
-			return
-		}
-	} else {
-		log.Printf("warning: no InfluxDB writer configured, reading not persisted")
-	}
-
-	render.Status(r, http.StatusCreated)
-	render.JSON(w, r, map[string]string{})
-}
-
 // DeleteDeviceHandler handles DELETE /api/devices/{id} (session auth).
 type DeleteDeviceHandler struct {
-	Store  DeviceStore
-	HiveMQ hivemq.Client
+	Service *DeviceService
 }
 
 func (h *DeleteDeviceHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -220,8 +193,7 @@ func (h *DeleteDeviceHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 	}
 
 	deviceID := chi.URLParam(r, "id")
-	mqttUsername, err := h.Store.DeleteDevice(r.Context(), deviceID, claims.UserID)
-	if err != nil {
+	if err := h.Service.Delete(r.Context(), deviceID, claims.UserID); err != nil {
 		if errors.Is(err, ErrDeviceNotFound) {
 			http.Error(w, "not found", http.StatusNotFound)
 			return
@@ -229,12 +201,6 @@ func (h *DeleteDeviceHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 		log.Printf("delete device error (device_id=%s): %v", deviceID, err)
 		http.Error(w, "internal server error", http.StatusInternalServerError)
 		return
-	}
-
-	if mqttUsername != "" {
-		if err := h.HiveMQ.DeleteDevice(r.Context(), mqttUsername); err != nil {
-			log.Printf("hivemq delete device error (device_id=%s): %v", deviceID, err)
-		}
 	}
 
 	w.WriteHeader(http.StatusNoContent)
@@ -281,7 +247,7 @@ func (h *PatchDeviceHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// ProvisionHandler handles POST /devices/provision (session auth).
+// ProvisionHandler handles POST /api/devices/provision (session auth).
 type ProvisionHandler struct {
 	Store ProvisioningStore
 }
@@ -311,11 +277,7 @@ func (h *ProvisionHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 // ActivateHandler handles POST /devices/activate (no auth — called by the device).
 type ActivateHandler struct {
-	Store    ProvisioningStore
-	Signer   devicejwt.Signer
-	HiveMQ   hivemq.Client
-	MQTTHost string
-	MQTTPort int
+	Service *ActivationService
 }
 
 type activateRequest struct {
@@ -338,7 +300,7 @@ func (h *ActivateHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	deviceID, userID, err := h.Store.ClaimCode(r.Context(), req.Code)
+	result, err := h.Service.Activate(r.Context(), req.Code)
 	if err != nil {
 		if errors.Is(err, ErrCodeNotFound) {
 			http.Error(w, "provisioning code not found", http.StatusNotFound)
@@ -348,47 +310,19 @@ func (h *ActivateHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "provisioning code already used", http.StatusConflict)
 			return
 		}
-		log.Printf("claim code error: %v", err)
-		http.Error(w, "internal server error", http.StatusInternalServerError)
-		return
-	}
-
-	mqttUsername := deviceID
-	mqttPasswordBytes := make([]byte, 32)
-	if _, err := rand.Read(mqttPasswordBytes); err != nil {
-		log.Printf("generate mqtt password error: %v", err)
-		http.Error(w, "internal server error", http.StatusInternalServerError)
-		return
-	}
-	mqttPassword := hex.EncodeToString(mqttPasswordBytes)
-
-	if err := h.HiveMQ.ProvisionDevice(r.Context(), mqttUsername, mqttPassword); err != nil {
-		log.Printf("hivemq provision error: %v", err)
-		http.Error(w, "internal server error", http.StatusInternalServerError)
-		return
-	}
-
-	if err := h.Store.Activate(r.Context(), deviceID, mqttUsername, mqttPassword); err != nil {
-		log.Printf("activate device error (device_id=%s): %v", deviceID, err)
-		http.Error(w, "internal server error", http.StatusInternalServerError)
-		return
-	}
-
-	jwtToken, err := h.Signer.Sign(deviceID, userID)
-	if err != nil {
-		log.Printf("devicejwt sign error: %v", err)
+		log.Printf("activation error: %v", err)
 		http.Error(w, "internal server error", http.StatusInternalServerError)
 		return
 	}
 
 	render.Status(r, http.StatusCreated)
 	render.JSON(w, r, activateResponse{
-		Token:        jwtToken,
-		DeviceID:     deviceID,
-		MQTTUsername: mqttUsername,
-		MQTTPassword: mqttPassword,
-		MQTTHost:     h.MQTTHost,
-		MQTTPort:     h.MQTTPort,
+		Token:        result.Token,
+		DeviceID:     result.DeviceID,
+		MQTTUsername: result.MQTTUsername,
+		MQTTPassword: result.MQTTPassword,
+		MQTTHost:     result.MQTTHost,
+		MQTTPort:     result.MQTTPort,
 	})
 }
 
@@ -399,12 +333,7 @@ type CommandPublisher interface {
 
 // CommandHandler handles POST /api/devices/{id}/peripherals/{name}/commands (session auth).
 type CommandHandler struct {
-	Store     DeviceStore
-	Publisher CommandPublisher
-}
-
-type commandRequest struct {
-	Action string `json:"action"`
+	Service *DeviceService
 }
 
 func (h *CommandHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -417,31 +346,22 @@ func (h *CommandHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	deviceID := chi.URLParam(r, "id")
 	peripheralName := chi.URLParam(r, "name")
 
-	if _, err := h.Store.FindByIDAndUserID(r.Context(), deviceID, claims.UserID); err != nil {
-		if errors.Is(err, ErrDeviceNotFound) {
-			http.Error(w, "not found", http.StatusNotFound)
-			return
-		}
-		log.Printf("find device error (device_id=%s): %v", deviceID, err)
-		http.Error(w, "internal server error", http.StatusInternalServerError)
-		return
-	}
-
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
 		http.Error(w, "failed to read body", http.StatusBadRequest)
 		return
 	}
 
-	var req commandRequest
-	if err := render.DecodeJSON(io.NopCloser(bytes.NewReader(body)), &req); err != nil || (req.Action != "set" && req.Action != "schedule") {
-		http.Error(w, "action must be 'set' or 'schedule'", http.StatusBadRequest)
-		return
-	}
-
-	topic := fmt.Sprintf("fishhub/%s/commands/%s", deviceID, peripheralName)
-	if err := h.Publisher.Publish(r.Context(), topic, body); err != nil {
-		log.Printf("mqtt publish error: %v", err)
+	if err := h.Service.SendCommand(r.Context(), deviceID, claims.UserID, peripheralName, body); err != nil {
+		if errors.Is(err, ErrDeviceNotFound) {
+			http.Error(w, "not found", http.StatusNotFound)
+			return
+		}
+		if errors.Is(err, ErrInvalidCommand) {
+			http.Error(w, ErrInvalidCommand.Error(), http.StatusBadRequest)
+			return
+		}
+		log.Printf("send command error (device_id=%s): %v", deviceID, err)
 		http.Error(w, "internal server error", http.StatusInternalServerError)
 		return
 	}
