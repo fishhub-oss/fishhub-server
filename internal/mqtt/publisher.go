@@ -44,7 +44,7 @@ func NewPublisher(host string, port int, username, password string) (Publisher, 
 }
 
 func (p *pahoPublisher) Publish(_ context.Context, topic string, payload []byte) error {
-	token := p.client.Publish(topic, 0, false, payload)
+	token := p.client.Publish(topic, 0, true, payload)
 	if !token.WaitTimeout(10 * time.Second) {
 		return fmt.Errorf("mqtt: publish timeout")
 	}
