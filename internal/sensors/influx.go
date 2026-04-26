@@ -3,7 +3,6 @@ package sensors
 import (
 	"context"
 	"fmt"
-	"strings"
 	"time"
 
 	influxdb3 "github.com/InfluxCommunity/influxdb3-go/v2/influxdb3"
@@ -77,26 +76,26 @@ func (c *influxDBClient) WriteReading(ctx context.Context, r Reading) error {
 }
 
 func (c *influxDBClient) QueryReadings(ctx context.Context, q ReadingQuery) ([]ReadingPoint, error) {
-	cols := "*"
-	if len(q.Measurements) > 0 {
-		quoted := make([]string, len(q.Measurements))
-		for i, m := range q.Measurements {
-			quoted[i] = fmt.Sprintf(`"%s"`, m)
-		}
-		cols = "time, " + strings.Join(quoted, ", ")
-	}
-
+	// Always SELECT * — requesting specific columns fails if a field has never been
+	// written to InfluxDB yet. Filter to requested measurements in Go instead.
 	sql := fmt.Sprintf(
-		`SELECT %s FROM sensors`+
+		`SELECT * FROM sensors`+
 			` WHERE device_id = '%s'`+
 			` AND time >= '%s'`+
 			` AND time < '%s'`+
 			` ORDER BY time ASC`,
-		cols,
 		q.DeviceID,
 		q.From.UTC().Format(time.RFC3339),
 		q.To.UTC().Format(time.RFC3339),
 	)
+
+	// Build a set of requested measurements for O(1) lookup.
+	// Empty set means return all fields.
+	wantAll := len(q.Measurements) == 0
+	want := make(map[string]bool, len(q.Measurements))
+	for _, m := range q.Measurements {
+		want[m] = true
+	}
 
 	iter, err := c.client.Query(ctx, sql)
 	if err != nil {
@@ -112,6 +111,9 @@ func (c *influxDBClient) QueryReadings(ctx context.Context, q ReadingQuery) ([]R
 		}
 		for k, v := range row {
 			if k == "time" || k == "device_id" || k == "user_id" {
+				continue
+			}
+			if !wantAll && !want[k] {
 				continue
 			}
 			switch val := v.(type) {
