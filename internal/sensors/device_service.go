@@ -34,6 +34,18 @@ func (s *DeviceService) Delete(ctx context.Context, deviceID, userID string) err
 	return nil
 }
 
+// List returns all devices belonging to userID, optionally filtered by status.
+func (s *DeviceService) List(ctx context.Context, userID, status string) ([]Device, error) {
+	return s.Store.ListByUserID(ctx, userID, status)
+}
+
+// Patch updates the device name and returns the updated device.
+// Returns ErrDeviceNotFound unwrapped if the device does not exist or is not
+// owned by userID.
+func (s *DeviceService) Patch(ctx context.Context, deviceID, userID, name string) (Device, error) {
+	return s.Store.PatchDevice(ctx, deviceID, userID, name)
+}
+
 // SendCommand verifies ownership and publishes the raw command payload to the
 // device's MQTT topic. Returns ErrDeviceNotFound unwrapped if the device does
 // not exist or is not owned by userID.

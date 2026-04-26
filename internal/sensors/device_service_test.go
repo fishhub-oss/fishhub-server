@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/fishhub-oss/fishhub-server/internal/sensors"
 )
@@ -93,5 +94,55 @@ func TestDeviceService_SendCommand_PublishError(t *testing.T) {
 	err := svc.SendCommand(context.Background(), "dev-1", "usr-1", "light", []byte(`{"action":"set"}`))
 	if !errors.Is(err, publishErr) {
 		t.Errorf("expected wrapped publishErr, got %v", err)
+	}
+}
+
+// ── List tests ────────────────────────────────────────────────────────────────
+
+func TestDeviceService_List_HappyPath(t *testing.T) {
+	devices := []sensors.Device{
+		{ID: "dev-1", Name: "Tank", CreatedAt: time.Now()},
+	}
+	svc := &sensors.DeviceService{
+		Store:     &stubDeviceStore{listDevices: devices},
+		HiveMQ:    &stubHiveMQClient{},
+		Publisher: &stubPublisher{},
+	}
+	got, err := svc.List(context.Background(), "usr-1", "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(got) != 1 || got[0].ID != "dev-1" {
+		t.Errorf("unexpected result: %+v", got)
+	}
+}
+
+// ── Patch tests ───────────────────────────────────────────────────────────────
+
+func TestDeviceService_Patch_HappyPath(t *testing.T) {
+	updated := sensors.Device{ID: "dev-1", Name: "Tank A", CreatedAt: time.Now()}
+	svc := &sensors.DeviceService{
+		Store:     &stubDeviceStore{patchDevice: updated},
+		HiveMQ:    &stubHiveMQClient{},
+		Publisher: &stubPublisher{},
+	}
+	got, err := svc.Patch(context.Background(), "dev-1", "usr-1", "Tank A")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got.Name != "Tank A" {
+		t.Errorf("expected name 'Tank A', got %q", got.Name)
+	}
+}
+
+func TestDeviceService_Patch_NotFound(t *testing.T) {
+	svc := &sensors.DeviceService{
+		Store:     &stubDeviceStore{patchErr: sensors.ErrDeviceNotFound},
+		HiveMQ:    &stubHiveMQClient{},
+		Publisher: &stubPublisher{},
+	}
+	_, err := svc.Patch(context.Background(), "dev-x", "usr-1", "Tank A")
+	if !errors.Is(err, sensors.ErrDeviceNotFound) {
+		t.Errorf("expected ErrDeviceNotFound, got %v", err)
 	}
 }

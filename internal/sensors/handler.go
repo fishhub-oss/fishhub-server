@@ -22,7 +22,7 @@ type DeviceResponse struct {
 
 // DevicesHandler handles GET /api/devices (session auth).
 type DevicesHandler struct {
-	Store DeviceStore
+	Service *DeviceService
 }
 
 func (h *DevicesHandler) List(w http.ResponseWriter, r *http.Request) {
@@ -33,7 +33,7 @@ func (h *DevicesHandler) List(w http.ResponseWriter, r *http.Request) {
 	}
 
 	status := r.URL.Query().Get("status")
-	devices, err := h.Store.ListByUserID(r.Context(), claims.UserID, status)
+	devices, err := h.Service.List(r.Context(), claims.UserID, status)
 	if err != nil {
 		log.Printf("list devices error: %v", err)
 		http.Error(w, "internal server error", http.StatusInternalServerError)
@@ -208,7 +208,7 @@ func (h *DeleteDeviceHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 
 // PatchDeviceHandler handles PATCH /api/devices/{id} (session auth).
 type PatchDeviceHandler struct {
-	Store DeviceStore
+	Service *DeviceService
 }
 
 type patchDeviceRequest struct {
@@ -229,7 +229,7 @@ func (h *PatchDeviceHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	deviceID := chi.URLParam(r, "id")
-	device, err := h.Store.PatchDevice(r.Context(), deviceID, claims.UserID, req.Name)
+	device, err := h.Service.Patch(r.Context(), deviceID, claims.UserID, req.Name)
 	if err != nil {
 		if errors.Is(err, ErrDeviceNotFound) {
 			http.Error(w, "not found", http.StatusNotFound)
@@ -249,7 +249,7 @@ func (h *PatchDeviceHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 // ProvisionHandler handles POST /api/devices/provision (session auth).
 type ProvisionHandler struct {
-	Store ProvisioningStore
+	Service *ProvisioningService
 }
 
 type provisionResponse struct {
@@ -264,7 +264,7 @@ func (h *ProvisionHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	deviceID, code, err := h.Store.GetOrCreatePending(r.Context(), claims.UserID)
+	deviceID, code, err := h.Service.Provision(r.Context(), claims.UserID)
 	if err != nil {
 		log.Printf("get or create pending error (user_id=%s): %v", claims.UserID, err)
 		http.Error(w, "internal server error", http.StatusInternalServerError)

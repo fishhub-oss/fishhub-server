@@ -181,6 +181,7 @@ func main() {
 	provisioningStore := sensors.NewProvisioningStore(db)
 	readingsSvc := &sensors.ReadingsService{Devices: deviceStore, Querier: influxClient, Writer: influxClient}
 	deviceSvc := &sensors.DeviceService{Store: deviceStore, HiveMQ: hivemqClient, Publisher: mqttPublisher}
+	provisioningSvc := &sensors.ProvisioningService{Store: provisioningStore}
 	activationSvc := &sensors.ActivationService{
 		Store:    provisioningStore,
 		HiveMQ:   hivemqClient,
@@ -213,9 +214,9 @@ func main() {
 	r.Group(func(r chi.Router) {
 		r.Use(platform.SessionAuthenticator(authSvc))
 		r.Get("/api/me", (&account.MeHandler{Store: accountStore}).ServeHTTP)
-		r.Post("/api/devices/provision", (&sensors.ProvisionHandler{Store: provisioningStore}).ServeHTTP)
-		r.Get("/api/devices", (&sensors.DevicesHandler{Store: deviceStore}).List)
-		r.Patch("/api/devices/{id}", (&sensors.PatchDeviceHandler{Store: deviceStore}).ServeHTTP)
+		r.Post("/api/devices/provision", (&sensors.ProvisionHandler{Service: provisioningSvc}).ServeHTTP)
+		r.Get("/api/devices", (&sensors.DevicesHandler{Service: deviceSvc}).List)
+		r.Patch("/api/devices/{id}", (&sensors.PatchDeviceHandler{Service: deviceSvc}).ServeHTTP)
 		r.Delete("/api/devices/{id}", (&sensors.DeleteDeviceHandler{Service: deviceSvc}).ServeHTTP)
 		r.Get("/api/devices/{id}/readings", (&sensors.ReadingsQueryHandler{Service: readingsSvc}).List)
 		r.Post("/api/devices/{id}/peripherals/{name}/commands", (&sensors.CommandHandler{Service: deviceSvc}).ServeHTTP)

@@ -13,6 +13,8 @@ import (
 type stubDeviceStore struct {
 	device         sensors.Device
 	findErr        error
+	listDevices    []sensors.Device
+	listErr        error
 	patchDevice    sensors.Device
 	patchErr       error
 	deleteMQTTUser string
@@ -20,7 +22,7 @@ type stubDeviceStore struct {
 }
 
 func (s *stubDeviceStore) ListByUserID(_ context.Context, _, _ string) ([]sensors.Device, error) {
-	return nil, nil
+	return s.listDevices, s.listErr
 }
 func (s *stubDeviceStore) FindByIDAndUserID(_ context.Context, _, _ string) (sensors.Device, error) {
 	return s.device, s.findErr

@@ -242,6 +242,51 @@ func TestReadingsQueryHandler_List(t *testing.T) {
 	})
 }
 
+// ── DevicesHandler ────────────────────────────────────────────────────────────
+
+func TestDevicesHandler_List(t *testing.T) {
+	newSvc := func(store *stubDeviceStore) *sensors.DeviceService {
+		return &sensors.DeviceService{Store: store, HiveMQ: &stubHiveMQClient{}, Publisher: &stubPublisher{}}
+	}
+
+	t.Run("returns devices for user", func(t *testing.T) {
+		devices := []sensors.Device{newDevice("dev-1"), newDevice("dev-2")}
+		h := &sensors.DevicesHandler{Service: newSvc(&stubDeviceStore{listDevices: devices})}
+		req := withClaims(httptest.NewRequest(http.MethodGet, "/api/devices", nil), "usr-1")
+		rec := httptest.NewRecorder()
+		h.List(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d", rec.Code)
+		}
+		var body []sensors.DeviceResponse
+		if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		if len(body) != 2 {
+			t.Errorf("expected 2 devices, got %d", len(body))
+		}
+	})
+
+	t.Run("missing claims returns 401", func(t *testing.T) {
+		h := &sensors.DevicesHandler{Service: newSvc(&stubDeviceStore{})}
+		rec := httptest.NewRecorder()
+		h.List(rec, httptest.NewRequest(http.MethodGet, "/api/devices", nil))
+		if rec.Code != http.StatusUnauthorized {
+			t.Errorf("expected 401, got %d", rec.Code)
+		}
+	})
+
+	t.Run("store error returns 500", func(t *testing.T) {
+		h := &sensors.DevicesHandler{Service: newSvc(&stubDeviceStore{listErr: errors.New("db down")})}
+		req := withClaims(httptest.NewRequest(http.MethodGet, "/api/devices", nil), "usr-1")
+		rec := httptest.NewRecorder()
+		h.List(rec, req)
+		if rec.Code != http.StatusInternalServerError {
+			t.Errorf("expected 500, got %d", rec.Code)
+		}
+	})
+}
+
 // ── PatchDeviceHandler ────────────────────────────────────────────────────────
 
 func TestPatchDeviceHandler(t *testing.T) {
@@ -254,9 +299,13 @@ func TestPatchDeviceHandler(t *testing.T) {
 		return req
 	}
 
+	newPatchSvc := func(store *stubDeviceStore) *sensors.DeviceService {
+		return &sensors.DeviceService{Store: store, HiveMQ: &stubHiveMQClient{}, Publisher: &stubPublisher{}}
+	}
+
 	t.Run("valid name returns 200 with updated device", func(t *testing.T) {
 		updated := sensors.Device{ID: "dev-1", Name: "Tank A", CreatedAt: ts}
-		h := &sensors.PatchDeviceHandler{Store: &stubDeviceStore{patchDevice: updated}}
+		h := &sensors.PatchDeviceHandler{Service: newPatchSvc(&stubDeviceStore{patchDevice: updated})}
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, makeReq("dev-1", `{"name":"Tank A"}`))
 		if rec.Code != http.StatusOK {
@@ -275,7 +324,7 @@ func TestPatchDeviceHandler(t *testing.T) {
 	})
 
 	t.Run("empty name returns 400", func(t *testing.T) {
-		h := &sensors.PatchDeviceHandler{Store: &stubDeviceStore{}}
+		h := &sensors.PatchDeviceHandler{Service: newPatchSvc(&stubDeviceStore{})}
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, makeReq("dev-1", `{"name":""}`))
 		if rec.Code != http.StatusBadRequest {
@@ -284,7 +333,7 @@ func TestPatchDeviceHandler(t *testing.T) {
 	})
 
 	t.Run("device not found returns 404", func(t *testing.T) {
-		h := &sensors.PatchDeviceHandler{Store: &stubDeviceStore{patchErr: sensors.ErrDeviceNotFound}}
+		h := &sensors.PatchDeviceHandler{Service: newPatchSvc(&stubDeviceStore{patchErr: sensors.ErrDeviceNotFound})}
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, makeReq("dev-x", `{"name":"Tank A"}`))
 		if rec.Code != http.StatusNotFound {
@@ -293,7 +342,7 @@ func TestPatchDeviceHandler(t *testing.T) {
 	})
 
 	t.Run("store error returns 500", func(t *testing.T) {
-		h := &sensors.PatchDeviceHandler{Store: &stubDeviceStore{patchErr: errors.New("db down")}}
+		h := &sensors.PatchDeviceHandler{Service: newPatchSvc(&stubDeviceStore{patchErr: errors.New("db down")})}
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, makeReq("dev-1", `{"name":"Tank A"}`))
 		if rec.Code != http.StatusInternalServerError {
@@ -302,7 +351,7 @@ func TestPatchDeviceHandler(t *testing.T) {
 	})
 
 	t.Run("missing claims returns 401", func(t *testing.T) {
-		h := &sensors.PatchDeviceHandler{Store: &stubDeviceStore{}}
+		h := &sensors.PatchDeviceHandler{Service: newPatchSvc(&stubDeviceStore{})}
 		req := httptest.NewRequest(http.MethodPatch, "/api/devices/dev-1", strings.NewReader(`{"name":"Tank A"}`))
 		req = withChiParam(req, "id", "dev-1")
 		rec := httptest.NewRecorder()
@@ -316,9 +365,13 @@ func TestPatchDeviceHandler(t *testing.T) {
 // ── ProvisionHandler ──────────────────────────────────────────────────────────
 
 func TestProvisionHandler(t *testing.T) {
+	newProvSvc := func(store *stubProvisioningStore) *sensors.ProvisioningService {
+		return &sensors.ProvisioningService{Store: store}
+	}
+
 	t.Run("returns 201 with code and device_id", func(t *testing.T) {
 		h := &sensors.ProvisionHandler{
-			Store: &stubProvisioningStore{deviceID: "dev-uuid", code: "ABC123"},
+			Service: newProvSvc(&stubProvisioningStore{deviceID: "dev-uuid", code: "ABC123"}),
 		}
 		req := withClaims(httptest.NewRequest(http.MethodPost, "/api/devices/provision", nil), "user-uuid")
 		rec := httptest.NewRecorder()
@@ -339,7 +392,7 @@ func TestProvisionHandler(t *testing.T) {
 	})
 
 	t.Run("missing claims returns 401", func(t *testing.T) {
-		h := &sensors.ProvisionHandler{Store: &stubProvisioningStore{}}
+		h := &sensors.ProvisionHandler{Service: newProvSvc(&stubProvisioningStore{})}
 		req := httptest.NewRequest(http.MethodPost, "/api/devices/provision", nil)
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, req)
@@ -350,7 +403,7 @@ func TestProvisionHandler(t *testing.T) {
 
 	t.Run("store error returns 500", func(t *testing.T) {
 		h := &sensors.ProvisionHandler{
-			Store: &stubProvisioningStore{getErr: errors.New("db down")},
+			Service: newProvSvc(&stubProvisioningStore{getErr: errors.New("db down")}),
 		}
 		req := withClaims(httptest.NewRequest(http.MethodPost, "/api/devices/provision", nil), "user-uuid")
 		rec := httptest.NewRecorder()
