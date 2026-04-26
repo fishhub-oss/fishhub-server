@@ -213,7 +213,7 @@ func main() {
 
 	r.Group(func(r chi.Router) {
 		r.Use(platform.SessionAuthenticator(authSvc))
-		r.Get("/api/me", (&account.MeHandler{Store: accountStore}).ServeHTTP)
+		r.Get("/api/me", (&account.MeHandler{Service: &account.AccountService{Store: accountStore}}).ServeHTTP)
 		r.Post("/api/devices/provision", (&sensors.ProvisionHandler{Service: provisioningSvc}).ServeHTTP)
 		r.Get("/api/devices", (&sensors.DevicesHandler{Service: deviceSvc}).List)
 		r.Patch("/api/devices/{id}", (&sensors.PatchDeviceHandler{Service: deviceSvc}).ServeHTTP)
