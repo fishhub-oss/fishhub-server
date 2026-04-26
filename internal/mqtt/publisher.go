@@ -4,11 +4,11 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
+	"log"
 	"time"
 
 	paho "github.com/eclipse/paho.mqtt.golang"
 )
-
 
 // Publisher publishes a payload to an MQTT topic.
 type Publisher interface {
@@ -28,8 +28,15 @@ func NewPublisher(host string, port int, username, password string) (Publisher, 
 		SetPassword(password).
 		SetTLSConfig(&tls.Config{}).
 		SetConnectTimeout(10 * time.Second).
+		SetKeepAlive(30 * time.Second).
 		SetAutoReconnect(true).
-		SetCleanSession(true)
+		SetCleanSession(true).
+		SetConnectionLostHandler(func(_ paho.Client, err error) {
+			log.Printf("mqtt: connection lost: %v", err)
+		}).
+		SetOnConnectHandler(func(_ paho.Client) {
+			log.Printf("mqtt: connected to %s:%d", host, port)
+		})
 
 	c := paho.NewClient(opts)
 	token := c.Connect()
@@ -44,7 +51,7 @@ func NewPublisher(host string, port int, username, password string) (Publisher, 
 }
 
 func (p *pahoPublisher) Publish(_ context.Context, topic string, payload []byte) error {
-	token := p.client.Publish(topic, 0, true, payload)
+	token := p.client.Publish(topic, 1, false, payload)
 	if !token.WaitTimeout(10 * time.Second) {
 		return fmt.Errorf("mqtt: publish timeout")
 	}
