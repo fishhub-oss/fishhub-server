@@ -17,6 +17,9 @@ type ReadingsService struct {
 }
 
 func NewReadingsService(devices DeviceStore, querier ReadingQuerier, writer ReadingWriter, logger *slog.Logger) *ReadingsService {
+	if logger == nil {
+		logger = slog.Default()
+	}
 	return &ReadingsService{devices: devices, querier: querier, writer: writer, logger: logger}
 }
 

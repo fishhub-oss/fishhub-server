@@ -21,6 +21,9 @@ type DeviceService struct {
 }
 
 func NewDeviceService(store DeviceStore, hiveMQ hivemq.Client, publisher CommandPublisher, logger *slog.Logger) *DeviceService {
+	if logger == nil {
+		logger = slog.Default()
+	}
 	return &DeviceService{store: store, hiveMQ: hiveMQ, publisher: publisher, logger: logger}
 }
 
