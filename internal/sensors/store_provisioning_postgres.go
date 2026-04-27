@@ -111,8 +111,8 @@ func (s *postgresProvisioningStore) ClaimCode(ctx context.Context, code string) 
 	return deviceID, userID, nil
 }
 
-func (s *postgresProvisioningStore) Activate(ctx context.Context, deviceID, mqttUsername, mqttPassword string) error {
-	_, err := s.db.ExecContext(ctx, `
+func (s *postgresProvisioningStore) Activate(ctx context.Context, tx *sql.Tx, deviceID, mqttUsername, mqttPassword string) error {
+	_, err := tx.ExecContext(ctx, `
 		UPDATE devices SET mqtt_username = $2, mqtt_password = $3 WHERE id = $1
 	`, deviceID, mqttUsername, mqttPassword)
 	return err

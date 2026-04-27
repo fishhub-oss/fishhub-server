@@ -2,6 +2,7 @@ package sensors
 
 import (
 	"context"
+	"database/sql"
 	"time"
 )
 
@@ -28,6 +29,7 @@ type ProvisioningStore interface {
 	// ClaimCode marks the code used, creates a new device row, and returns the device ID and user ID.
 	// Returns ErrCodeNotFound if the code is unknown, ErrCodeAlreadyUsed if already claimed.
 	ClaimCode(ctx context.Context, code string) (deviceID, userID string, err error)
-	// Activate stores MQTT credentials on the device row.
-	Activate(ctx context.Context, deviceID, mqttUsername, mqttPassword string) error
+	// Activate stores MQTT credentials on the device row within the provided transaction.
+	// The caller owns the transaction boundary.
+	Activate(ctx context.Context, tx *sql.Tx, deviceID, mqttUsername, mqttPassword string) error
 }

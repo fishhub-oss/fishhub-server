@@ -130,8 +130,16 @@ func TestActivate_integration(t *testing.T) {
 			t.Fatalf("setup claim: %v", err)
 		}
 
-		if err := store.Activate(ctx, deviceID, "mqtt-user", "mqtt-pass"); err != nil {
+		tx, err := db.BeginTx(ctx, nil)
+		if err != nil {
+			t.Fatalf("begin tx: %v", err)
+		}
+		if err := store.Activate(ctx, tx, deviceID, "mqtt-user", "mqtt-pass"); err != nil {
+			tx.Rollback()
 			t.Fatalf("activate: %v", err)
+		}
+		if err := tx.Commit(); err != nil {
+			t.Fatalf("commit: %v", err)
 		}
 
 		devices, err := deviceStore.ListByUserID(ctx, userID)
