@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/rsa"
 	"database/sql"
-	"encoding/json"
 	"time"
 
 	"github.com/fishhub-oss/fishhub-server/internal/outbox"
@@ -70,20 +69,15 @@ type stubOutboxStore struct {
 	insertErr error
 }
 
-func (s *stubOutboxStore) ListPending(_ context.Context, _ int) ([]outbox.Event, error) {
+func (s *stubOutboxStore) ClaimBatch(_ context.Context, _ int) ([]outbox.Event, error) {
 	return nil, nil
 }
 func (s *stubOutboxStore) MarkCompleted(_ context.Context, _ string) error { return nil }
 func (s *stubOutboxStore) RecordFailure(_ context.Context, _ string, _, _ int, _ string) error {
 	return nil
 }
-func (s *stubOutboxStore) Insert(_ context.Context, _ *sql.Tx, _ string, _ any) error {
-	if s.insertErr != nil {
-		return s.insertErr
-	}
-	// Validate that payload is JSON-serialisable.
-	_, err := json.Marshal(nil)
-	return err
+func (s *stubOutboxStore) Insert(_ context.Context, _ *sql.Tx, _ string, _ any, _ int) error {
+	return s.insertErr
 }
 
 // ── HiveMQ ────────────────────────────────────────────────────────────────────

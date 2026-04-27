@@ -12,6 +12,7 @@ import (
 )
 
 const EventTypeHiveMQProvision = "hivemq.provision_device"
+const hiveMQProvisionClaimTimeoutSeconds = 30
 
 type HiveMQProvisionPayload struct {
 	DeviceID string `json:"device_id"`

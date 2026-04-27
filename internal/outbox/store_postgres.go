@@ -15,16 +15,22 @@ func NewPostgresStore(db *sql.DB) Store {
 	return &postgresStore{db: db}
 }
 
-func (s *postgresStore) ListPending(ctx context.Context, limit int) ([]Event, error) {
+func (s *postgresStore) ClaimBatch(ctx context.Context, limit int) ([]Event, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, event_type, payload, attempts
-		FROM outbox_events
-		WHERE status = 'pending'
-		ORDER BY created_at
-		LIMIT $1
+		UPDATE outbox_events
+		SET status = 'processing', claimed_at = now()
+		WHERE id IN (
+			SELECT id FROM outbox_events
+			WHERE status = 'pending'
+			   OR (status = 'processing' AND claimed_at < now() - (claim_timeout_seconds || ' seconds')::interval)
+			ORDER BY created_at
+			FOR UPDATE SKIP LOCKED
+			LIMIT $1
+		)
+		RETURNING id, event_type, payload, attempts
 	`, limit)
 	if err != nil {
-		return nil, fmt.Errorf("outbox: list pending: %w", err)
+		return nil, fmt.Errorf("outbox: claim batch: %w", err)
 	}
 	defer rows.Close()
 
@@ -65,14 +71,15 @@ func (s *postgresStore) RecordFailure(ctx context.Context, id string, attempts i
 	return nil
 }
 
-func (s *postgresStore) Insert(ctx context.Context, tx *sql.Tx, eventType string, payload any) error {
+func (s *postgresStore) Insert(ctx context.Context, tx *sql.Tx, eventType string, payload any, claimTimeoutSeconds int) error {
 	b, err := json.Marshal(payload)
 	if err != nil {
 		return fmt.Errorf("outbox: marshal payload: %w", err)
 	}
 	_, err = tx.ExecContext(ctx, `
-		INSERT INTO outbox_events (event_type, payload) VALUES ($1, $2)
-	`, eventType, b)
+		INSERT INTO outbox_events (event_type, payload, claim_timeout_seconds)
+		VALUES ($1, $2, $3)
+	`, eventType, b, claimTimeoutSeconds)
 	if err != nil {
 		return fmt.Errorf("outbox: insert: %w", err)
 	}

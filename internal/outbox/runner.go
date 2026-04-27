@@ -49,9 +49,9 @@ func (r *Runner) Run(ctx context.Context) {
 }
 
 func (r *Runner) tick(ctx context.Context) {
-	events, err := r.store.ListPending(ctx, batchSize)
+	events, err := r.store.ClaimBatch(ctx, batchSize)
 	if err != nil {
-		r.logger.Error("outbox: list pending", "error", err)
+		r.logger.Error("outbox: claim batch", "error", err)
 		return
 	}
 	if len(events) == 0 {

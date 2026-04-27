@@ -93,7 +93,7 @@ func (s *ActivationService) Activate(ctx context.Context, code string) (Activati
 		DeviceID: deviceID,
 		Username: mqttUsername,
 		Password: mqttPassword,
-	}); err != nil {
+	}, hiveMQProvisionClaimTimeoutSeconds); err != nil {
 		s.logger.Error("activate: enqueue hivemq provision", "device_id", deviceID, "error", err)
 		return ActivationResult{}, fmt.Errorf("enqueue hivemq provision: %w", err)
 	}
