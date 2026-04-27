@@ -6,7 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 
 	"github.com/fishhub-oss/fishhub-server/internal/hivemq"
 )
@@ -16,6 +16,7 @@ type DeviceService struct {
 	Store     DeviceStore
 	HiveMQ    hivemq.Client
 	Publisher CommandPublisher
+	Logger    *slog.Logger
 }
 
 // Delete soft-deletes the device and revokes its MQTT credentials.
@@ -28,7 +29,9 @@ func (s *DeviceService) Delete(ctx context.Context, deviceID, userID string) err
 	}
 	if mqttUsername != "" {
 		if err := s.HiveMQ.DeleteDevice(ctx, mqttUsername); err != nil {
-			log.Printf("hivemq delete device error (device_id=%s): %v", deviceID, err)
+			if s.Logger != nil {
+				s.Logger.Warn("hivemq delete device", "device_id", deviceID, "error", err)
+			}
 		}
 	}
 	return nil

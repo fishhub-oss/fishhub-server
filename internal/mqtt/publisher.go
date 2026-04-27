@@ -4,7 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
-	"log"
+	"log/slog"
 	"time"
 
 	paho "github.com/eclipse/paho.mqtt.golang"
@@ -20,7 +20,7 @@ type pahoPublisher struct {
 }
 
 // NewPublisher connects to the HiveMQ broker with the given server credentials and returns a Publisher.
-func NewPublisher(host string, port int, username, password string) (Publisher, error) {
+func NewPublisher(host string, port int, username, password string, logger *slog.Logger) (Publisher, error) {
 	opts := paho.NewClientOptions().
 		AddBroker(fmt.Sprintf("tls://%s:%d", host, port)).
 		SetClientID("fishhub-server").
@@ -32,10 +32,14 @@ func NewPublisher(host string, port int, username, password string) (Publisher, 
 		SetAutoReconnect(true).
 		SetCleanSession(true).
 		SetConnectionLostHandler(func(_ paho.Client, err error) {
-			log.Printf("mqtt: connection lost: %v", err)
+			if logger != nil {
+				logger.Warn("mqtt connection lost", "error", err)
+			}
 		}).
 		SetOnConnectHandler(func(_ paho.Client) {
-			log.Printf("mqtt: connected to %s:%d", host, port)
+			if logger != nil {
+				logger.Info("mqtt connected", "host", host, "port", port)
+			}
 		})
 
 	c := paho.NewClient(opts)

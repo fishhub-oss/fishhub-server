@@ -81,3 +81,12 @@ internal/
 - Wire format for sensor readings: **SenML JSON (RFC 8428)**
 - Auth: **Bearer token** (random 32-byte hex), one token per device
 - Integration tests use `testutil.NewTestDB(t)` — never mock the database
+
+## Logging
+
+- Use `log/slog` — never `log.Printf` or `fmt.Println`.
+- Inject `*slog.Logger` via struct fields; never use a package-level logger or pass via context.
+- Levels: `Info` for normal events, `Warn` for non-fatal degraded state (auth failures, optional components not configured), `Error` for failures that affect the response.
+- Handler-layer 5xx errors are covered by `platform.RequestLogger` middleware — no per-handler log calls needed.
+- Service-layer errors (external call failures) should log at the service level with structured key-value pairs.
+- `LOG_FORMAT=json` → JSON output (production/Railway); anything else → text output (development).

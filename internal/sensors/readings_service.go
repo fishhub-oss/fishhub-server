@@ -3,6 +3,7 @@ package sensors
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"time"
 )
 
@@ -11,6 +12,7 @@ type ReadingsService struct {
 	Devices DeviceStore
 	Querier ReadingQuerier
 	Writer  ReadingWriter
+	Logger  *slog.Logger
 }
 
 // Query verifies device ownership then fetches readings from InfluxDB.
@@ -35,6 +37,10 @@ func (s *ReadingsService) Write(ctx context.Context, device DeviceInfo, body []b
 		return err
 	}
 
+	if s.Logger != nil {
+		s.Logger.Info("reading received", "device_id", device.DeviceID, "bytes", len(body))
+	}
+
 	if s.Writer == nil {
 		return nil
 	}
@@ -49,6 +55,9 @@ func (s *ReadingsService) Write(ctx context.Context, device DeviceInfo, body []b
 		Timestamp:    time.Unix(reading.BaseTime, 0).UTC(),
 		Measurements: fields,
 	}); err != nil {
+		if s.Logger != nil {
+			s.Logger.Error("influx write", "device_id", device.DeviceID, "error", err)
+		}
 		return fmt.Errorf("%w: %w", ErrInfluxWrite, err)
 	}
 	return nil

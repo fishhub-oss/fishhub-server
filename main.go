@@ -3,7 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"strconv"
@@ -24,6 +24,7 @@ import (
 
 type config struct {
 	Port             string
+	LogFormat        string
 	JWTSecret        string
 	JWTTTLHours      int
 	GoogleClientID   string
@@ -63,6 +64,7 @@ func loadConfig() config {
 
 	return config{
 		Port:             port,
+		LogFormat:        os.Getenv("LOG_FORMAT"),
 		JWTSecret:        os.Getenv("JWT_SECRET"),
 		JWTTTLHours:      jwtTTLHours,
 		GoogleClientID:   os.Getenv("GOOGLE_CLIENT_ID"),
@@ -85,6 +87,15 @@ func loadConfig() config {
 
 func main() {
 	cfg := loadConfig()
+
+	var logHandler slog.Handler
+	if cfg.LogFormat == "json" {
+		logHandler = slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug})
+	} else {
+		logHandler = slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug})
+	}
+	logger := slog.New(logHandler)
+	slog.SetDefault(logger)
 
 	db, err := platform.Open()
 	if err != nil {
@@ -112,9 +123,9 @@ func main() {
 			os.Exit(1)
 		}
 		influxClient = c
-		log.Printf("InfluxDB client configured: host=%s database=%s", cfg.InfluxHost, cfg.InfluxDatabase)
+		logger.Info("influxdb configured", "host", cfg.InfluxHost, "database", cfg.InfluxDatabase)
 	} else {
-		log.Printf("warning: INFLUXDB3_HOST/TOKEN/DATABASE not set — readings will not be persisted to InfluxDB")
+		logger.Warn("influxdb not configured — readings will not be persisted")
 	}
 
 	// ── Auth ──────────────────────────────────────────────────────────────────
@@ -148,39 +159,39 @@ func main() {
 		}
 		jwkSigner = inner
 		deviceSigner = devicejwt.New(inner, cfg.IDPHost)
-		log.Printf("device JWT signer configured: kid=%s issuer=%s", cfg.DeviceJWTKID, cfg.IDPHost)
+		logger.Info("device jwt signer configured", "kid", cfg.DeviceJWTKID, "issuer", cfg.IDPHost)
 	} else {
-		log.Printf("warning: DEVICE_JWT_PRIVATE_KEY not set — token will not be issued at activation")
+		logger.Warn("device jwt not configured — tokens will not be issued at activation")
 	}
 
 	// ── HiveMQ ────────────────────────────────────────────────────────────────
 	hivemqClient := hivemq.Client(hivemq.NewNoOp())
 	if cfg.HiveMQBaseURL != "" {
 		hivemqClient = hivemq.NewAPIClient(cfg.HiveMQBaseURL, cfg.HiveMQAPIToken, cfg.HiveMQRoleID)
-		log.Printf("HiveMQ API client configured: base_url=%s", cfg.HiveMQBaseURL)
+		logger.Info("hivemq api configured", "base_url", cfg.HiveMQBaseURL)
 	} else {
-		log.Printf("warning: HIVEMQ_API_BASE_URL not set — MQTT credentials will not be provisioned at activation")
+		logger.Warn("hivemq api not configured — mqtt credentials will not be provisioned at activation")
 	}
 
 	// ── MQTT publisher ────────────────────────────────────────────────────────
 	var mqttPublisher sensors.CommandPublisher = mqtt.NewNoOpPublisher()
 	if cfg.HiveMQHost != "" {
-		p, err := mqtt.NewPublisher(cfg.HiveMQHost, cfg.HiveMQPort, cfg.HiveMQServerUser, cfg.HiveMQServerPass)
+		p, err := mqtt.NewPublisher(cfg.HiveMQHost, cfg.HiveMQPort, cfg.HiveMQServerUser, cfg.HiveMQServerPass, logger)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "mqtt init: %v\n", err)
 			os.Exit(1)
 		}
 		mqttPublisher = p
-		log.Printf("MQTT publisher connected: host=%s", cfg.HiveMQHost)
+		logger.Info("mqtt publisher configured", "host", cfg.HiveMQHost)
 	} else {
-		log.Printf("warning: HIVEMQ_HOST not set — MQTT publishing disabled")
+		logger.Warn("mqtt publishing disabled — HIVEMQ_HOST not set")
 	}
 
 	// ── Stores & services ─────────────────────────────────────────────────────
 	deviceStore := sensors.NewDeviceStore(db)
 	provisioningStore := sensors.NewProvisioningStore(db)
-	readingsSvc := &sensors.ReadingsService{Devices: deviceStore, Querier: influxClient, Writer: influxClient}
-	deviceSvc := &sensors.DeviceService{Store: deviceStore, HiveMQ: hivemqClient, Publisher: mqttPublisher}
+	readingsSvc := &sensors.ReadingsService{Devices: deviceStore, Querier: influxClient, Writer: influxClient, Logger: logger}
+	deviceSvc := &sensors.DeviceService{Store: deviceStore, HiveMQ: hivemqClient, Publisher: mqttPublisher, Logger: logger}
 	provisioningSvc := &sensors.ProvisioningService{Store: provisioningStore}
 	activationSvc := &sensors.ActivationService{
 		Store:    provisioningStore,
@@ -192,6 +203,7 @@ func main() {
 
 	// ── Router ────────────────────────────────────────────────────────────────
 	r := chi.NewRouter()
+	r.Use(platform.RequestLogger(logger))
 	r.Use(cors.Handler(cors.Options{
 		AllowedOrigins:   cfg.CORSOrigins,
 		AllowedMethods:   []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
