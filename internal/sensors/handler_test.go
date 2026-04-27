@@ -369,9 +369,9 @@ func TestProvisionHandler(t *testing.T) {
 		return sensors.NewProvisioningService(store, discardLogger)
 	}
 
-	t.Run("returns 201 with code and device_id", func(t *testing.T) {
+	t.Run("returns 201 with code", func(t *testing.T) {
 		h := &sensors.ProvisionHandler{
-			Service: newProvSvc(&stubProvisioningStore{deviceID: "dev-uuid", code: "ABC123"}),
+			Service: newProvSvc(&stubProvisioningStore{code: "ABC123"}),
 		}
 		req := withClaims(httptest.NewRequest(http.MethodPost, "/api/devices/provision", nil), "user-uuid")
 		rec := httptest.NewRecorder()
@@ -386,8 +386,8 @@ func TestProvisionHandler(t *testing.T) {
 		if body["code"] != "ABC123" {
 			t.Errorf("expected code ABC123, got %s", body["code"])
 		}
-		if body["device_id"] != "dev-uuid" {
-			t.Errorf("expected device_id dev-uuid, got %s", body["device_id"])
+		if _, ok := body["device_id"]; ok {
+			t.Error("device_id should not be present in provision response")
 		}
 	})
 

@@ -76,7 +76,7 @@ func TestDeviceService_List_HappyPath(t *testing.T) {
 		{ID: "dev-1", Name: "Tank", CreatedAt: time.Now()},
 	}
 	svc := sensors.NewDeviceService(&stubDeviceStore{listDevices: devices}, &stubHiveMQClient{}, &stubPublisher{}, discardLogger)
-	got, err := svc.List(context.Background(), "usr-1", "")
+	got, err := svc.List(context.Background(), "usr-1")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

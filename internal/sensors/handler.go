@@ -31,8 +31,7 @@ func (h *DevicesHandler) List(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	status := r.URL.Query().Get("status")
-	devices, err := h.Service.List(r.Context(), claims.UserID, status)
+	devices, err := h.Service.List(r.Context(), claims.UserID)
 	if err != nil {
 		http.Error(w, "internal server error", http.StatusInternalServerError)
 		return
@@ -245,8 +244,7 @@ type ProvisionHandler struct {
 }
 
 type provisionResponse struct {
-	Code     string `json:"code"`
-	DeviceID string `json:"device_id"`
+	Code string `json:"code"`
 }
 
 func (h *ProvisionHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -256,14 +254,14 @@ func (h *ProvisionHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	deviceID, code, err := h.Service.Provision(r.Context(), claims.UserID)
+	code, err := h.Service.Provision(r.Context(), claims.UserID)
 	if err != nil {
 		http.Error(w, "internal server error", http.StatusInternalServerError)
 		return
 	}
 
 	render.Status(r, http.StatusCreated)
-	render.JSON(w, r, provisionResponse{Code: code, DeviceID: deviceID})
+	render.JSON(w, r, provisionResponse{Code: code})
 }
 
 // ActivateHandler handles POST /devices/activate (no auth — called by the device).

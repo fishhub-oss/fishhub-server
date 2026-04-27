@@ -21,7 +21,7 @@ type stubDeviceStore struct {
 	deleteErr      error
 }
 
-func (s *stubDeviceStore) ListByUserID(_ context.Context, _, _ string) ([]sensors.Device, error) {
+func (s *stubDeviceStore) ListByUserID(_ context.Context, _ string) ([]sensors.Device, error) {
 	return s.listDevices, s.listErr
 }
 func (s *stubDeviceStore) FindByIDAndUserID(_ context.Context, _, _ string) (sensors.Device, error) {
@@ -37,9 +37,8 @@ func (s *stubDeviceStore) DeleteDevice(_ context.Context, _, _ string) (string, 
 // ── ProvisioningStore ─────────────────────────────────────────────────────────
 
 type stubProvisioningStore struct {
-	deviceID string
-	code     string
-	getErr   error
+	code   string
+	getErr error
 
 	claimedDeviceID string
 	claimUserID     string
@@ -48,8 +47,8 @@ type stubProvisioningStore struct {
 	activateErr error
 }
 
-func (s *stubProvisioningStore) GetOrCreatePending(_ context.Context, _ string) (string, string, error) {
-	return s.deviceID, s.code, s.getErr
+func (s *stubProvisioningStore) GetOrCreateCode(_ context.Context, _ string) (string, error) {
+	return s.code, s.getErr
 }
 func (s *stubProvisioningStore) ClaimCode(_ context.Context, _ string) (string, string, error) {
 	uid := s.claimUserID

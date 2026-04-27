@@ -15,26 +15,13 @@ func NewDeviceStore(db *sql.DB) DeviceStore {
 	return &postgresDeviceStore{db: db}
 }
 
-func (s *postgresDeviceStore) ListByUserID(ctx context.Context, userID, status string) ([]Device, error) {
-	var (
-		rows *sql.Rows
-		err  error
-	)
-	if status != "" {
-		rows, err = s.db.QueryContext(ctx, `
-			SELECT id, COALESCE(name, ''), created_at
-			FROM devices
-			WHERE user_id = $1 AND status = $2 AND deleted_at IS NULL
-			ORDER BY created_at DESC
-		`, userID, status)
-	} else {
-		rows, err = s.db.QueryContext(ctx, `
-			SELECT id, COALESCE(name, ''), created_at
-			FROM devices
-			WHERE user_id = $1 AND deleted_at IS NULL
-			ORDER BY created_at DESC
-		`, userID)
-	}
+func (s *postgresDeviceStore) ListByUserID(ctx context.Context, userID string) ([]Device, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, COALESCE(name, ''), created_at
+		FROM devices
+		WHERE user_id = $1 AND deleted_at IS NULL
+		ORDER BY created_at DESC
+	`, userID)
 	if err != nil {
 		return nil, fmt.Errorf("list devices: %w", err)
 	}
