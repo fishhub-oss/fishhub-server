@@ -9,9 +9,7 @@ import (
 )
 
 func TestProvisioningService_Provision_HappyPath(t *testing.T) {
-	svc := &sensors.ProvisioningService{
-		Store: &stubProvisioningStore{deviceID: "dev-uuid", code: "ABC123"},
-	}
+	svc := sensors.NewProvisioningService(&stubProvisioningStore{deviceID: "dev-uuid", code: "ABC123"}, discardLogger)
 	deviceID, code, err := svc.Provision(context.Background(), "usr-1")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -26,9 +24,7 @@ func TestProvisioningService_Provision_HappyPath(t *testing.T) {
 
 func TestProvisioningService_Provision_StoreError(t *testing.T) {
 	storeErr := errors.New("db down")
-	svc := &sensors.ProvisioningService{
-		Store: &stubProvisioningStore{getErr: storeErr},
-	}
+	svc := sensors.NewProvisioningService(&stubProvisioningStore{getErr: storeErr}, discardLogger)
 	_, _, err := svc.Provision(context.Background(), "usr-1")
 	if !errors.Is(err, storeErr) {
 		t.Errorf("expected wrapped storeErr, got %v", err)

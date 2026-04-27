@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"io"
-	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -35,7 +34,6 @@ func (h *DevicesHandler) List(w http.ResponseWriter, r *http.Request) {
 	status := r.URL.Query().Get("status")
 	devices, err := h.Service.List(r.Context(), claims.UserID, status)
 	if err != nil {
-		log.Printf("list devices error: %v", err)
 		http.Error(w, "internal server error", http.StatusInternalServerError)
 		return
 	}
@@ -69,8 +67,6 @@ func (h *ReadingsHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	log.Printf("reading: device_id=%s bytes=%d", device.DeviceID, len(body))
-
 	if err := h.Service.Write(r.Context(), device, body); err != nil {
 		if errors.Is(err, ErrEmptyPayload) ||
 			errors.Is(err, ErrMissingBaseTime) ||
@@ -79,7 +75,6 @@ func (h *ReadingsHandler) Create(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if errors.Is(err, ErrInfluxWrite) {
-			log.Printf("influx write error (device_id=%s): %v", device.DeviceID, err)
 			http.Error(w, "failed to persist reading", http.StatusInternalServerError)
 			return
 		}
@@ -160,7 +155,6 @@ func (h *ReadingsQueryHandler) List(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "not found", http.StatusNotFound)
 			return
 		}
-		log.Printf("query readings error (device_id=%s): %v", deviceID, err)
 		http.Error(w, "internal server error", http.StatusInternalServerError)
 		return
 	}
@@ -198,7 +192,6 @@ func (h *DeleteDeviceHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 			http.Error(w, "not found", http.StatusNotFound)
 			return
 		}
-		log.Printf("delete device error (device_id=%s): %v", deviceID, err)
 		http.Error(w, "internal server error", http.StatusInternalServerError)
 		return
 	}
@@ -235,7 +228,6 @@ func (h *PatchDeviceHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "not found", http.StatusNotFound)
 			return
 		}
-		log.Printf("patch device error (device_id=%s): %v", deviceID, err)
 		http.Error(w, "internal server error", http.StatusInternalServerError)
 		return
 	}
@@ -266,7 +258,6 @@ func (h *ProvisionHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	deviceID, code, err := h.Service.Provision(r.Context(), claims.UserID)
 	if err != nil {
-		log.Printf("get or create pending error (user_id=%s): %v", claims.UserID, err)
 		http.Error(w, "internal server error", http.StatusInternalServerError)
 		return
 	}
@@ -310,7 +301,6 @@ func (h *ActivateHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "provisioning code already used", http.StatusConflict)
 			return
 		}
-		log.Printf("activation error: %v", err)
 		http.Error(w, "internal server error", http.StatusInternalServerError)
 		return
 	}
@@ -361,7 +351,6 @@ func (h *CommandHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, ErrInvalidCommand.Error(), http.StatusBadRequest)
 			return
 		}
-		log.Printf("send command error (device_id=%s): %v", deviceID, err)
 		http.Error(w, "internal server error", http.StatusInternalServerError)
 		return
 	}

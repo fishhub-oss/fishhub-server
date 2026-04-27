@@ -3,13 +3,22 @@ package auth
 import (
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 
 	"github.com/go-chi/render"
 )
 
 type VerifyHandler struct {
-	Service AuthService
+	service AuthService
+	logger  *slog.Logger
+}
+
+func NewVerifyHandler(service AuthService, logger *slog.Logger) *VerifyHandler {
+	if logger == nil {
+		logger = slog.Default()
+	}
+	return &VerifyHandler{service: service, logger: logger}
 }
 
 type verifyRequest struct {
@@ -28,7 +37,7 @@ func (h *VerifyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	user, err := h.Service.VerifyAndUpsert(r.Context(), req.Provider, req.IDToken)
+	user, err := h.service.VerifyAndUpsert(r.Context(), req.Provider, req.IDToken)
 	if err != nil {
 		if errors.Is(err, ErrUnsupportedProvider) {
 			http.Error(w, "unsupported provider", http.StatusUnprocessableEntity)
@@ -38,18 +47,21 @@ func (h *VerifyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "invalid id token", http.StatusUnauthorized)
 			return
 		}
+		h.logger.Error("auth verify", "error", err)
 		http.Error(w, "internal server error", http.StatusInternalServerError)
 		return
 	}
 
-	sessionToken, err := h.Service.IssueSessionJWT(user.ID)
+	sessionToken, err := h.service.IssueSessionJWT(user.ID)
 	if err != nil {
+		h.logger.Error("auth verify: issue session jwt", "error", err)
 		http.Error(w, "internal server error", http.StatusInternalServerError)
 		return
 	}
 
-	refreshToken, err := h.Service.IssueRefreshToken(r.Context(), user.ID)
+	refreshToken, err := h.service.IssueRefreshToken(r.Context(), user.ID)
 	if err != nil {
+		h.logger.Error("auth verify: issue refresh token", "error", err)
 		http.Error(w, "internal server error", http.StatusInternalServerError)
 		return
 	}
@@ -61,7 +73,15 @@ func (h *VerifyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 type RefreshHandler struct {
-	Service AuthService
+	service AuthService
+	logger  *slog.Logger
+}
+
+func NewRefreshHandler(service AuthService, logger *slog.Logger) *RefreshHandler {
+	if logger == nil {
+		logger = slog.Default()
+	}
+	return &RefreshHandler{service: service, logger: logger}
 }
 
 type refreshRequest struct {
@@ -79,12 +99,13 @@ func (h *RefreshHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	newRaw, sessionJWT, err := h.Service.RotateRefreshToken(r.Context(), req.RefreshToken)
+	newRaw, sessionJWT, err := h.service.RotateRefreshToken(r.Context(), req.RefreshToken)
 	if err != nil {
 		if errors.Is(err, ErrTokenNotFound) || errors.Is(err, ErrTokenExpired) || errors.Is(err, ErrTokenRevoked) {
 			http.Error(w, "invalid or expired refresh token", http.StatusUnauthorized)
 			return
 		}
+		h.logger.Error("auth refresh", "error", err)
 		http.Error(w, "internal server error", http.StatusInternalServerError)
 		return
 	}
@@ -96,7 +117,11 @@ func (h *RefreshHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 type LogoutHandler struct {
-	Service AuthService
+	service AuthService
+}
+
+func NewLogoutHandler(service AuthService) *LogoutHandler {
+	return &LogoutHandler{service: service}
 }
 
 type logoutRequest struct {
@@ -110,7 +135,7 @@ func (h *LogoutHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	if req.RefreshToken != "" {
 		// ignore revocation errors; the cookie is cleared regardless
-		h.Service.RevokeRefreshToken(r.Context(), req.RefreshToken) //nolint:errcheck
+		h.service.RevokeRefreshToken(r.Context(), req.RefreshToken) //nolint:errcheck
 	}
 
 	http.SetCookie(w, &http.Cookie{
