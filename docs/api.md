@@ -197,7 +197,7 @@ No request body required.
 
 ## POST /devices/activate
 
-Called by the ESP32 after the user enters the pairing code on the captive portal. No session auth required — the code itself is the credential. Marks the device active and issues a signed device JWT.
+Called by the ESP32 after the user enters the pairing code on the captive portal. No session auth required — the code itself is the credential. Marks the device active, kicks off async MQTT credential provisioning via HiveMQ, and issues a signed device JWT.
 
 No auth header required.
 
@@ -208,7 +208,7 @@ No auth header required.
 }
 ```
 
-**Response `201`**
+**Response `202`**
 ```json
 {
   "token":     "<signed-jwt>",
@@ -218,8 +218,10 @@ No auth header required.
 
 | Field | Description |
 |---|---|
-| `token` | RS256-signed JWT (`sub`=`device_id`, `user_id`, `iss`=`IDP_HOST`, `iat`). The device stores this in NVS and uses it as the `Authorization: Bearer` header for `/readings` calls and as the MQTT password when connecting to HiveMQ. Empty string if `DEVICE_JWT_PRIVATE_KEY` is not configured on the server. |
+| `token` | RS256-signed JWT (`sub`=`device_id`, `user_id`, `iss`=`IDP_HOST`, `iat`). The device stores this in NVS and uses it as the `Authorization: Bearer` header for all subsequent requests. Empty string if `DEVICE_JWT_PRIVATE_KEY` is not configured on the server. |
 | `device_id` | UUID of the now-active device. |
+
+MQTT credentials are provisioned asynchronously. After receiving `202`, the device must poll `GET /devices/{id}/status` until `"status": "ready"` before attempting to connect to the MQTT broker.
 
 **Response `400`** — missing or empty `code`
 
@@ -228,6 +230,45 @@ No auth header required.
 **Response `409`** — code already used
 
 **Response `500`** — DB or token-generation failure
+
+---
+
+## GET /devices/{id}/status
+
+Polls the activation status of a device. Returns MQTT credentials once HiveMQ provisioning completes. Called by the device after receiving `202` from `POST /devices/activate`.
+
+**Headers**
+```
+Authorization: Bearer <device-jwt>
+```
+
+The JWT `sub` must match the `{id}` path parameter.
+
+**Response `200` — still provisioning**
+```json
+{
+  "status": "provisioning"
+}
+```
+
+**Response `200` — ready**
+```json
+{
+  "status":        "ready",
+  "mqtt_username": "<hivemq-username>",
+  "mqtt_password": "<hivemq-password>",
+  "mqtt_host":     "broker.example.com",
+  "mqtt_port":     8883
+}
+```
+
+**Response `401`** — missing or invalid device JWT
+
+**Response `403`** — JWT `sub` does not match `{id}`
+
+**Response `404`** — device not found
+
+**Response `500`** — DB failure
 
 ---
 

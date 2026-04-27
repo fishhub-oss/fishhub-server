@@ -14,7 +14,7 @@ import (
 func newActivationSvc(t *testing.T, store sensors.ProvisioningStore, outboxStore outbox.Store, signer *stubSigner) *sensors.ActivationService {
 	t.Helper()
 	db := testutil.NewTestDB(t)
-	return sensors.NewActivationService(db, store, outboxStore, signer, "broker.example.com", 8883, discardLogger)
+	return sensors.NewActivationService(db, store, outboxStore, signer, discardLogger)
 }
 
 func TestActivationService_HappyPath(t *testing.T) {
@@ -30,7 +30,7 @@ func TestActivationService_HappyPath(t *testing.T) {
 		t.Fatalf("setup: get code: %v", err)
 	}
 
-	svc := sensors.NewActivationService(db, provStore, outboxStore, &stubSigner{token: "jwt-tok"}, "broker.example.com", 8883, discardLogger)
+	svc := sensors.NewActivationService(db, provStore, outboxStore, &stubSigner{token: "jwt-tok"}, discardLogger)
 
 	result, err := svc.Activate(ctx, code)
 	if err != nil {
@@ -41,15 +41,6 @@ func TestActivationService_HappyPath(t *testing.T) {
 	}
 	if result.DeviceID == "" {
 		t.Error("expected non-empty device_id")
-	}
-	if result.MQTTUsername == "" || result.MQTTPassword == "" {
-		t.Error("expected non-empty mqtt credentials")
-	}
-	if result.MQTTHost != "broker.example.com" {
-		t.Errorf("mqtt_host: got %q want %q", result.MQTTHost, "broker.example.com")
-	}
-	if result.MQTTPort != 8883 {
-		t.Errorf("mqtt_port: got %d want %d", result.MQTTPort, 8883)
 	}
 }
 
@@ -104,7 +95,7 @@ func TestActivationService_SignerError(t *testing.T) {
 	}
 
 	signErr := errors.New("signing key not configured")
-	svc := sensors.NewActivationService(db, provStore, outboxStore, &stubSigner{err: signErr}, "broker.example.com", 8883, discardLogger)
+	svc := sensors.NewActivationService(db, provStore, outboxStore, &stubSigner{err: signErr}, discardLogger)
 
 	_, err = svc.Activate(ctx, code)
 	if !errors.Is(err, signErr) {

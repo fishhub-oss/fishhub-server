@@ -215,7 +215,7 @@ func main() {
 	readingsSvc := sensors.NewReadingsService(deviceStore, influxClient, influxClient, logger)
 	deviceSvc := sensors.NewDeviceService(deviceStore, hivemqClient, mqttPublisher, logger)
 	provisioningSvc := sensors.NewProvisioningService(provisioningStore, logger)
-	activationSvc := sensors.NewActivationService(db, provisioningStore, outboxStore, deviceSigner, cfg.HiveMQHost, cfg.HiveMQPort, logger)
+	activationSvc := sensors.NewActivationService(db, provisioningStore, outboxStore, deviceSigner, logger)
 
 	// ── Outbox runner ─────────────────────────────────────────────────────────
 	outboxRunner := outbox.NewRunner(
@@ -249,6 +249,11 @@ func main() {
 	r.Group(func(r chi.Router) {
 		r.Use(platform.DeviceAuthenticator(deviceSigner))
 		r.Post("/readings", (&sensors.ReadingsHandler{Service: readingsSvc}).Create)
+		r.Get("/devices/{id}/status", (&sensors.ActivationStatusHandler{
+			Store:    deviceStore,
+			MQTTHost: cfg.HiveMQHost,
+			MQTTPort: cfg.HiveMQPort,
+		}).ServeHTTP)
 	})
 
 	r.Group(func(r chi.Router) {

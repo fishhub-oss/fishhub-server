@@ -12,14 +12,12 @@ import (
 	"github.com/fishhub-oss/fishhub-server/internal/outbox"
 )
 
-// ActivationResult holds everything the device needs after successful activation.
+// ActivationResult holds what the device receives immediately after activation.
+// MQTT credentials are not included — the device polls GET /devices/{id}/status
+// until they are ready.
 type ActivationResult struct {
-	Token        string
-	DeviceID     string
-	MQTTUsername string
-	MQTTPassword string
-	MQTTHost     string
-	MQTTPort     int
+	Token    string
+	DeviceID string
 }
 
 // ActivationService orchestrates device activation: claim code → store credentials
@@ -29,8 +27,6 @@ type ActivationService struct {
 	store       ProvisioningStore
 	outboxStore outbox.Store
 	signer      devicejwt.Signer
-	mqttHost    string
-	mqttPort    int
 	logger      *slog.Logger
 }
 
@@ -39,8 +35,6 @@ func NewActivationService(
 	store ProvisioningStore,
 	outboxStore outbox.Store,
 	signer devicejwt.Signer,
-	mqttHost string,
-	mqttPort int,
 	logger *slog.Logger,
 ) *ActivationService {
 	if logger == nil {
@@ -51,8 +45,6 @@ func NewActivationService(
 		store:       store,
 		outboxStore: outboxStore,
 		signer:      signer,
-		mqttHost:    mqttHost,
-		mqttPort:    mqttPort,
 		logger:      logger,
 	}
 }
@@ -110,11 +102,7 @@ func (s *ActivationService) Activate(ctx context.Context, code string) (Activati
 	}
 
 	return ActivationResult{
-		Token:        jwtToken,
-		DeviceID:     deviceID,
-		MQTTUsername: mqttUsername,
-		MQTTPassword: mqttPassword,
-		MQTTHost:     s.mqttHost,
-		MQTTPort:     s.mqttPort,
+		Token:    jwtToken,
+		DeviceID: deviceID,
 	}, nil
 }

@@ -274,12 +274,8 @@ type activateRequest struct {
 }
 
 type activateResponse struct {
-	Token        string `json:"token"`
-	DeviceID     string `json:"device_id"`
-	MQTTUsername string `json:"mqtt_username,omitempty"`
-	MQTTPassword string `json:"mqtt_password,omitempty"`
-	MQTTHost     string `json:"mqtt_host,omitempty"`
-	MQTTPort     int    `json:"mqtt_port,omitempty"`
+	Token    string `json:"token"`
+	DeviceID string `json:"device_id"`
 }
 
 func (h *ActivateHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -303,14 +299,62 @@ func (h *ActivateHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	render.Status(r, http.StatusCreated)
+	render.Status(r, http.StatusAccepted)
 	render.JSON(w, r, activateResponse{
-		Token:        result.Token,
-		DeviceID:     result.DeviceID,
-		MQTTUsername: result.MQTTUsername,
-		MQTTPassword: result.MQTTPassword,
-		MQTTHost:     result.MQTTHost,
-		MQTTPort:     result.MQTTPort,
+		Token:    result.Token,
+		DeviceID: result.DeviceID,
+	})
+}
+
+// ActivationStatusHandler handles GET /devices/{id}/status (device JWT auth).
+type ActivationStatusHandler struct {
+	Store    DeviceStore
+	MQTTHost string
+	MQTTPort int
+}
+
+type activationStatusResponse struct {
+	Status       string `json:"status"`
+	MQTTUsername string `json:"mqtt_username,omitempty"`
+	MQTTPassword string `json:"mqtt_password,omitempty"`
+	MQTTHost     string `json:"mqtt_host,omitempty"`
+	MQTTPort     int    `json:"mqtt_port,omitempty"`
+}
+
+func (h *ActivationStatusHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	device, ok := DeviceFromContext(r.Context())
+	if !ok {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	deviceID := chi.URLParam(r, "id")
+	if deviceID != device.DeviceID {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+
+	status, err := h.Store.GetActivationStatus(r.Context(), deviceID)
+	if err != nil {
+		if errors.Is(err, ErrDeviceNotFound) {
+			http.Error(w, "device not found", http.StatusNotFound)
+			return
+		}
+		http.Error(w, "internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	if !status.Ready {
+		render.JSON(w, r, activationStatusResponse{Status: "provisioning"})
+		return
+	}
+
+	render.JSON(w, r, activationStatusResponse{
+		Status:       "ready",
+		MQTTUsername: status.MQTTUsername,
+		MQTTPassword: status.MQTTPassword,
+		MQTTHost:     h.MQTTHost,
+		MQTTPort:     h.MQTTPort,
 	})
 }
 

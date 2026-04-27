@@ -35,6 +35,9 @@ func (s *stubDeviceStore) PatchDevice(_ context.Context, _, _, _ string) (sensor
 func (s *stubDeviceStore) DeleteDevice(_ context.Context, _, _ string) (string, error) {
 	return s.deleteMQTTUser, s.deleteErr
 }
+func (s *stubDeviceStore) GetActivationStatus(_ context.Context, _ string) (sensors.ActivationStatus, error) {
+	return sensors.ActivationStatus{}, nil
+}
 
 // ── ProvisioningStore ─────────────────────────────────────────────────────────
 
@@ -138,6 +141,18 @@ func (s *stubPublisher) Publish(_ context.Context, topic string, payload []byte)
 	s.publishedPayload = payload
 	s.called = true
 	return s.err
+}
+
+// ── ActivationStatusStore ─────────────────────────────────────────────────────
+
+type stubActivationStatusStore struct {
+	stubDeviceStore
+	status sensors.ActivationStatus
+	err    error
+}
+
+func (s *stubActivationStatusStore) GetActivationStatus(_ context.Context, _ string) (sensors.ActivationStatus, error) {
+	return s.status, s.err
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────

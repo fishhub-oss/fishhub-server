@@ -420,14 +420,14 @@ func newActivateHandler(t *testing.T, store *stubProvisioningStore, signer *stub
 	t.Helper()
 	db := testutil.NewTestDB(t)
 	return &sensors.ActivateHandler{
-		Service: sensors.NewActivationService(db, store, &stubOutboxStore{}, signer, "broker.example.com", 8883, discardLogger),
+		Service: sensors.NewActivationService(db, store, &stubOutboxStore{}, signer, discardLogger),
 	}
 }
 
 func TestActivateHandler(t *testing.T) {
 	validBody := `{"code":"ABC123"}`
 
-	t.Run("returns 201 with token, device_id and mqtt credentials", func(t *testing.T) {
+	t.Run("returns 202 with token and device_id", func(t *testing.T) {
 		h := newActivateHandler(t,
 			&stubProvisioningStore{claimedDeviceID: "dev-uuid"},
 			&stubSigner{token: "signed.jwt.token"},
@@ -435,8 +435,8 @@ func TestActivateHandler(t *testing.T) {
 		req := httptest.NewRequest(http.MethodPost, "/devices/activate", strings.NewReader(validBody))
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, req)
-		if rec.Code != http.StatusCreated {
-			t.Fatalf("expected 201, got %d", rec.Code)
+		if rec.Code != http.StatusAccepted {
+			t.Fatalf("expected 202, got %d", rec.Code)
 		}
 		var body map[string]any
 		if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
@@ -448,17 +448,8 @@ func TestActivateHandler(t *testing.T) {
 		if body["token"] != "signed.jwt.token" {
 			t.Errorf("expected token=signed.jwt.token, got %v", body["token"])
 		}
-		if body["mqtt_username"] != "dev-uuid" {
-			t.Errorf("expected mqtt_username=dev-uuid, got %v", body["mqtt_username"])
-		}
-		if body["mqtt_password"] == "" {
-			t.Error("expected non-empty mqtt_password")
-		}
-		if body["mqtt_host"] != "broker.example.com" {
-			t.Errorf("expected mqtt_host=broker.example.com, got %v", body["mqtt_host"])
-		}
-		if body["mqtt_port"] != float64(8883) {
-			t.Errorf("expected mqtt_port=8883, got %v", body["mqtt_port"])
+		if _, ok := body["mqtt_username"]; ok {
+			t.Error("mqtt_username should not be present in 202 response")
 		}
 	})
 
@@ -521,6 +512,107 @@ func TestActivateHandler(t *testing.T) {
 		h.ServeHTTP(rec, req)
 		if rec.Code != http.StatusInternalServerError {
 			t.Errorf("expected 500, got %d", rec.Code)
+		}
+	})
+}
+
+// ── ActivationStatusHandler ──────────────────────────────────────────────────
+
+func TestActivationStatusHandler(t *testing.T) {
+	makeReq := func(deviceID string, info sensors.DeviceInfo) *http.Request {
+		req := httptest.NewRequest(http.MethodGet, "/devices/"+deviceID+"/status", nil)
+		req = withDevice(req, info)
+		req = withChiParam(req, "id", deviceID)
+		return req
+	}
+
+	t.Run("provisioning returns 200 with status=provisioning", func(t *testing.T) {
+		h := &sensors.ActivationStatusHandler{
+			Store:    &stubDeviceStore{},
+			MQTTHost: "mqtt.example.com",
+			MQTTPort: 8883,
+		}
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, makeReq("dev-1", sensors.DeviceInfo{DeviceID: "dev-1", UserID: "usr-1"}))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d", rec.Code)
+		}
+		var body map[string]any
+		if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		if body["status"] != "provisioning" {
+			t.Errorf("expected status=provisioning, got %v", body["status"])
+		}
+		if _, ok := body["mqtt_username"]; ok {
+			t.Error("mqtt_username should not be present when provisioning")
+		}
+	})
+
+	t.Run("ready returns 200 with credentials", func(t *testing.T) {
+		h := &sensors.ActivationStatusHandler{
+			Store: &stubActivationStatusStore{
+				status: sensors.ActivationStatus{
+					Ready:        true,
+					MQTTUsername: "device-abc",
+					MQTTPassword: "secret-pass",
+				},
+			},
+			MQTTHost: "mqtt.example.com",
+			MQTTPort: 8883,
+		}
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, makeReq("dev-1", sensors.DeviceInfo{DeviceID: "dev-1", UserID: "usr-1"}))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d", rec.Code)
+		}
+		var body map[string]any
+		if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		if body["status"] != "ready" {
+			t.Errorf("expected status=ready, got %v", body["status"])
+		}
+		if body["mqtt_username"] != "device-abc" {
+			t.Errorf("expected mqtt_username=device-abc, got %v", body["mqtt_username"])
+		}
+		if body["mqtt_host"] != "mqtt.example.com" {
+			t.Errorf("expected mqtt_host=mqtt.example.com, got %v", body["mqtt_host"])
+		}
+	})
+
+	t.Run("device not found returns 404", func(t *testing.T) {
+		h := &sensors.ActivationStatusHandler{
+			Store: &stubActivationStatusStore{err: sensors.ErrDeviceNotFound},
+		}
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, makeReq("dev-x", sensors.DeviceInfo{DeviceID: "dev-x", UserID: "usr-1"}))
+		if rec.Code != http.StatusNotFound {
+			t.Errorf("expected 404, got %d", rec.Code)
+		}
+	})
+
+	t.Run("device ID mismatch returns 403", func(t *testing.T) {
+		h := &sensors.ActivationStatusHandler{Store: &stubDeviceStore{}}
+		rec := httptest.NewRecorder()
+		// JWT claims dev-1 but URL param is dev-2
+		req := httptest.NewRequest(http.MethodGet, "/devices/dev-2/status", nil)
+		req = withDevice(req, sensors.DeviceInfo{DeviceID: "dev-1", UserID: "usr-1"})
+		req = withChiParam(req, "id", "dev-2")
+		h.ServeHTTP(rec, req)
+		if rec.Code != http.StatusForbidden {
+			t.Errorf("expected 403, got %d", rec.Code)
+		}
+	})
+
+	t.Run("no device in context returns 401", func(t *testing.T) {
+		h := &sensors.ActivationStatusHandler{Store: &stubDeviceStore{}}
+		req := httptest.NewRequest(http.MethodGet, "/devices/dev-1/status", nil)
+		req = withChiParam(req, "id", "dev-1")
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if rec.Code != http.StatusUnauthorized {
+			t.Errorf("expected 401, got %d", rec.Code)
 		}
 	})
 }
