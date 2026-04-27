@@ -80,7 +80,7 @@ func (s *postgresDeviceStore) GetActivationStatus(ctx context.Context, deviceID 
 			d.mqtt_password,
 			EXISTS (
 				SELECT 1 FROM outbox_events
-				WHERE payload->>'device_id' = $1
+				WHERE payload->>'device_id' = $1::text
 				  AND status IN ('pending', 'processing')
 			)
 		FROM devices d
