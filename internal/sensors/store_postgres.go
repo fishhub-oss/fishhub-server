@@ -84,7 +84,7 @@ func (s *postgresDeviceStore) GetActivationStatus(ctx context.Context, deviceID 
 				  AND status IN ('pending', 'processing')
 			)
 		FROM devices d
-		WHERE d.id = $1 AND d.deleted_at IS NULL
+		WHERE d.id = $1::uuid AND d.deleted_at IS NULL
 	`, deviceID).Scan(&username, &password, &pendingOutbox)
 	if errors.Is(err, sql.ErrNoRows) {
 		return ActivationStatus{}, ErrDeviceNotFound
