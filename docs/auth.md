@@ -85,7 +85,7 @@ Implemented by `oidcService`. Configured via `auth.NewOIDCService(ctx, OIDCConfi
 
 **`VerifyAndUpsert`** — verifies the ID token with the OIDC provider (go-oidc library), upserts the user row, then calls `UserEventHandler.OnUserVerified` (implemented by `account.AccountEventHandler`, which upserts the account row with name/email from ID token claims).
 
-**Session JWT** — HS256, signed with `JWT_SECRET`. Claims: `sub` (user UUID), `iat`, `exp`. Default TTL: 24h (configurable via `JWT_TTL_HOURS`).
+**Session JWT** — RS256, signed with a dedicated RSA private key (`SESSION_JWT_PRIVATE_KEY`). Claims: `sub` (user UUID), `iat`, `exp`. Default TTL: 24h (configurable via `JWT_TTL_HOURS`). The corresponding public key is served at `GET /.well-known/jwks.json` alongside the device JWT public key.
 
 **Refresh tokens** — 64-char raw hex token; stored as SHA-256 hash in `refresh_tokens`. TTL: 30 days. Rotation: every `RotateRefreshToken` call revokes the old token and issues a new one.
 

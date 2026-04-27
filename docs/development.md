@@ -30,7 +30,8 @@ PORT=9090 make dev
 | `INFLUXDB3_TOKEN` | — | InfluxDB admin token |
 | `INFLUXDB3_DATABASE` | — | InfluxDB database name |
 | `GOOGLE_CLIENT_ID` | — | Google OAuth client ID (OIDC verification) |
-| `JWT_SECRET` | — | Secret for signing HS256 session JWTs |
+| `SESSION_JWT_PRIVATE_KEY` | — | PEM-encoded RSA private key for signing RS256 session JWTs (`\n`-escaped for env) |
+| `SESSION_JWT_KID` | — | Key ID included in the JWT header and JWKS entry (e.g. `session-v1`) |
 | `JWT_TTL_HOURS` | `24` | Session JWT validity in hours |
 | `CORS_ALLOWED_ORIGINS` | `http://localhost:3001` | Comma-separated list of allowed CORS origins |
 

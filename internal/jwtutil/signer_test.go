@@ -121,7 +121,7 @@ func TestJWKSHandler_withSigner(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/.well-known/jwks.json", nil)
 	rec := httptest.NewRecorder()
-	(&jwtutil.JWKSHandler{Signer: signer}).ServeHTTP(rec, req)
+	(&jwtutil.JWKSHandler{Signers: []jwtutil.Signer{signer}}).ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d", rec.Code)
@@ -164,7 +164,7 @@ func TestJWKSHandler_withSigner(t *testing.T) {
 func TestJWKSHandler_noOp(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/.well-known/jwks.json", nil)
 	rec := httptest.NewRecorder()
-	(&jwtutil.JWKSHandler{Signer: jwtutil.NewNoOp()}).ServeHTTP(rec, req)
+	(&jwtutil.JWKSHandler{Signers: []jwtutil.Signer{jwtutil.NewNoOp()}}).ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d", rec.Code)

@@ -25,7 +25,8 @@ import (
 type config struct {
 	Port             string
 	LogFormat        string
-	JWTSecret        string
+	SessionJWTPEMKey string
+	SessionJWTKID    string
 	JWTTTLHours      int
 	GoogleClientID   string
 	InfluxHost       string
@@ -65,7 +66,8 @@ func loadConfig() config {
 	return config{
 		Port:             port,
 		LogFormat:        os.Getenv("LOG_FORMAT"),
-		JWTSecret:        os.Getenv("JWT_SECRET"),
+		SessionJWTPEMKey: strings.ReplaceAll(os.Getenv("SESSION_JWT_PRIVATE_KEY"), `\n`, "\n"),
+		SessionJWTKID:    os.Getenv("SESSION_JWT_KID"),
 		JWTTTLHours:      jwtTTLHours,
 		GoogleClientID:   os.Getenv("GOOGLE_CLIENT_ID"),
 		InfluxHost:       os.Getenv("INFLUXDB3_HOST"),
@@ -134,13 +136,26 @@ func main() {
 		jwtTTL = time.Duration(cfg.JWTTTLHours) * time.Hour
 	}
 
+	sessionSigner := jwtutil.Signer(jwtutil.NewNoOp())
+	if cfg.SessionJWTPEMKey != "" {
+		s, err := jwtutil.NewRSASigner(cfg.SessionJWTPEMKey, cfg.SessionJWTKID)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "session jwt init: %v\n", err)
+			os.Exit(1)
+		}
+		sessionSigner = s
+		logger.Info("session jwt signer configured", "kid", cfg.SessionJWTKID)
+	} else {
+		logger.Warn("session jwt not configured — session tokens will not be signed with RSA")
+	}
+
 	accountStore := account.NewPostgresStore(db)
 	authSvc, err := auth.NewOIDCService(context.Background(), auth.OIDCConfig{
 		Providers:    map[string]string{"google": cfg.GoogleClientID},
 		Store:        auth.NewPostgresStore(db),
 		RefreshStore: auth.NewPostgresRefreshTokenStore(db),
 		EventHandler: &account.AccountEventHandler{Store: accountStore},
-		JWTSecret:    cfg.JWTSecret,
+		Signer:       sessionSigner,
 		JWTTTL:       jwtTTL,
 	})
 	if err != nil {
@@ -206,7 +221,7 @@ func main() {
 	}))
 
 	r.Get("/health", platform.Health)
-	r.Get("/.well-known/jwks.json", (&jwtutil.JWKSHandler{Signer: jwkSigner}).ServeHTTP)
+	r.Get("/.well-known/jwks.json", (&jwtutil.JWKSHandler{Signers: []jwtutil.Signer{jwkSigner, sessionSigner}}).ServeHTTP)
 	r.Post("/auth/verify", auth.NewVerifyHandler(authSvc, logger).ServeHTTP)
 	r.Post("/auth/refresh", auth.NewRefreshHandler(authSvc, logger).ServeHTTP)
 	r.Post("/auth/logout", auth.NewLogoutHandler(authSvc).ServeHTTP)
