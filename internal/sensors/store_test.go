@@ -18,9 +18,13 @@ func TestListByUserID_integration(t *testing.T) {
 	userID := platform.SeedUserID()
 
 	t.Run("returns devices for the user ordered by created_at DESC", func(t *testing.T) {
-		d1, _, err := provisioning.GetOrCreatePending(ctx, userID)
+		code, err := provisioning.GetOrCreateCode(ctx, userID)
 		if err != nil {
-			t.Fatalf("setup device 1: %v", err)
+			t.Fatalf("setup code: %v", err)
+		}
+		d1, _, err := provisioning.ClaimCode(ctx, code)
+		if err != nil {
+			t.Fatalf("setup claim: %v", err)
 		}
 		// create a second device via direct insert so we have two distinct ones
 		var d2 string
