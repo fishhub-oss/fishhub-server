@@ -9,14 +9,7 @@ import (
 )
 
 func newActivationSvc(store *stubProvisioningStore, mq *stubHiveMQClient, signer *stubSigner) *sensors.ActivationService {
-	return &sensors.ActivationService{
-		Store:    store,
-		HiveMQ:   mq,
-		Signer:   signer,
-		MQTTHost: "broker.example.com",
-		MQTTPort: 8883,
-		Logger:   discardLogger,
-	}
+	return sensors.NewActivationService(store, mq, signer, "broker.example.com", 8883, discardLogger)
 }
 
 func TestActivationService_HappyPath(t *testing.T) {

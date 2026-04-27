@@ -21,6 +21,9 @@ type pahoPublisher struct {
 
 // NewPublisher connects to the HiveMQ broker with the given server credentials and returns a Publisher.
 func NewPublisher(host string, port int, username, password string, logger *slog.Logger) (Publisher, error) {
+	if logger == nil {
+		logger = slog.Default()
+	}
 	opts := paho.NewClientOptions().
 		AddBroker(fmt.Sprintf("tls://%s:%d", host, port)).
 		SetClientID("fishhub-server").
@@ -32,14 +35,10 @@ func NewPublisher(host string, port int, username, password string, logger *slog
 		SetAutoReconnect(true).
 		SetCleanSession(true).
 		SetConnectionLostHandler(func(_ paho.Client, err error) {
-			if logger != nil {
-				logger.Warn("mqtt connection lost", "error", err)
-			}
+			logger.Warn("mqtt connection lost", "error", err)
 		}).
 		SetOnConnectHandler(func(_ paho.Client) {
-			if logger != nil {
-				logger.Info("mqtt connected", "host", host, "port", port)
-			}
+			logger.Info("mqtt connected", "host", host, "port", port)
 		})
 
 	c := paho.NewClient(opts)

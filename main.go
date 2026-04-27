@@ -192,15 +192,8 @@ func main() {
 	provisioningStore := sensors.NewProvisioningStore(db)
 	readingsSvc := sensors.NewReadingsService(deviceStore, influxClient, influxClient, logger)
 	deviceSvc := sensors.NewDeviceService(deviceStore, hivemqClient, mqttPublisher, logger)
-	provisioningSvc := &sensors.ProvisioningService{Store: provisioningStore, Logger: logger}
-	activationSvc := &sensors.ActivationService{
-		Store:    provisioningStore,
-		HiveMQ:   hivemqClient,
-		Signer:   deviceSigner,
-		MQTTHost: cfg.HiveMQHost,
-		MQTTPort: cfg.HiveMQPort,
-		Logger:   logger,
-	}
+	provisioningSvc := sensors.NewProvisioningService(provisioningStore, logger)
+	activationSvc := sensors.NewActivationService(provisioningStore, hivemqClient, deviceSigner, cfg.HiveMQHost, cfg.HiveMQPort, logger)
 
 	// ── Router ────────────────────────────────────────────────────────────────
 	r := chi.NewRouter()
@@ -214,9 +207,9 @@ func main() {
 
 	r.Get("/health", platform.Health)
 	r.Get("/.well-known/jwks.json", (&jwtutil.JWKSHandler{Signer: jwkSigner}).ServeHTTP)
-	r.Post("/auth/verify", (&auth.VerifyHandler{Service: authSvc, Logger: logger}).ServeHTTP)
-	r.Post("/auth/refresh", (&auth.RefreshHandler{Service: authSvc, Logger: logger}).ServeHTTP)
-	r.Post("/auth/logout", (&auth.LogoutHandler{Service: authSvc}).ServeHTTP)
+	r.Post("/auth/verify", auth.NewVerifyHandler(authSvc, logger).ServeHTTP)
+	r.Post("/auth/refresh", auth.NewRefreshHandler(authSvc, logger).ServeHTTP)
+	r.Post("/auth/logout", auth.NewLogoutHandler(authSvc).ServeHTTP)
 	r.Post("/devices/activate", (&sensors.ActivateHandler{Service: activationSvc}).ServeHTTP)
 
 	r.Group(func(r chi.Router) {
