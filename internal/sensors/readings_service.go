@@ -2,6 +2,7 @@ package sensors
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"time"
@@ -24,10 +25,14 @@ func NewReadingsService(devices DeviceStore, querier ReadingQuerier, writer Read
 // owned by userID.
 func (s *ReadingsService) Query(ctx context.Context, userID string, q ReadingQuery) ([]ReadingPoint, error) {
 	if _, err := s.devices.FindByIDAndUserID(ctx, q.DeviceID, userID); err != nil {
+		if !errors.Is(err, ErrDeviceNotFound) {
+			s.logger.Error("query readings: find device", "device_id", q.DeviceID, "error", err)
+		}
 		return nil, err
 	}
 	points, err := s.querier.QueryReadings(ctx, q)
 	if err != nil {
+		s.logger.Error("query readings", "device_id", q.DeviceID, "error", err)
 		return nil, fmt.Errorf("query readings: %w", err)
 	}
 	return points, nil

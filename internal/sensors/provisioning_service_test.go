@@ -10,7 +10,8 @@ import (
 
 func TestProvisioningService_Provision_HappyPath(t *testing.T) {
 	svc := &sensors.ProvisioningService{
-		Store: &stubProvisioningStore{deviceID: "dev-uuid", code: "ABC123"},
+		Store:  &stubProvisioningStore{deviceID: "dev-uuid", code: "ABC123"},
+		Logger: discardLogger,
 	}
 	deviceID, code, err := svc.Provision(context.Background(), "usr-1")
 	if err != nil {
@@ -27,7 +28,8 @@ func TestProvisioningService_Provision_HappyPath(t *testing.T) {
 func TestProvisioningService_Provision_StoreError(t *testing.T) {
 	storeErr := errors.New("db down")
 	svc := &sensors.ProvisioningService{
-		Store: &stubProvisioningStore{getErr: storeErr},
+		Store:  &stubProvisioningStore{getErr: storeErr},
+		Logger: discardLogger,
 	}
 	_, _, err := svc.Provision(context.Background(), "usr-1")
 	if !errors.Is(err, storeErr) {

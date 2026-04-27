@@ -15,6 +15,7 @@ func newActivationSvc(store *stubProvisioningStore, mq *stubHiveMQClient, signer
 		Signer:   signer,
 		MQTTHost: "broker.example.com",
 		MQTTPort: 8883,
+		Logger:   discardLogger,
 	}
 }
 

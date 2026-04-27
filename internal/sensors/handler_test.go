@@ -366,7 +366,7 @@ func TestPatchDeviceHandler(t *testing.T) {
 
 func TestProvisionHandler(t *testing.T) {
 	newProvSvc := func(store *stubProvisioningStore) *sensors.ProvisioningService {
-		return &sensors.ProvisioningService{Store: store}
+		return &sensors.ProvisioningService{Store: store, Logger: discardLogger}
 	}
 
 	t.Run("returns 201 with code and device_id", func(t *testing.T) {
@@ -424,6 +424,7 @@ func newActivateHandler(store *stubProvisioningStore, mq hivemq.Client, signer *
 			Signer:   signer,
 			MQTTHost: "broker.example.com",
 			MQTTPort: 8883,
+			Logger:   discardLogger,
 		},
 	}
 }

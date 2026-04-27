@@ -3,6 +3,7 @@ package auth
 import (
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 
 	"github.com/go-chi/render"
@@ -10,6 +11,7 @@ import (
 
 type VerifyHandler struct {
 	Service AuthService
+	Logger  *slog.Logger
 }
 
 type verifyRequest struct {
@@ -38,18 +40,21 @@ func (h *VerifyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "invalid id token", http.StatusUnauthorized)
 			return
 		}
+		h.Logger.Error("auth verify", "error", err)
 		http.Error(w, "internal server error", http.StatusInternalServerError)
 		return
 	}
 
 	sessionToken, err := h.Service.IssueSessionJWT(user.ID)
 	if err != nil {
+		h.Logger.Error("auth verify: issue session jwt", "error", err)
 		http.Error(w, "internal server error", http.StatusInternalServerError)
 		return
 	}
 
 	refreshToken, err := h.Service.IssueRefreshToken(r.Context(), user.ID)
 	if err != nil {
+		h.Logger.Error("auth verify: issue refresh token", "error", err)
 		http.Error(w, "internal server error", http.StatusInternalServerError)
 		return
 	}
@@ -62,6 +67,7 @@ func (h *VerifyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 type RefreshHandler struct {
 	Service AuthService
+	Logger  *slog.Logger
 }
 
 type refreshRequest struct {
@@ -85,6 +91,7 @@ func (h *RefreshHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "invalid or expired refresh token", http.StatusUnauthorized)
 			return
 		}
+		h.Logger.Error("auth refresh", "error", err)
 		http.Error(w, "internal server error", http.StatusInternalServerError)
 		return
 	}
