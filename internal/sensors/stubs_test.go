@@ -21,7 +21,7 @@ type stubDeviceStore struct {
 	deleteErr      error
 }
 
-func (s *stubDeviceStore) ListByUserID(_ context.Context, _, _ string) ([]sensors.Device, error) {
+func (s *stubDeviceStore) ListByUserID(_ context.Context, _ string) ([]sensors.Device, error) {
 	return s.listDevices, s.listErr
 }
 func (s *stubDeviceStore) FindByIDAndUserID(_ context.Context, _, _ string) (sensors.Device, error) {

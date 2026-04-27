@@ -46,9 +46,9 @@ func (s *DeviceService) Delete(ctx context.Context, deviceID, userID string) err
 	return nil
 }
 
-// List returns all devices belonging to userID, optionally filtered by status.
-func (s *DeviceService) List(ctx context.Context, userID, status string) ([]Device, error) {
-	devices, err := s.store.ListByUserID(ctx, userID, status)
+// List returns all devices belonging to userID.
+func (s *DeviceService) List(ctx context.Context, userID string) ([]Device, error) {
+	devices, err := s.store.ListByUserID(ctx, userID)
 	if err != nil {
 		s.logger.Error("list devices", "user_id", userID, "error", err)
 	}

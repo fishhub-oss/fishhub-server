@@ -134,7 +134,7 @@ func TestActivate_integration(t *testing.T) {
 			t.Fatalf("activate: %v", err)
 		}
 
-		devices, err := deviceStore.ListByUserID(ctx, userID, "")
+		devices, err := deviceStore.ListByUserID(ctx, userID)
 		if err != nil {
 			t.Fatalf("list devices: %v", err)
 		}

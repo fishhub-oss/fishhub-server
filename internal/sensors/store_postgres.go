@@ -15,7 +15,7 @@ func NewDeviceStore(db *sql.DB) DeviceStore {
 	return &postgresDeviceStore{db: db}
 }
 
-func (s *postgresDeviceStore) ListByUserID(ctx context.Context, userID, _ string) ([]Device, error) {
+func (s *postgresDeviceStore) ListByUserID(ctx context.Context, userID string) ([]Device, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT id, COALESCE(name, ''), created_at
 		FROM devices

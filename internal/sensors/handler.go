@@ -31,8 +31,7 @@ func (h *DevicesHandler) List(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	status := r.URL.Query().Get("status")
-	devices, err := h.Service.List(r.Context(), claims.UserID, status)
+	devices, err := h.Service.List(r.Context(), claims.UserID)
 	if err != nil {
 		http.Error(w, "internal server error", http.StatusInternalServerError)
 		return

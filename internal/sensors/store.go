@@ -12,9 +12,7 @@ type Device struct {
 }
 
 type DeviceStore interface {
-	// ListByUserID returns all devices owned by userID. The status parameter is accepted
-	// for backwards compatibility but is ignored — all rows in devices are active by definition.
-	ListByUserID(ctx context.Context, userID, status string) ([]Device, error)
+	ListByUserID(ctx context.Context, userID string) ([]Device, error)
 	FindByIDAndUserID(ctx context.Context, deviceID, userID string) (Device, error)
 	// PatchDevice updates the name of the device owned by userID.
 	// Returns ErrDeviceNotFound if the device does not exist or is not owned by the user.
