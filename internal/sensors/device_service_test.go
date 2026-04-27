@@ -11,22 +11,14 @@ import (
 
 func TestDeviceService_Delete_HappyPath(t *testing.T) {
 	pub := &stubPublisher{}
-	svc := &sensors.DeviceService{
-		Store:     &stubDeviceStore{deleteMQTTUser: "dev-1"},
-		HiveMQ:    &stubHiveMQClient{},
-		Publisher: pub,
-	}
+	svc := sensors.NewDeviceService(&stubDeviceStore{deleteMQTTUser: "dev-1"}, &stubHiveMQClient{}, pub, discardLogger)
 	if err := svc.Delete(context.Background(), "dev-1", "usr-1"); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
 
 func TestDeviceService_Delete_NotFound(t *testing.T) {
-	svc := &sensors.DeviceService{
-		Store:     &stubDeviceStore{deleteErr: sensors.ErrDeviceNotFound},
-		HiveMQ:    &stubHiveMQClient{},
-		Publisher: &stubPublisher{},
-	}
+	svc := sensors.NewDeviceService(&stubDeviceStore{deleteErr: sensors.ErrDeviceNotFound}, &stubHiveMQClient{}, &stubPublisher{}, discardLogger)
 	err := svc.Delete(context.Background(), "dev-1", "usr-1")
 	if !errors.Is(err, sensors.ErrDeviceNotFound) {
 		t.Errorf("expected ErrDeviceNotFound, got %v", err)
@@ -34,11 +26,7 @@ func TestDeviceService_Delete_NotFound(t *testing.T) {
 }
 
 func TestDeviceService_Delete_HiveMQErrorIsLogged(t *testing.T) {
-	svc := &sensors.DeviceService{
-		Store:     &stubDeviceStore{deleteMQTTUser: "dev-1"},
-		HiveMQ:    &stubHiveMQClient{err: errors.New("hivemq down")},
-		Publisher: &stubPublisher{},
-	}
+	svc := sensors.NewDeviceService(&stubDeviceStore{deleteMQTTUser: "dev-1"}, &stubHiveMQClient{err: errors.New("hivemq down")}, &stubPublisher{}, discardLogger)
 	if err := svc.Delete(context.Background(), "dev-1", "usr-1"); err != nil {
 		t.Fatalf("expected nil error (HiveMQ errors are non-fatal), got %v", err)
 	}
@@ -46,11 +34,7 @@ func TestDeviceService_Delete_HiveMQErrorIsLogged(t *testing.T) {
 
 func TestDeviceService_SendCommand_HappyPath(t *testing.T) {
 	pub := &stubPublisher{}
-	svc := &sensors.DeviceService{
-		Store:     &stubDeviceStore{},
-		HiveMQ:    &stubHiveMQClient{},
-		Publisher: pub,
-	}
+	svc := sensors.NewDeviceService(&stubDeviceStore{}, &stubHiveMQClient{}, pub, discardLogger)
 	body := []byte(`{"action":"set","state":true}`)
 	if err := svc.SendCommand(context.Background(), "dev-1", "usr-1", "light", body); err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -61,11 +45,7 @@ func TestDeviceService_SendCommand_HappyPath(t *testing.T) {
 }
 
 func TestDeviceService_SendCommand_NotFound(t *testing.T) {
-	svc := &sensors.DeviceService{
-		Store:     &stubDeviceStore{findErr: sensors.ErrDeviceNotFound},
-		HiveMQ:    &stubHiveMQClient{},
-		Publisher: &stubPublisher{},
-	}
+	svc := sensors.NewDeviceService(&stubDeviceStore{findErr: sensors.ErrDeviceNotFound}, &stubHiveMQClient{}, &stubPublisher{}, discardLogger)
 	err := svc.SendCommand(context.Background(), "dev-1", "usr-1", "light", []byte(`{"action":"set"}`))
 	if !errors.Is(err, sensors.ErrDeviceNotFound) {
 		t.Errorf("expected ErrDeviceNotFound, got %v", err)
@@ -73,11 +53,7 @@ func TestDeviceService_SendCommand_NotFound(t *testing.T) {
 }
 
 func TestDeviceService_SendCommand_InvalidAction(t *testing.T) {
-	svc := &sensors.DeviceService{
-		Store:     &stubDeviceStore{},
-		HiveMQ:    &stubHiveMQClient{},
-		Publisher: &stubPublisher{},
-	}
+	svc := sensors.NewDeviceService(&stubDeviceStore{}, &stubHiveMQClient{}, &stubPublisher{}, discardLogger)
 	err := svc.SendCommand(context.Background(), "dev-1", "usr-1", "light", []byte(`{"action":"delete"}`))
 	if !errors.Is(err, sensors.ErrInvalidCommand) {
 		t.Errorf("expected ErrInvalidCommand, got %v", err)
@@ -86,11 +62,7 @@ func TestDeviceService_SendCommand_InvalidAction(t *testing.T) {
 
 func TestDeviceService_SendCommand_PublishError(t *testing.T) {
 	publishErr := errors.New("broker unreachable")
-	svc := &sensors.DeviceService{
-		Store:     &stubDeviceStore{},
-		HiveMQ:    &stubHiveMQClient{},
-		Publisher: &stubPublisher{err: publishErr},
-	}
+	svc := sensors.NewDeviceService(&stubDeviceStore{}, &stubHiveMQClient{}, &stubPublisher{err: publishErr}, discardLogger)
 	err := svc.SendCommand(context.Background(), "dev-1", "usr-1", "light", []byte(`{"action":"set"}`))
 	if !errors.Is(err, publishErr) {
 		t.Errorf("expected wrapped publishErr, got %v", err)
@@ -103,11 +75,7 @@ func TestDeviceService_List_HappyPath(t *testing.T) {
 	devices := []sensors.Device{
 		{ID: "dev-1", Name: "Tank", CreatedAt: time.Now()},
 	}
-	svc := &sensors.DeviceService{
-		Store:     &stubDeviceStore{listDevices: devices},
-		HiveMQ:    &stubHiveMQClient{},
-		Publisher: &stubPublisher{},
-	}
+	svc := sensors.NewDeviceService(&stubDeviceStore{listDevices: devices}, &stubHiveMQClient{}, &stubPublisher{}, discardLogger)
 	got, err := svc.List(context.Background(), "usr-1", "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -121,11 +89,7 @@ func TestDeviceService_List_HappyPath(t *testing.T) {
 
 func TestDeviceService_Patch_HappyPath(t *testing.T) {
 	updated := sensors.Device{ID: "dev-1", Name: "Tank A", CreatedAt: time.Now()}
-	svc := &sensors.DeviceService{
-		Store:     &stubDeviceStore{patchDevice: updated},
-		HiveMQ:    &stubHiveMQClient{},
-		Publisher: &stubPublisher{},
-	}
+	svc := sensors.NewDeviceService(&stubDeviceStore{patchDevice: updated}, &stubHiveMQClient{}, &stubPublisher{}, discardLogger)
 	got, err := svc.Patch(context.Background(), "dev-1", "usr-1", "Tank A")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -136,11 +100,7 @@ func TestDeviceService_Patch_HappyPath(t *testing.T) {
 }
 
 func TestDeviceService_Patch_NotFound(t *testing.T) {
-	svc := &sensors.DeviceService{
-		Store:     &stubDeviceStore{patchErr: sensors.ErrDeviceNotFound},
-		HiveMQ:    &stubHiveMQClient{},
-		Publisher: &stubPublisher{},
-	}
+	svc := sensors.NewDeviceService(&stubDeviceStore{patchErr: sensors.ErrDeviceNotFound}, &stubHiveMQClient{}, &stubPublisher{}, discardLogger)
 	_, err := svc.Patch(context.Background(), "dev-x", "usr-1", "Tank A")
 	if !errors.Is(err, sensors.ErrDeviceNotFound) {
 		t.Errorf("expected ErrDeviceNotFound, got %v", err)

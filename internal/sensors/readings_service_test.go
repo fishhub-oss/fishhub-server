@@ -3,19 +3,20 @@ package sensors_test
 import (
 	"context"
 	"errors"
+	"io"
+	"log/slog"
 	"testing"
 	"time"
 
 	"github.com/fishhub-oss/fishhub-server/internal/sensors"
 )
 
+var discardLogger = slog.New(slog.NewTextHandler(io.Discard, nil))
+
 func TestReadingsService_Query_HappyPath(t *testing.T) {
 	now := time.Now()
 	expected := []sensors.ReadingPoint{{Timestamp: now, Values: map[string]float64{"temperature": 25.5}}}
-	svc := &sensors.ReadingsService{
-		Devices: &stubDeviceStore{},
-		Querier: &stubReadingQuerier{points: expected},
-	}
+	svc := sensors.NewReadingsService(&stubDeviceStore{}, &stubReadingQuerier{points: expected}, nil, discardLogger)
 	points, err := svc.Query(context.Background(), "usr-1", sensors.ReadingQuery{DeviceID: "dev-1"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -26,10 +27,7 @@ func TestReadingsService_Query_HappyPath(t *testing.T) {
 }
 
 func TestReadingsService_Query_DeviceNotOwned(t *testing.T) {
-	svc := &sensors.ReadingsService{
-		Devices: &stubDeviceStore{findErr: sensors.ErrDeviceNotFound},
-		Querier: &stubReadingQuerier{},
-	}
+	svc := sensors.NewReadingsService(&stubDeviceStore{findErr: sensors.ErrDeviceNotFound}, &stubReadingQuerier{}, nil, discardLogger)
 	_, err := svc.Query(context.Background(), "usr-1", sensors.ReadingQuery{DeviceID: "dev-1"})
 	if !errors.Is(err, sensors.ErrDeviceNotFound) {
 		t.Errorf("expected ErrDeviceNotFound, got %v", err)
@@ -38,10 +36,7 @@ func TestReadingsService_Query_DeviceNotOwned(t *testing.T) {
 
 func TestReadingsService_Query_QuerierError(t *testing.T) {
 	querierErr := errors.New("influx unavailable")
-	svc := &sensors.ReadingsService{
-		Devices: &stubDeviceStore{},
-		Querier: &stubReadingQuerier{err: querierErr},
-	}
+	svc := sensors.NewReadingsService(&stubDeviceStore{}, &stubReadingQuerier{err: querierErr}, nil, discardLogger)
 	_, err := svc.Query(context.Background(), "usr-1", sensors.ReadingQuery{DeviceID: "dev-1"})
 	if !errors.Is(err, querierErr) {
 		t.Errorf("expected wrapped querierErr, got %v", err)
@@ -53,9 +48,7 @@ func senMLPayload() []byte {
 }
 
 func TestReadingsService_Write_HappyPath(t *testing.T) {
-	svc := &sensors.ReadingsService{
-		Writer: &stubReadingWriter{},
-	}
+	svc := sensors.NewReadingsService(nil, nil, &stubReadingWriter{}, discardLogger)
 	device := sensors.DeviceInfo{DeviceID: "dev-1", UserID: "usr-1"}
 	if err := svc.Write(context.Background(), device, senMLPayload()); err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -63,7 +56,7 @@ func TestReadingsService_Write_HappyPath(t *testing.T) {
 }
 
 func TestReadingsService_Write_NilWriter(t *testing.T) {
-	svc := &sensors.ReadingsService{Writer: nil}
+	svc := sensors.NewReadingsService(nil, nil, nil, discardLogger)
 	device := sensors.DeviceInfo{DeviceID: "dev-1", UserID: "usr-1"}
 	if err := svc.Write(context.Background(), device, senMLPayload()); err != nil {
 		t.Fatalf("nil writer should be a no-op, got: %v", err)
@@ -71,7 +64,7 @@ func TestReadingsService_Write_NilWriter(t *testing.T) {
 }
 
 func TestReadingsService_Write_ParseError(t *testing.T) {
-	svc := &sensors.ReadingsService{Writer: &stubReadingWriter{}}
+	svc := sensors.NewReadingsService(nil, nil, &stubReadingWriter{}, discardLogger)
 	device := sensors.DeviceInfo{DeviceID: "dev-1", UserID: "usr-1"}
 	err := svc.Write(context.Background(), device, []byte(`not json`))
 	if err == nil {
@@ -80,7 +73,7 @@ func TestReadingsService_Write_ParseError(t *testing.T) {
 }
 
 func TestReadingsService_Write_EmptyPayload(t *testing.T) {
-	svc := &sensors.ReadingsService{Writer: &stubReadingWriter{}}
+	svc := sensors.NewReadingsService(nil, nil, &stubReadingWriter{}, discardLogger)
 	device := sensors.DeviceInfo{DeviceID: "dev-1", UserID: "usr-1"}
 	err := svc.Write(context.Background(), device, []byte(`[{"bn":"dev-1","bt":1700000000}]`))
 	if !errors.Is(err, sensors.ErrEmptyPayload) {
@@ -90,7 +83,7 @@ func TestReadingsService_Write_EmptyPayload(t *testing.T) {
 
 func TestReadingsService_Write_WriterError(t *testing.T) {
 	writeErr := errors.New("influx write failed")
-	svc := &sensors.ReadingsService{Writer: &stubReadingWriter{err: writeErr}}
+	svc := sensors.NewReadingsService(nil, nil, &stubReadingWriter{err: writeErr}, discardLogger)
 	device := sensors.DeviceInfo{DeviceID: "dev-1", UserID: "usr-1"}
 	err := svc.Write(context.Background(), device, senMLPayload())
 	if !errors.Is(err, sensors.ErrInfluxWrite) {

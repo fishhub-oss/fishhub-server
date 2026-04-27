@@ -44,11 +44,11 @@ func withChiParams(r *http.Request, params map[string]string) *http.Request {
 }
 
 func newReadingsService(writer *stubReadingWriter, querier *stubReadingQuerier, store *stubDeviceStore) *sensors.ReadingsService {
-	svc := &sensors.ReadingsService{Devices: store, Querier: querier}
+	var w sensors.ReadingWriter
 	if writer != nil {
-		svc.Writer = writer
+		w = writer
 	}
-	return svc
+	return sensors.NewReadingsService(store, querier, w, discardLogger)
 }
 
 // ── ReadingsHandler ───────────────────────────────────────────────────────────
@@ -246,7 +246,7 @@ func TestReadingsQueryHandler_List(t *testing.T) {
 
 func TestDevicesHandler_List(t *testing.T) {
 	newSvc := func(store *stubDeviceStore) *sensors.DeviceService {
-		return &sensors.DeviceService{Store: store, HiveMQ: &stubHiveMQClient{}, Publisher: &stubPublisher{}}
+		return sensors.NewDeviceService(store, &stubHiveMQClient{}, &stubPublisher{}, discardLogger)
 	}
 
 	t.Run("returns devices for user", func(t *testing.T) {
@@ -300,7 +300,7 @@ func TestPatchDeviceHandler(t *testing.T) {
 	}
 
 	newPatchSvc := func(store *stubDeviceStore) *sensors.DeviceService {
-		return &sensors.DeviceService{Store: store, HiveMQ: &stubHiveMQClient{}, Publisher: &stubPublisher{}}
+		return sensors.NewDeviceService(store, &stubHiveMQClient{}, &stubPublisher{}, discardLogger)
 	}
 
 	t.Run("valid name returns 200 with updated device", func(t *testing.T) {
@@ -553,11 +553,7 @@ func TestActivateHandler(t *testing.T) {
 
 func newCommandHandler(store *stubDeviceStore, pub *stubPublisher) *sensors.CommandHandler {
 	return &sensors.CommandHandler{
-		Service: &sensors.DeviceService{
-			Store:     store,
-			HiveMQ:    &stubHiveMQClient{},
-			Publisher: pub,
-		},
+		Service: sensors.NewDeviceService(store, &stubHiveMQClient{}, pub, discardLogger),
 	}
 }
 
@@ -616,11 +612,7 @@ func TestCommandHandler(t *testing.T) {
 
 func newDeleteHandler(store *stubDeviceStore, mq *stubHiveMQClient) *sensors.DeleteDeviceHandler {
 	return &sensors.DeleteDeviceHandler{
-		Service: &sensors.DeviceService{
-			Store:     store,
-			HiveMQ:    mq,
-			Publisher: &stubPublisher{},
-		},
+		Service: sensors.NewDeviceService(store, mq, &stubPublisher{}, discardLogger),
 	}
 }
 

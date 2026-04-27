@@ -190,8 +190,8 @@ func main() {
 	// ── Stores & services ─────────────────────────────────────────────────────
 	deviceStore := sensors.NewDeviceStore(db)
 	provisioningStore := sensors.NewProvisioningStore(db)
-	readingsSvc := &sensors.ReadingsService{Devices: deviceStore, Querier: influxClient, Writer: influxClient, Logger: logger}
-	deviceSvc := &sensors.DeviceService{Store: deviceStore, HiveMQ: hivemqClient, Publisher: mqttPublisher, Logger: logger}
+	readingsSvc := sensors.NewReadingsService(deviceStore, influxClient, influxClient, logger)
+	deviceSvc := sensors.NewDeviceService(deviceStore, hivemqClient, mqttPublisher, logger)
 	provisioningSvc := &sensors.ProvisioningService{Store: provisioningStore}
 	activationSvc := &sensors.ActivationService{
 		Store:    provisioningStore,
