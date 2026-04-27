@@ -3,8 +3,10 @@ package sensors_test
 import (
 	"context"
 	"crypto/rsa"
+	"database/sql"
 	"time"
 
+	"github.com/fishhub-oss/fishhub-server/internal/outbox"
 	"github.com/fishhub-oss/fishhub-server/internal/sensors"
 )
 
@@ -33,6 +35,9 @@ func (s *stubDeviceStore) PatchDevice(_ context.Context, _, _, _ string) (sensor
 func (s *stubDeviceStore) DeleteDevice(_ context.Context, _, _ string) (string, error) {
 	return s.deleteMQTTUser, s.deleteErr
 }
+func (s *stubDeviceStore) GetActivationStatus(_ context.Context, _ string) (sensors.ActivationStatus, error) {
+	return sensors.ActivationStatus{}, nil
+}
 
 // ── ProvisioningStore ─────────────────────────────────────────────────────────
 
@@ -57,8 +62,25 @@ func (s *stubProvisioningStore) ClaimCode(_ context.Context, _ string) (string, 
 	}
 	return s.claimedDeviceID, uid, s.claimErr
 }
-func (s *stubProvisioningStore) Activate(_ context.Context, _, _, _ string) error {
+func (s *stubProvisioningStore) Activate(_ context.Context, _ *sql.Tx, _, _, _ string) error {
 	return s.activateErr
+}
+
+// ── OutboxStore ───────────────────────────────────────────────────────────────
+
+type stubOutboxStore struct {
+	insertErr error
+}
+
+func (s *stubOutboxStore) ClaimBatch(_ context.Context, _ int) ([]outbox.Event, error) {
+	return nil, nil
+}
+func (s *stubOutboxStore) MarkCompleted(_ context.Context, _ string) error { return nil }
+func (s *stubOutboxStore) RecordFailure(_ context.Context, _ string, _, _ int, _ string) error {
+	return nil
+}
+func (s *stubOutboxStore) Insert(_ context.Context, _ *sql.Tx, _ string, _ any, _ int) error {
+	return s.insertErr
 }
 
 // ── HiveMQ ────────────────────────────────────────────────────────────────────
@@ -119,6 +141,18 @@ func (s *stubPublisher) Publish(_ context.Context, topic string, payload []byte)
 	s.publishedPayload = payload
 	s.called = true
 	return s.err
+}
+
+// ── ActivationStatusStore ─────────────────────────────────────────────────────
+
+type stubActivationStatusStore struct {
+	stubDeviceStore
+	status sensors.ActivationStatus
+	err    error
+}
+
+func (s *stubActivationStatusStore) GetActivationStatus(_ context.Context, _ string) (sensors.ActivationStatus, error) {
+	return s.status, s.err
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────

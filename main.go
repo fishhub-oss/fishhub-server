@@ -6,8 +6,10 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"os/signal"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/fishhub-oss/fishhub-server/internal/account"
@@ -16,6 +18,7 @@ import (
 	"github.com/fishhub-oss/fishhub-server/internal/hivemq"
 	"github.com/fishhub-oss/fishhub-server/internal/jwtutil"
 	"github.com/fishhub-oss/fishhub-server/internal/mqtt"
+	"github.com/fishhub-oss/fishhub-server/internal/outbox"
 	"github.com/fishhub-oss/fishhub-server/internal/platform"
 	"github.com/fishhub-oss/fishhub-server/internal/sensors"
 	"github.com/go-chi/chi/v5"
@@ -88,6 +91,9 @@ func loadConfig() config {
 }
 
 func main() {
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
+	defer stop()
+
 	cfg := loadConfig()
 
 	var logHandler slog.Handler
@@ -150,7 +156,7 @@ func main() {
 	}
 
 	accountStore := account.NewPostgresStore(db)
-	authSvc, err := auth.NewOIDCService(context.Background(), auth.OIDCConfig{
+	authSvc, err := auth.NewOIDCService(ctx, auth.OIDCConfig{
 		Providers:    map[string]string{"google": cfg.GoogleClientID},
 		Store:        auth.NewPostgresStore(db),
 		RefreshStore: auth.NewPostgresRefreshTokenStore(db),
@@ -205,10 +211,23 @@ func main() {
 	// ── Stores & services ─────────────────────────────────────────────────────
 	deviceStore := sensors.NewDeviceStore(db)
 	provisioningStore := sensors.NewProvisioningStore(db)
+	outboxStore := outbox.NewPostgresStore(db)
 	readingsSvc := sensors.NewReadingsService(deviceStore, influxClient, influxClient, logger)
 	deviceSvc := sensors.NewDeviceService(deviceStore, hivemqClient, mqttPublisher, logger)
 	provisioningSvc := sensors.NewProvisioningService(provisioningStore, logger)
-	activationSvc := sensors.NewActivationService(provisioningStore, hivemqClient, deviceSigner, cfg.HiveMQHost, cfg.HiveMQPort, logger)
+	activationSvc := sensors.NewActivationService(db, provisioningStore, outboxStore, deviceSigner, logger)
+
+	// ── Outbox runner ─────────────────────────────────────────────────────────
+	outboxRunner := outbox.NewRunner(
+		outboxStore,
+		[]outbox.EventProcessor{
+			sensors.NewHiveMQProvisionProcessor(hivemqClient, logger),
+		},
+		10*time.Second,
+		5,
+		logger,
+	)
+	go outboxRunner.Run(ctx)
 
 	// ── Router ────────────────────────────────────────────────────────────────
 	r := chi.NewRouter()
@@ -230,6 +249,11 @@ func main() {
 	r.Group(func(r chi.Router) {
 		r.Use(platform.DeviceAuthenticator(deviceSigner))
 		r.Post("/readings", (&sensors.ReadingsHandler{Service: readingsSvc}).Create)
+		r.Get("/devices/{id}/status", (&sensors.ActivationStatusHandler{
+			Store:    deviceStore,
+			MQTTHost: cfg.HiveMQHost,
+			MQTTPort: cfg.HiveMQPort,
+		}).ServeHTTP)
 	})
 
 	r.Group(func(r chi.Router) {

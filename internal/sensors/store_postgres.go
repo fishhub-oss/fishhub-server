@@ -71,6 +71,37 @@ func (s *postgresDeviceStore) DeleteDevice(ctx context.Context, deviceID, userID
 	return mqttUsername, nil
 }
 
+func (s *postgresDeviceStore) GetActivationStatus(ctx context.Context, deviceID string) (ActivationStatus, error) {
+	var username, password sql.NullString
+	var pendingOutbox bool
+	err := s.db.QueryRowContext(ctx, `
+		SELECT
+			d.mqtt_username,
+			d.mqtt_password,
+			EXISTS (
+				SELECT 1 FROM outbox_events
+				WHERE payload->>'device_id' = $1::text
+				  AND status IN ('pending', 'processing')
+			)
+		FROM devices d
+		WHERE d.id = $1::uuid AND d.deleted_at IS NULL
+	`, deviceID).Scan(&username, &password, &pendingOutbox)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ActivationStatus{}, ErrDeviceNotFound
+	}
+	if err != nil {
+		return ActivationStatus{}, fmt.Errorf("get activation status: %w", err)
+	}
+	if !username.Valid || !password.Valid || pendingOutbox {
+		return ActivationStatus{Ready: false}, nil
+	}
+	return ActivationStatus{
+		Ready:        true,
+		MQTTUsername: username.String,
+		MQTTPassword: password.String,
+	}, nil
+}
+
 func (s *postgresDeviceStore) PatchDevice(ctx context.Context, deviceID, userID, name string) (Device, error) {
 	var d Device
 	err := s.db.QueryRowContext(ctx, `

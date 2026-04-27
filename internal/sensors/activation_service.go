@@ -3,40 +3,50 @@ package sensors
 import (
 	"context"
 	"crypto/rand"
+	"database/sql"
 	"encoding/hex"
 	"fmt"
 	"log/slog"
 
 	"github.com/fishhub-oss/fishhub-server/internal/devicejwt"
-	"github.com/fishhub-oss/fishhub-server/internal/hivemq"
+	"github.com/fishhub-oss/fishhub-server/internal/outbox"
 )
 
-// ActivationResult holds everything the device needs after successful activation.
+// ActivationResult holds what the device receives immediately after activation.
+// MQTT credentials are not included — the device polls GET /devices/{id}/status
+// until they are ready.
 type ActivationResult struct {
-	Token        string
-	DeviceID     string
-	MQTTUsername string
-	MQTTPassword string
-	MQTTHost     string
-	MQTTPort     int
+	Token    string
+	DeviceID string
 }
 
-// ActivationService orchestrates device activation: claim code → provision MQTT
-// credentials → store in DB → sign JWT.
+// ActivationService orchestrates device activation: claim code → store credentials
+// + enqueue HiveMQ provisioning atomically → sign JWT.
 type ActivationService struct {
-	store    ProvisioningStore
-	hiveMQ   hivemq.Client
-	signer   devicejwt.Signer
-	mqttHost string
-	mqttPort int
-	logger   *slog.Logger
+	db          *sql.DB
+	store       ProvisioningStore
+	outboxStore outbox.Store
+	signer      devicejwt.Signer
+	logger      *slog.Logger
 }
 
-func NewActivationService(store ProvisioningStore, hiveMQ hivemq.Client, signer devicejwt.Signer, mqttHost string, mqttPort int, logger *slog.Logger) *ActivationService {
+func NewActivationService(
+	db *sql.DB,
+	store ProvisioningStore,
+	outboxStore outbox.Store,
+	signer devicejwt.Signer,
+	logger *slog.Logger,
+) *ActivationService {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &ActivationService{store: store, hiveMQ: hiveMQ, signer: signer, mqttHost: mqttHost, mqttPort: mqttPort, logger: logger}
+	return &ActivationService{
+		db:          db,
+		store:       store,
+		outboxStore: outboxStore,
+		signer:      signer,
+		logger:      logger,
+	}
 }
 
 // Activate claims the provisioning code and completes device activation.
@@ -59,14 +69,30 @@ func (s *ActivationService) Activate(ctx context.Context, code string) (Activati
 	}
 	mqttPassword := hex.EncodeToString(mqttPasswordBytes)
 
-	if err := s.hiveMQ.ProvisionDevice(ctx, mqttUsername, mqttPassword); err != nil {
-		s.logger.Error("activate: hivemq provision", "device_id", deviceID, "error", err)
-		return ActivationResult{}, fmt.Errorf("hivemq provision: %w", err)
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		s.logger.Error("activate: begin tx", "device_id", deviceID, "error", err)
+		return ActivationResult{}, fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	if err := s.store.Activate(ctx, tx, deviceID, mqttUsername, mqttPassword); err != nil {
+		s.logger.Error("activate: store credentials", "device_id", deviceID, "error", err)
+		return ActivationResult{}, fmt.Errorf("activate device: %w", err)
 	}
 
-	if err := s.store.Activate(ctx, deviceID, mqttUsername, mqttPassword); err != nil {
-		s.logger.Error("activate: store", "device_id", deviceID, "error", err)
-		return ActivationResult{}, fmt.Errorf("activate device: %w", err)
+	if err := s.outboxStore.Insert(ctx, tx, EventTypeHiveMQProvision, HiveMQProvisionPayload{
+		DeviceID: deviceID,
+		Username: mqttUsername,
+		Password: mqttPassword,
+	}, hiveMQProvisionClaimTimeoutSeconds); err != nil {
+		s.logger.Error("activate: enqueue hivemq provision", "device_id", deviceID, "error", err)
+		return ActivationResult{}, fmt.Errorf("enqueue hivemq provision: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		s.logger.Error("activate: commit tx", "device_id", deviceID, "error", err)
+		return ActivationResult{}, fmt.Errorf("commit tx: %w", err)
 	}
 
 	jwtToken, err := s.signer.Sign(deviceID, userID)
@@ -76,11 +102,7 @@ func (s *ActivationService) Activate(ctx context.Context, code string) (Activati
 	}
 
 	return ActivationResult{
-		Token:        jwtToken,
-		DeviceID:     deviceID,
-		MQTTUsername: mqttUsername,
-		MQTTPassword: mqttPassword,
-		MQTTHost:     s.mqttHost,
-		MQTTPort:     s.mqttPort,
+		Token:    jwtToken,
+		DeviceID: deviceID,
 	}, nil
 }
