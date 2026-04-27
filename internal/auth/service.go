@@ -11,6 +11,8 @@ import (
 
 	gooidc "github.com/coreos/go-oidc/v3/oidc"
 	"github.com/golang-jwt/jwt/v5"
+
+	"github.com/fishhub-oss/fishhub-server/internal/jwtutil"
 )
 
 var ErrUnsupportedProvider = errors.New("unsupported provider")
@@ -23,7 +25,7 @@ type OIDCConfig struct {
 	Store        UserStore
 	RefreshStore RefreshTokenStore
 	EventHandler UserEventHandler
-	JWTSecret    string
+	Signer       jwtutil.Signer
 	JWTTTL       time.Duration
 }
 
@@ -41,7 +43,7 @@ type oidcService struct {
 	store        UserStore
 	refreshStore RefreshTokenStore
 	eventHandler UserEventHandler
-	jwtSecret    []byte
+	signer       jwtutil.Signer
 	jwtTTL       time.Duration
 }
 
@@ -66,7 +68,7 @@ func NewOIDCService(ctx context.Context, cfg OIDCConfig) (AuthService, error) {
 		store:        cfg.Store,
 		refreshStore: cfg.RefreshStore,
 		eventHandler: cfg.EventHandler,
-		jwtSecret:    []byte(cfg.JWTSecret),
+		signer:       cfg.Signer,
 		jwtTTL:       cfg.JWTTTL,
 	}, nil
 }
@@ -120,12 +122,11 @@ func (s *oidcService) VerifyAndUpsert(ctx context.Context, provider, rawIDToken 
 
 func (s *oidcService) IssueSessionJWT(userID string) (string, error) {
 	now := time.Now()
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
+	signed, err := s.signer.Sign(map[string]any{
 		"sub": userID,
 		"iat": now.Unix(),
 		"exp": now.Add(s.jwtTTL).Unix(),
 	})
-	signed, err := token.SignedString(s.jwtSecret)
 	if err != nil {
 		return "", fmt.Errorf("sign jwt: %w", err)
 	}
@@ -134,11 +135,11 @@ func (s *oidcService) IssueSessionJWT(userID string) (string, error) {
 
 func (s *oidcService) ValidateSessionJWT(raw string) (string, error) {
 	token, err := jwt.Parse(raw, func(t *jwt.Token) (any, error) {
-		if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
+		if _, ok := t.Method.(*jwt.SigningMethodRSA); !ok {
 			return nil, fmt.Errorf("unexpected signing method: %v", t.Header["alg"])
 		}
-		return s.jwtSecret, nil
-	}, jwt.WithValidMethods([]string{"HS256"}))
+		return s.signer.PublicKey(), nil
+	}, jwt.WithValidMethods([]string{"RS256"}))
 	if err != nil || !token.Valid {
 		return "", fmt.Errorf("invalid session token: %w", err)
 	}

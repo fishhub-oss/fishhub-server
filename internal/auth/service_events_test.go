@@ -11,6 +11,8 @@ import (
 	"time"
 
 	gooidc "github.com/coreos/go-oidc/v3/oidc"
+
+	"github.com/fishhub-oss/fishhub-server/internal/jwtutil"
 )
 
 type stubEventHandler struct {
@@ -37,7 +39,7 @@ func directService(store UserStore, handler UserEventHandler) *oidcService {
 		store:        store,
 		refreshStore: &noopRefreshStore{},
 		eventHandler: handler,
-		jwtSecret:    []byte("secret"),
+		signer:       jwtutil.NewNoOp(),
 		jwtTTL:       time.Hour,
 	}
 }

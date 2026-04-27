@@ -2,22 +2,44 @@ package auth_test
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
+	"encoding/pem"
 	"fmt"
 	"testing"
 	"time"
 
 	"github.com/fishhub-oss/fishhub-server/internal/auth"
+	"github.com/fishhub-oss/fishhub-server/internal/jwtutil"
 )
+
+func newTestSigner(t *testing.T) jwtutil.Signer {
+	t.Helper()
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatalf("generate rsa key: %v", err)
+	}
+	pemBytes := pem.EncodeToMemory(&pem.Block{
+		Type:  "RSA PRIVATE KEY",
+		Bytes: x509.MarshalPKCS1PrivateKey(key),
+	})
+	s, err := jwtutil.NewRSASigner(string(pemBytes), "test-kid")
+	if err != nil {
+		t.Fatalf("NewRSASigner: %v", err)
+	}
+	return s
+}
 
 // jwtOnlyService builds an oidcService with no OIDC verifiers (empty providers map)
 // so we can test JWT issue/validate in isolation.
-func jwtOnlyService(t *testing.T, secret string, ttl time.Duration) auth.AuthService {
+func jwtOnlyService(t *testing.T, ttl time.Duration) auth.AuthService {
 	t.Helper()
 	svc, err := auth.NewOIDCService(context.Background(), auth.OIDCConfig{
 		Providers:    map[string]string{},
 		Store:        &stubUserStore{},
 		RefreshStore: &stubRefreshTokenStore{},
-		JWTSecret:    secret,
+		Signer:       newTestSigner(t),
 		JWTTTL:       ttl,
 	})
 	if err != nil {
@@ -27,7 +49,7 @@ func jwtOnlyService(t *testing.T, secret string, ttl time.Duration) auth.AuthSer
 }
 
 func TestIssueAndValidateSessionJWT(t *testing.T) {
-	svc := jwtOnlyService(t, "test-secret-32-bytes-long-enough!", time.Hour)
+	svc := jwtOnlyService(t, time.Hour)
 
 	token, err := svc.IssueSessionJWT("user-uuid-123")
 	if err != nil {
@@ -47,7 +69,7 @@ func TestIssueAndValidateSessionJWT(t *testing.T) {
 }
 
 func TestValidateSessionJWT_Expired(t *testing.T) {
-	svc := jwtOnlyService(t, "test-secret-32-bytes-long-enough!", -time.Second)
+	svc := jwtOnlyService(t, -time.Second)
 
 	token, err := svc.IssueSessionJWT("user-uuid-123")
 	if err != nil {
@@ -60,9 +82,9 @@ func TestValidateSessionJWT_Expired(t *testing.T) {
 	}
 }
 
-func TestValidateSessionJWT_WrongSecret(t *testing.T) {
-	svc1 := jwtOnlyService(t, "secret-one-32-bytes-long-enough!!", time.Hour)
-	svc2 := jwtOnlyService(t, "secret-two-32-bytes-long-enough!!", time.Hour)
+func TestValidateSessionJWT_WrongKey(t *testing.T) {
+	svc1 := jwtOnlyService(t, time.Hour)
+	svc2 := jwtOnlyService(t, time.Hour)
 
 	token, err := svc1.IssueSessionJWT("user-uuid-123")
 	if err != nil {
@@ -71,12 +93,12 @@ func TestValidateSessionJWT_WrongSecret(t *testing.T) {
 
 	_, err = svc2.ValidateSessionJWT(token)
 	if err == nil {
-		t.Fatal("expected error for wrong secret, got nil")
+		t.Fatal("expected error for wrong key, got nil")
 	}
 }
 
 func TestVerifyAndUpsert_UnsupportedProvider(t *testing.T) {
-	svc := jwtOnlyService(t, "test-secret-32-bytes-long-enough!", time.Hour)
+	svc := jwtOnlyService(t, time.Hour)
 
 	_, err := svc.VerifyAndUpsert(context.Background(), "github", "some-token")
 	if err == nil {
@@ -85,7 +107,7 @@ func TestVerifyAndUpsert_UnsupportedProvider(t *testing.T) {
 }
 
 func TestIssueRefreshToken(t *testing.T) {
-	svc := jwtOnlyService(t, "test-secret-32-bytes-long-enough!", time.Hour)
+	svc := jwtOnlyService(t, time.Hour)
 
 	raw, err := svc.IssueRefreshToken(context.Background(), "user-uuid-123")
 	if err != nil {
@@ -105,7 +127,7 @@ func TestRotateRefreshToken(t *testing.T) {
 		Providers:    map[string]string{},
 		Store:        &stubUserStore{},
 		RefreshStore: store,
-		JWTSecret:    "test-secret-32-bytes-long-enough!",
+		Signer:       newTestSigner(t),
 		JWTTTL:       time.Hour,
 	})
 	if err != nil {
@@ -135,7 +157,7 @@ func TestRotateRefreshToken_Revoked(t *testing.T) {
 		Providers:    map[string]string{},
 		Store:        &stubUserStore{},
 		RefreshStore: store,
-		JWTSecret:    "test-secret-32-bytes-long-enough!",
+		Signer:       newTestSigner(t),
 		JWTTTL:       time.Hour,
 	})
 
@@ -154,7 +176,7 @@ func TestRotateRefreshToken_Expired(t *testing.T) {
 		Providers:    map[string]string{},
 		Store:        &stubUserStore{},
 		RefreshStore: store,
-		JWTSecret:    "test-secret-32-bytes-long-enough!",
+		Signer:       newTestSigner(t),
 		JWTTTL:       time.Hour,
 	})
 
@@ -167,7 +189,7 @@ func TestRotateRefreshToken_Expired(t *testing.T) {
 }
 
 func TestRotateRefreshToken_NotFound(t *testing.T) {
-	svc := jwtOnlyService(t, "test-secret-32-bytes-long-enough!", time.Hour)
+	svc := jwtOnlyService(t, time.Hour)
 
 	_, _, err := svc.RotateRefreshToken(context.Background(), "nonexistent-token")
 	if err != auth.ErrTokenNotFound {
@@ -176,7 +198,7 @@ func TestRotateRefreshToken_NotFound(t *testing.T) {
 }
 
 func TestRevokeRefreshToken_NotFound(t *testing.T) {
-	svc := jwtOnlyService(t, "test-secret-32-bytes-long-enough!", time.Hour)
+	svc := jwtOnlyService(t, time.Hour)
 
 	err := svc.RevokeRefreshToken(context.Background(), "nonexistent-token")
 	if err != auth.ErrTokenNotFound {
