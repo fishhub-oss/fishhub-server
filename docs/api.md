@@ -17,6 +17,8 @@ Health check. No authentication required.
 
 ## POST /readings
 
+> **Deprecated:** devices should publish readings via MQTT to `fishhub/{device_id}/readings` instead (see fishhub-oss/fishhub-firmware#46). This endpoint remains functional as a fallback.
+
 Accepts a SenML reading from an authenticated device.
 
 **Headers**

@@ -38,13 +38,29 @@ func (s *postgresDeviceStore) ListByUserID(ctx context.Context, userID string) (
 	return devices, rows.Err()
 }
 
+func (s *postgresDeviceStore) FindByID(ctx context.Context, deviceID string) (Device, error) {
+	var d Device
+	err := s.db.QueryRowContext(ctx, `
+		SELECT id, user_id, COALESCE(name, ''), created_at
+		FROM devices
+		WHERE id = $1 AND deleted_at IS NULL
+	`, deviceID).Scan(&d.ID, &d.UserID, &d.Name, &d.CreatedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Device{}, ErrDeviceNotFound
+	}
+	if err != nil {
+		return Device{}, fmt.Errorf("find device by id: %w", err)
+	}
+	return d, nil
+}
+
 func (s *postgresDeviceStore) FindByIDAndUserID(ctx context.Context, deviceID, userID string) (Device, error) {
 	var d Device
 	err := s.db.QueryRowContext(ctx, `
-		SELECT id, COALESCE(name, ''), created_at
+		SELECT id, user_id, COALESCE(name, ''), created_at
 		FROM devices
 		WHERE id = $1 AND user_id = $2 AND deleted_at IS NULL
-	`, deviceID, userID).Scan(&d.ID, &d.Name, &d.CreatedAt)
+	`, deviceID, userID).Scan(&d.ID, &d.UserID, &d.Name, &d.CreatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Device{}, ErrDeviceNotFound
 	}
@@ -108,8 +124,8 @@ func (s *postgresDeviceStore) PatchDevice(ctx context.Context, deviceID, userID,
 		UPDATE devices
 		SET name = $1
 		WHERE id = $2 AND user_id = $3 AND deleted_at IS NULL
-		RETURNING id, COALESCE(name, ''), created_at
-	`, name, deviceID, userID).Scan(&d.ID, &d.Name, &d.CreatedAt)
+		RETURNING id, user_id, COALESCE(name, ''), created_at
+	`, name, deviceID, userID).Scan(&d.ID, &d.UserID, &d.Name, &d.CreatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Device{}, ErrDeviceNotFound
 	}
