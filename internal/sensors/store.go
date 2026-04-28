@@ -8,6 +8,7 @@ import (
 
 type Device struct {
 	ID        string
+	UserID    string
 	Name      string
 	CreatedAt time.Time
 }
@@ -23,6 +24,9 @@ type ActivationStatus struct {
 
 type DeviceStore interface {
 	ListByUserID(ctx context.Context, userID string) ([]Device, error)
+	// FindByID looks up a device by its ID regardless of owner.
+	// Returns ErrDeviceNotFound if the device does not exist or is soft-deleted.
+	FindByID(ctx context.Context, deviceID string) (Device, error)
 	FindByIDAndUserID(ctx context.Context, deviceID, userID string) (Device, error)
 	// PatchDevice updates the name of the device owned by userID.
 	// Returns ErrDeviceNotFound if the device does not exist or is not owned by the user.

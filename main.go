@@ -194,8 +194,9 @@ func main() {
 		logger.Warn("hivemq api not configured — mqtt credentials will not be provisioned at activation")
 	}
 
-	// ── MQTT publisher ────────────────────────────────────────────────────────
+	// ── MQTT publisher + subscriber ───────────────────────────────────────────
 	var mqttPublisher mqtt.Publisher = mqtt.NewNoOpPublisher()
+	var mqttSubscriber mqtt.Subscriber = mqtt.NewNoOpSubscriber()
 	if cfg.HiveMQHost != "" {
 		p, err := mqtt.NewPublisher(cfg.HiveMQHost, cfg.HiveMQPort, cfg.HiveMQServerUser, cfg.HiveMQServerPass, logger)
 		if err != nil {
@@ -204,6 +205,13 @@ func main() {
 		}
 		mqttPublisher = p
 		logger.Info("mqtt publisher configured", "host", cfg.HiveMQHost)
+
+		sub, err := mqtt.NewSubscriber(cfg.HiveMQHost, cfg.HiveMQPort, cfg.HiveMQServerUser, cfg.HiveMQServerPass, logger)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "mqtt subscriber init: %v\n", err)
+			os.Exit(1)
+		}
+		mqttSubscriber = sub
 	} else {
 		logger.Warn("mqtt publishing disabled — HIVEMQ_HOST not set")
 	}
@@ -218,6 +226,12 @@ func main() {
 	peripheralSvc := sensors.NewPeripheralService(db, peripheralStore, outboxStore, mqttPublisher, logger)
 	provisioningSvc := sensors.NewProvisioningService(provisioningStore, logger)
 	activationSvc := sensors.NewActivationService(db, provisioningStore, outboxStore, deviceSigner, logger)
+
+	// ── MQTT readings subscription ────────────────────────────────────────────
+	readingsMQTTHandler := sensors.NewReadingsMQTTHandler(deviceStore, readingsSvc, logger)
+	if err := mqttSubscriber.Subscribe(ctx, "fishhub/+/readings", readingsMQTTHandler.Handle); err != nil {
+		logger.Warn("mqtt readings subscription failed — falling back to HTTP only", "error", err)
+	}
 
 	// ── Outbox runner ─────────────────────────────────────────────────────────
 	outboxRunner := outbox.NewRunner(

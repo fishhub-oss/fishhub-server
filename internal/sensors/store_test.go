@@ -155,6 +155,40 @@ func TestGetActivationStatus_integration(t *testing.T) {
 	})
 }
 
+func TestFindByID_integration(t *testing.T) {
+	db := testutil.NewTestDB(t)
+	store := sensors.NewDeviceStore(db)
+	ctx := context.Background()
+	userID := platform.SeedUserID()
+
+	var deviceID string
+	if err := db.QueryRowContext(ctx,
+		`INSERT INTO devices (user_id) VALUES ($1) RETURNING id`, userID,
+	).Scan(&deviceID); err != nil {
+		t.Fatalf("insert device: %v", err)
+	}
+
+	t.Run("returns device with user_id", func(t *testing.T) {
+		d, err := store.FindByID(ctx, deviceID)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if d.ID != deviceID {
+			t.Errorf("expected id %s, got %s", deviceID, d.ID)
+		}
+		if d.UserID != userID {
+			t.Errorf("expected user_id %s, got %s", userID, d.UserID)
+		}
+	})
+
+	t.Run("unknown id returns ErrDeviceNotFound", func(t *testing.T) {
+		_, err := store.FindByID(ctx, "00000000-0000-0000-0000-000000000000")
+		if !errors.Is(err, sensors.ErrDeviceNotFound) {
+			t.Errorf("expected ErrDeviceNotFound, got %v", err)
+		}
+	})
+}
+
 func contains(ss []string, s string) bool {
 	for _, v := range ss {
 		if v == s {
