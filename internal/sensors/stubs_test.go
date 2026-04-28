@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rsa"
 	"database/sql"
+	"errors"
 	"time"
 
 	"github.com/fishhub-oss/fishhub-server/internal/outbox"
@@ -143,6 +144,13 @@ func (s *stubPublisher) Publish(_ context.Context, topic string, payload []byte)
 	return s.err
 }
 
+func (s *stubPublisher) PublishRetained(_ context.Context, topic string, payload []byte) error {
+	s.publishedTopic = topic
+	s.publishedPayload = payload
+	s.called = true
+	return s.err
+}
+
 // ── ActivationStatusStore ─────────────────────────────────────────────────────
 
 type stubActivationStatusStore struct {
@@ -155,8 +163,35 @@ func (s *stubActivationStatusStore) GetActivationStatus(_ context.Context, _ str
 	return s.status, s.err
 }
 
+// ── PeripheralStore ───────────────────────────────────────────────────────────
+
+type stubPeripheralStore struct {
+	created    sensors.Peripheral
+	createErr  error
+	listed     []sensors.Peripheral
+	listErr    error
+	scheduled  sensors.Peripheral
+	schedErr   error
+	deleteErr  error
+}
+
+func (s *stubPeripheralStore) CreatePeripheral(_ context.Context, _ *sql.Tx, _, _, _, _ string, _ int) (sensors.Peripheral, error) {
+	return s.created, s.createErr
+}
+func (s *stubPeripheralStore) ListPeripherals(_ context.Context, _, _ string) ([]sensors.Peripheral, error) {
+	return s.listed, s.listErr
+}
+func (s *stubPeripheralStore) SetPeripheralSchedule(_ context.Context, _, _, _ string, _ []sensors.ScheduleWindow) (sensors.Peripheral, error) {
+	return s.scheduled, s.schedErr
+}
+func (s *stubPeripheralStore) DeletePeripheral(_ context.Context, _ *sql.Tx, _, _, _ string) error {
+	return s.deleteErr
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 func newDevice(id string) sensors.Device {
 	return sensors.Device{ID: id, Name: "Tank", CreatedAt: time.Now()}
 }
+
+var errSentinel = errors.New("store error")

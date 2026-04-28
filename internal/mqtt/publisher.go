@@ -13,6 +13,8 @@ import (
 // Publisher publishes a payload to an MQTT topic.
 type Publisher interface {
 	Publish(ctx context.Context, topic string, payload []byte) error
+	// PublishRetained publishes with the MQTT retain flag set.
+	PublishRetained(ctx context.Context, topic string, payload []byte) error
 }
 
 type pahoPublisher struct {
@@ -54,7 +56,15 @@ func NewPublisher(host string, port int, username, password string, logger *slog
 }
 
 func (p *pahoPublisher) Publish(_ context.Context, topic string, payload []byte) error {
-	token := p.client.Publish(topic, 1, false, payload)
+	return p.publish(topic, false, payload)
+}
+
+func (p *pahoPublisher) PublishRetained(_ context.Context, topic string, payload []byte) error {
+	return p.publish(topic, true, payload)
+}
+
+func (p *pahoPublisher) publish(topic string, retain bool, payload []byte) error {
+	token := p.client.Publish(topic, 1, retain, payload)
 	if !token.WaitTimeout(10 * time.Second) {
 		return fmt.Errorf("mqtt: publish timeout")
 	}
@@ -67,5 +77,6 @@ func (p *pahoPublisher) Publish(_ context.Context, topic string, payload []byte)
 // noopPublisher is returned when HIVEMQ_HOST is not configured.
 type noopPublisher struct{}
 
-func NewNoOpPublisher() Publisher                                              { return &noopPublisher{} }
-func (n *noopPublisher) Publish(_ context.Context, _ string, _ []byte) error { return nil }
+func NewNoOpPublisher() Publisher                                                      { return &noopPublisher{} }
+func (n *noopPublisher) Publish(_ context.Context, _ string, _ []byte) error         { return nil }
+func (n *noopPublisher) PublishRetained(_ context.Context, _ string, _ []byte) error { return nil }

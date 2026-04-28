@@ -36,6 +36,22 @@ type DeviceStore interface {
 	GetActivationStatus(ctx context.Context, deviceID string) (ActivationStatus, error)
 }
 
+type PeripheralStore interface {
+	// CreatePeripheral inserts a new peripheral for the device owned by userID.
+	// Returns ErrDeviceNotFound if the device does not exist or is not owned by userID.
+	// Returns ErrPeripheralAlreadyExists if an active peripheral with the same name exists.
+	CreatePeripheral(ctx context.Context, tx *sql.Tx, deviceID, userID, name, kind string, pin int) (Peripheral, error)
+	// ListPeripherals returns active (non-deleted) peripherals for the device owned by userID.
+	// Returns an empty slice if the device does not exist or is not owned by userID.
+	ListPeripherals(ctx context.Context, deviceID, userID string) ([]Peripheral, error)
+	// SetPeripheralSchedule persists the schedule and returns the updated peripheral.
+	// Returns ErrPeripheralNotFound if the peripheral does not exist or is not reachable by userID.
+	SetPeripheralSchedule(ctx context.Context, deviceID, userID, name string, schedule []ScheduleWindow) (Peripheral, error)
+	// DeletePeripheral soft-deletes the peripheral (sets deleted_at).
+	// Returns ErrPeripheralNotFound if the peripheral does not exist or is not reachable by userID.
+	DeletePeripheral(ctx context.Context, tx *sql.Tx, deviceID, userID, name string) error
+}
+
 type ProvisioningStore interface {
 	// GetOrCreateCode returns the existing unused code for the user, or creates one.
 	GetOrCreateCode(ctx context.Context, userID string) (code string, err error)
