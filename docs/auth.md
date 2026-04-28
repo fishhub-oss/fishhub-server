@@ -1,43 +1,68 @@
 # Authentication
 
-FishHub has two separate authentication paths: **device Bearer tokens** (ESP32 → server) and **user session JWTs** (browser → server via the web frontend).
+FishHub has two separate authentication paths: **device JWTs** (ESP32 → server) and **user session JWTs** (browser → server via the web frontend).
 
 ---
 
-## Device Bearer tokens
+## Device JWTs
 
 ### Token lifecycle
 
-There are two paths for a device to obtain a Bearer token:
-
-**Legacy / seed path** — `POST /tokens`. The server creates a device row and generates a cryptographically random 64-char hex token (32 bytes from `crypto/rand`). Copy the token into the ESP32 firmware's `include/config.h` as `DEVICE_TOKEN`. Used for the initial PoC setup.
-
-**Provisioning path** (production flow):
-1. Web user calls `POST /api/devices/provision` (session JWT required) — receives a 6-char pairing `code` and a `device_id`.
+1. Web user calls `POST /api/devices/provision` (session JWT required) — receives a 6-char pairing `code`.
 2. User enters the code on the device captive portal (or transmits it via QR code).
-3. ESP32 calls `POST /devices/activate` with `{ "code": "..." }` (no auth). The server claims the code atomically, generates a 64-char hex Bearer token, activates the device, and returns `{ token, device_id }`.
-4. The firmware stores the token in NVS and sends `Authorization: Bearer <token>` on every `POST /readings`.
+3. ESP32 calls `POST /devices/activate` with `{ "code": "..." }` (no auth). The server claims the code atomically, creates the device row, enqueues async MQTT provisioning, and returns `{ token, device_id }` with `202 Accepted`.
+4. The firmware stores the JWT in NVS and sends `Authorization: Bearer <token>` on every subsequent request (`POST /readings`, `GET /devices/{id}/status`).
 
-For the PoC there is no revocation. Tokens are valid until the `device_tokens` row is deleted.
+### JWT structure
+
+Device JWTs are RS256-signed tokens produced by `devicejwt.Signer` (backed by `jwtutil.Signer`).
+
+**Claims:**
+
+| Claim | Value |
+|---|---|
+| `sub` | Device UUID |
+| `user_id` | Owner user UUID |
+| `iss` | `IDP_HOST` env var |
+| `iat` | Unix timestamp of issuance |
+| `exp` | `iat` + 10 years |
+
+The corresponding public key is served at `GET /.well-known/jwks.json` (alongside the session JWT public key). HiveMQ uses this endpoint to verify device MQTT JWTs.
+
+When `DEVICE_JWT_PRIVATE_KEY` is not configured, `devicejwt.NewNoOp()` is used — `Sign()` returns `""` and `PublicKey()` returns `nil`.
 
 ### `DeviceAuthenticator` middleware (`internal/platform/middleware.go`)
 
-`platform.DeviceAuthenticator(devices sensors.DeviceStore)` returns a chi middleware that:
+`platform.DeviceAuthenticator(signer devicejwt.Signer)` returns a chi middleware that:
 
 1. Reads `Authorization` header, extracts token from `"Bearer <token>"` format
-2. Calls `DeviceStore.LookupByToken(ctx, token)` — a JOIN of `device_tokens + devices`
-3. On success, stores `sensors.DeviceInfo{DeviceID, UserID}` in the request context via `sensors.DeviceContextKey`
-4. Returns `401` if header is missing, malformed, or token unknown
-5. Returns `500` on unexpected DB error
+2. Validates the token as an RS256 JWT using `signer.PublicKey()` — no database lookup
+3. Extracts `sub` (device_id) and `user_id` claims from the validated JWT
+4. On success, stores `sensors.DeviceInfo{DeviceID, UserID}` in the request context via `sensors.DeviceContextKey`
+5. Returns `401` if the header is missing, the token is malformed, the signature is invalid, or required claims are absent
 
 Downstream handlers retrieve it with:
 ```go
 device, ok := sensors.DeviceFromContext(r.Context())
 ```
 
-### Token storage
+There is no revocation mechanism — a device JWT is valid until its `exp` claim (10 years from issuance). To invalidate a device, soft-delete it; the `DeviceStore` excludes soft-deleted devices from all lookups.
 
-Tokens are stored as **plaintext** `CHAR(64)` in `device_tokens`. Acceptable for local-network PoC. Issue #6 evaluates hashing or JWT alternatives.
+---
+
+## MQTT credentials
+
+MQTT credentials (`mqtt_username`, `mqtt_password`) are distinct from the device JWT. They are used to authenticate the device directly to the HiveMQ broker over TLS.
+
+### Lifecycle
+
+1. `POST /devices/activate` inserts a `hivemq.provision` event into `outbox_events` (within the same DB transaction as the device row creation).
+2. The outbox runner picks up the event and calls `hivemq.Client.ProvisionDevice(username, password)`:
+   - `POST /mqtt/credentials` on the HiveMQ Cloud REST API
+   - `PUT /user/{username}/roles/{roleID}/attach` to grant the device role
+3. On success, `mqtt_username` and `mqtt_password` are written to the `devices` row.
+4. `GET /devices/{id}/status` returns `"status": "ready"` with the credentials once the device row has non-null values and no pending/processing outbox event exists for the device.
+5. `DELETE /api/devices/{id}` calls `hivemq.Client.DeleteDevice(mqttUsername)` (best effort) to revoke the credentials in HiveMQ.
 
 ---
 
@@ -85,7 +110,7 @@ Implemented by `oidcService`. Configured via `auth.NewOIDCService(ctx, OIDCConfi
 
 **`VerifyAndUpsert`** — verifies the ID token with the OIDC provider (go-oidc library), upserts the user row, then calls `UserEventHandler.OnUserVerified` (implemented by `account.AccountEventHandler`, which upserts the account row with name/email from ID token claims).
 
-**Session JWT** — RS256, signed with a dedicated RSA private key (`SESSION_JWT_PRIVATE_KEY`). Claims: `sub` (user UUID), `iat`, `exp`. Default TTL: 24h (configurable via `JWT_TTL_HOURS`). The corresponding public key is served at `GET /.well-known/jwks.json` alongside the device JWT public key.
+**Session JWT** — RS256, signed with a dedicated RSA private key (`SESSION_JWT_PRIVATE_KEY`). Claims: `sub` (user UUID), `iat`, `exp`. Default TTL: 24h (configurable via `JWT_TTL_HOURS`). The corresponding public key is included in `GET /.well-known/jwks.json`.
 
 **Refresh tokens** — 64-char raw hex token; stored as SHA-256 hash in `refresh_tokens`. TTL: 30 days. Rotation: every `RotateRefreshToken` call revokes the old token and issues a new one.
 

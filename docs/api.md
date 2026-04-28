@@ -15,28 +15,9 @@ Health check. No authentication required.
 
 ---
 
-## POST /tokens
-
-> **Deprecated.** Legacy endpoint that creates a device and issues a hex Bearer token. Superseded by the `POST /api/devices/provision` → `POST /devices/activate` flow. Will be removed in a future cleanup (see issue #46).
-
-No request body required.
-
-**Response `201`**
-```json
-{
-  "token":     "b0a1aba84035c6844d739100e3a93f5911f7ecaf82cbf5bbb33306a1509854a5",
-  "device_id": "a1b2c3d4-...",
-  "user_id":   "00000000-0000-0000-0000-000000000001"
-}
-```
-
-**Response `500`** — DB failure
-
----
-
 ## POST /readings
 
-Accepts a SenML temperature reading from an authenticated device.
+Accepts a SenML reading from an authenticated device.
 
 **Headers**
 ```
@@ -57,13 +38,13 @@ Content-Type: application/json
 |---|---|---|
 | `bn` | string | Base name |
 | `bt` | int64 | Base time — Unix UTC timestamp of the reading |
-| `e[0].n` | string | Must be `"temperature"` |
-| `e[0].u` | string | Unit — must be `"Cel"` |
-| `e[0].v` | float | Temperature in Celsius |
+| `e[*].n` | string | Measurement name (e.g. `"temperature"`) |
+| `e[*].u` | string | Unit (e.g. `"Cel"`) |
+| `e[*].v` | float | Measurement value |
 
 **Response `201`** — `{}`
 
-**Response `400`** — malformed JSON, missing `bt`, or no `temperature` entry
+**Response `400`** — malformed JSON, missing `bt`, or empty entries
 
 **Response `401`** — missing or invalid device JWT
 
@@ -166,7 +147,7 @@ Cookie: session=<session-jwt>
 
 ## POST /api/devices/provision
 
-Creates (or returns the existing) pending device for the authenticated user, along with a 6-character pairing code. Idempotent — repeated calls return the same pending device and code until the device is activated.
+Creates (or returns the existing) pending provisioning code for the authenticated user. Idempotent — repeated calls return the same unused code until it is claimed by a device.
 
 **Headers** (one of):
 ```
@@ -179,15 +160,13 @@ No request body required.
 **Response `201`**
 ```json
 {
-  "code":      "A1B2C3",
-  "device_id": "a1b2c3d4-..."
+  "code": "A1B2C3"
 }
 ```
 
 | Field | Description |
 |---|---|
 | `code` | 6-char alphanumeric pairing code. Display this to the user (e.g. QR code or text) so they can enter it on the device captive portal. |
-| `device_id` | UUID of the pending device. |
 
 **Response `401`** — not authenticated
 
@@ -197,7 +176,7 @@ No request body required.
 
 ## POST /devices/activate
 
-Called by the ESP32 after the user enters the pairing code on the captive portal. No session auth required — the code itself is the credential. Marks the device active, kicks off async MQTT credential provisioning via HiveMQ, and issues a signed device JWT.
+Called by the ESP32 after the user enters the pairing code on the captive portal. No session auth required — the code itself is the credential. Creates the device row, enqueues async MQTT credential provisioning via HiveMQ, and issues a signed device JWT.
 
 No auth header required.
 
@@ -218,10 +197,10 @@ No auth header required.
 
 | Field | Description |
 |---|---|
-| `token` | RS256-signed JWT (`sub`=`device_id`, `user_id`, `iss`=`IDP_HOST`, `iat`). The device stores this in NVS and uses it as the `Authorization: Bearer` header for all subsequent requests. Empty string if `DEVICE_JWT_PRIVATE_KEY` is not configured on the server. |
-| `device_id` | UUID of the now-active device. |
+| `token` | RS256-signed JWT. Claims: `sub` (device_id), `user_id`, `iss` (IDP_HOST), `iat`, `exp` (10 years from issuance). The device stores this in NVS and uses it as the `Authorization: Bearer` header for all subsequent requests. Empty string if `DEVICE_JWT_PRIVATE_KEY` is not configured on the server. |
+| `device_id` | UUID of the newly activated device. |
 
-MQTT credentials are provisioned asynchronously. After receiving `202`, the device must poll `GET /devices/{id}/status` until `"status": "ready"` before attempting to connect to the MQTT broker.
+MQTT credentials are provisioned asynchronously via the outbox. After receiving `202`, the device must poll `GET /devices/{id}/status` until `"status": "ready"` before attempting to connect to the MQTT broker.
 
 **Response `400`** — missing or empty `code`
 
@@ -274,7 +253,7 @@ The JWT `sub` must match the `{id}` path parameter.
 
 ## GET /.well-known/jwks.json
 
-Returns the server's public key set in JWK format. Used by HiveMQ to verify device MQTT JWTs. No authentication required.
+Returns the server's public key set in JWK format. Used by HiveMQ to verify device MQTT JWTs. Also includes the session JWT public key. No authentication required.
 
 **Response `200`**
 ```json
@@ -282,7 +261,7 @@ Returns the server's public key set in JWK format. Used by HiveMQ to verify devi
   "keys": [
     {
       "kty": "RSA",
-      "kid": "<DEVICE_JWT_KID>",
+      "kid": "<key-id>",
       "use": "sig",
       "alg": "RS256",
       "n":   "<base64url-encoded modulus>",
@@ -292,25 +271,19 @@ Returns the server's public key set in JWK format. Used by HiveMQ to verify devi
 }
 ```
 
-Returns `{"keys":[]}` if `DEVICE_JWT_PRIVATE_KEY` is not configured.
+Returns `{"keys":[]}` if no keys are configured.
 
 ---
 
 ## GET /api/devices
 
-Returns devices belonging to the authenticated user. Pass `?status=active` (recommended) to exclude pending devices.
+Returns devices belonging to the authenticated user.
 
 **Headers** (one of):
 ```
 Authorization: Bearer <session-jwt>
 Cookie: session=<session-jwt>
 ```
-
-**Query parameters**
-
-| Param | Values | Default | Description |
-|---|---|---|---|
-| `status` | `active`, `pending`, _(empty)_ | _(empty)_ | Filter by device status. Omit to return all devices. |
 
 **Response `200`**
 ```json
@@ -353,9 +326,29 @@ Cookie: session=<session-jwt>
 
 ---
 
+## DELETE /api/devices/{id}
+
+Soft-deletes a device owned by the authenticated user. Sets `deleted_at` on the device row and revokes the device's MQTT credentials in HiveMQ.
+
+**Headers** (one of):
+```
+Authorization: Bearer <session-jwt>
+Cookie: session=<session-jwt>
+```
+
+**Response `204`** — deleted
+
+**Response `401`** — not authenticated
+
+**Response `404`** — device not found or not owned by the authenticated user
+
+**Response `500`** — DB failure
+
+---
+
 ## GET /api/devices/{id}/readings
 
-Returns temperature readings for a device within a time window.
+Returns sensor readings for a device within a time window.
 
 **Headers** (one of):
 ```
@@ -370,6 +363,7 @@ Cookie: session=<session-jwt>
 | `from` | RFC3339 | 24 hours ago | Start of window (inclusive) |
 | `to` | RFC3339 | now | End of window (exclusive) |
 | `window` | string | `"5m"` | InfluxDB aggregation window (passed through to query) |
+| `measurements` | comma-separated strings | _(all)_ | Filter to specific measurement names (e.g. `temperature,ph`) |
 
 **Response `200`**
 ```json
@@ -378,13 +372,51 @@ Cookie: session=<session-jwt>
   "from": "2024-04-12T12:00:00Z",
   "to":   "2024-04-13T12:00:00Z",
   "readings": [
-    {"timestamp": "2024-04-12T12:05:00Z", "temperature": 23.4}
+    {
+      "timestamp": "2024-04-12T12:05:00Z",
+      "values": {"temperature": 23.4}
+    }
   ]
 }
 ```
+
+Each element of `readings` carries a `values` map from measurement name to float value. Multiple measurements per point are supported.
 
 **Response `400`** — invalid `from` or `to` format
 
 **Response `401`** — not authenticated
 
 **Response `404`** — device not found or not owned by the authenticated user
+
+---
+
+## POST /api/devices/{id}/peripherals/{name}/commands
+
+Sends a command to a named peripheral on a device via MQTT. The server publishes to the topic `fishhub/{device_id}/{peripheral_name}/commands`.
+
+**Headers** (one of):
+```
+Authorization: Bearer <session-jwt>
+Cookie: session=<session-jwt>
+```
+
+**Request body**
+```json
+{
+  "action": "set"
+}
+```
+
+| Field | Values | Description |
+|---|---|---|
+| `action` | `"set"` \| `"schedule"` | Command action to send to the peripheral |
+
+**Response `204`** — command published
+
+**Response `400`** — invalid action (must be `"set"` or `"schedule"`)
+
+**Response `401`** — not authenticated
+
+**Response `404`** — device not found or not owned by the authenticated user
+
+**Response `500`** — MQTT publish failure
