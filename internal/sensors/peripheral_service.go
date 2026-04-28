@@ -76,9 +76,10 @@ func (s *PeripheralService) Register(ctx context.Context, deviceID, userID, name
 }
 
 // List returns active peripherals for the device.
+// Returns an empty slice if the device does not exist or is not owned by userID.
 func (s *PeripheralService) List(ctx context.Context, deviceID, userID string) ([]Peripheral, error) {
 	peripherals, err := s.store.ListPeripherals(ctx, deviceID, userID)
-	if err != nil && !errors.Is(err, ErrDeviceNotFound) {
+	if err != nil {
 		s.logger.Error("list peripherals", "device_id", deviceID, "error", err)
 	}
 	return peripherals, err

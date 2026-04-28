@@ -48,24 +48,16 @@ func (s *postgresPeripheralStore) CreatePeripheral(ctx context.Context, tx *sql.
 }
 
 func (s *postgresPeripheralStore) ListPeripherals(ctx context.Context, deviceID, userID string) ([]Peripheral, error) {
-	var exists bool
-	err := s.db.QueryRowContext(ctx,
-		`SELECT EXISTS(SELECT 1 FROM devices WHERE id = $1 AND user_id = $2 AND deleted_at IS NULL)`,
-		deviceID, userID,
-	).Scan(&exists)
-	if err != nil {
-		return nil, fmt.Errorf("list peripherals: check device: %w", err)
-	}
-	if !exists {
-		return nil, ErrDeviceNotFound
-	}
-
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, device_id, name, kind, pin, schedule, created_at, updated_at
-		FROM peripherals
-		WHERE device_id = $1 AND deleted_at IS NULL
-		ORDER BY created_at ASC
-	`, deviceID)
+		SELECT p.id, p.device_id, p.name, p.kind, p.pin, p.schedule, p.created_at, p.updated_at
+		FROM peripherals p
+		JOIN devices d ON d.id = p.device_id
+		WHERE p.device_id = $1
+		  AND d.user_id = $2
+		  AND p.deleted_at IS NULL
+		  AND d.deleted_at IS NULL
+		ORDER BY p.created_at ASC
+	`, deviceID, userID)
 	if err != nil {
 		return nil, fmt.Errorf("list peripherals: query: %w", err)
 	}

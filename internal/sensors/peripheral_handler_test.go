@@ -52,20 +52,27 @@ func TestListPeripheralsHandler(t *testing.T) {
 		}
 	})
 
-	t.Run("device not found returns 404", func(t *testing.T) {
-		store := &stubPeripheralStore{listErr: sensors.ErrDeviceNotFound}
+	t.Run("unknown device returns 200 with empty list", func(t *testing.T) {
+		store := &stubPeripheralStore{listed: []sensors.Peripheral{}}
 		svc := sensors.NewPeripheralService(nil, store, &stubOutboxStore{}, &stubPublisher{}, discardLogger)
 		h := &sensors.ListPeripheralsHandler{Service: svc}
 
 		req := withChiParam(
 			withClaims(httptest.NewRequest(http.MethodGet, "/", nil), "user-1"),
-			"id", "dev-1",
+			"id", "unknown-device",
 		)
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, req)
 
-		if rec.Code != http.StatusNotFound {
-			t.Errorf("expected 404, got %d", rec.Code)
+		if rec.Code != http.StatusOK {
+			t.Errorf("expected 200, got %d", rec.Code)
+		}
+		var resp []any
+		if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		if len(resp) != 0 {
+			t.Errorf("expected empty list, got %v", resp)
 		}
 	})
 

@@ -453,10 +453,6 @@ func (h *ListPeripheralsHandler) ServeHTTP(w http.ResponseWriter, r *http.Reques
 	deviceID := chi.URLParam(r, "id")
 	peripherals, err := h.Service.List(r.Context(), deviceID, claims.UserID)
 	if err != nil {
-		if errors.Is(err, ErrDeviceNotFound) {
-			http.Error(w, "not found", http.StatusNotFound)
-			return
-		}
 		http.Error(w, "internal server error", http.StatusInternalServerError)
 		return
 	}

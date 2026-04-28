@@ -105,16 +105,19 @@ func TestPeripheralStore_integration(t *testing.T) {
 		}
 	})
 
-	t.Run("list does not return peripheral of another user's device", func(t *testing.T) {
+	t.Run("list returns empty slice for another user's device", func(t *testing.T) {
 		var otherUserID string
 		if err := db.QueryRowContext(ctx,
 			`INSERT INTO users (email, provider, provider_sub) VALUES ('other@test.com','test','sub-other') RETURNING id`,
 		).Scan(&otherUserID); err != nil {
 			t.Fatalf("insert other user: %v", err)
 		}
-		_, err := store.ListPeripherals(ctx, deviceID, otherUserID)
-		if !errors.Is(err, sensors.ErrDeviceNotFound) {
-			t.Errorf("expected ErrDeviceNotFound for wrong user, got %v", err)
+		peripherals, err := store.ListPeripherals(ctx, deviceID, otherUserID)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(peripherals) != 0 {
+			t.Errorf("expected empty list for wrong user, got %d peripherals", len(peripherals))
 		}
 	})
 

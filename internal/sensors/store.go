@@ -42,7 +42,7 @@ type PeripheralStore interface {
 	// Returns ErrPeripheralAlreadyExists if an active peripheral with the same name exists.
 	CreatePeripheral(ctx context.Context, tx *sql.Tx, deviceID, userID, name, kind string, pin int) (Peripheral, error)
 	// ListPeripherals returns active (non-deleted) peripherals for the device owned by userID.
-	// Returns ErrDeviceNotFound if the device does not exist or is not owned by userID.
+	// Returns an empty slice if the device does not exist or is not owned by userID.
 	ListPeripherals(ctx context.Context, deviceID, userID string) ([]Peripheral, error)
 	// SetPeripheralSchedule persists the schedule and returns the updated peripheral.
 	// Returns ErrPeripheralNotFound if the peripheral does not exist or is not reachable by userID.
