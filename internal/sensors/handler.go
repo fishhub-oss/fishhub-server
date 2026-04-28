@@ -363,6 +363,170 @@ type CommandPublisher interface {
 	Publish(ctx context.Context, topic string, payload []byte) error
 }
 
+type PeripheralResponse struct {
+	ID        string           `json:"id"`
+	DeviceID  string           `json:"device_id"`
+	Name      string           `json:"name"`
+	Kind      string           `json:"kind"`
+	Pin       int              `json:"pin"`
+	Schedule  []ScheduleWindow `json:"schedule"`
+	CreatedAt string           `json:"created_at"`
+	UpdatedAt string           `json:"updated_at"`
+}
+
+func peripheralResponse(p Peripheral) PeripheralResponse {
+	schedule := p.Schedule
+	if schedule == nil {
+		schedule = []ScheduleWindow{}
+	}
+	return PeripheralResponse{
+		ID:        p.ID,
+		DeviceID:  p.DeviceID,
+		Name:      p.Name,
+		Kind:      p.Kind,
+		Pin:       p.Pin,
+		Schedule:  schedule,
+		CreatedAt: p.CreatedAt.UTC().Format(time.RFC3339),
+		UpdatedAt: p.UpdatedAt.UTC().Format(time.RFC3339),
+	}
+}
+
+// CreatePeripheralHandler handles POST /api/devices/{id}/peripherals (session auth).
+type CreatePeripheralHandler struct {
+	Service *PeripheralService
+}
+
+type createPeripheralRequest struct {
+	Name string `json:"name"`
+	Kind string `json:"kind"`
+	Pin  int    `json:"pin"`
+}
+
+func (h *CreatePeripheralHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	claims, ok := auth.ClaimsFromContext(r.Context())
+	if !ok {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	var req createPeripheralRequest
+	if err := render.DecodeJSON(r.Body, &req); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+	if req.Name == "" || req.Kind == "" {
+		http.Error(w, "name and kind are required", http.StatusBadRequest)
+		return
+	}
+
+	deviceID := chi.URLParam(r, "id")
+	p, err := h.Service.Register(r.Context(), deviceID, claims.UserID, req.Name, req.Kind, req.Pin)
+	if err != nil {
+		if errors.Is(err, ErrDeviceNotFound) {
+			http.Error(w, "not found", http.StatusNotFound)
+			return
+		}
+		if errors.Is(err, ErrPeripheralAlreadyExists) {
+			http.Error(w, "peripheral already exists", http.StatusConflict)
+			return
+		}
+		http.Error(w, "internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	render.Status(r, http.StatusCreated)
+	render.JSON(w, r, peripheralResponse(p))
+}
+
+// ListPeripheralsHandler handles GET /api/devices/{id}/peripherals (session auth).
+type ListPeripheralsHandler struct {
+	Service *PeripheralService
+}
+
+func (h *ListPeripheralsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	claims, ok := auth.ClaimsFromContext(r.Context())
+	if !ok {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	deviceID := chi.URLParam(r, "id")
+	peripherals, err := h.Service.List(r.Context(), deviceID, claims.UserID)
+	if err != nil {
+		if errors.Is(err, ErrDeviceNotFound) {
+			http.Error(w, "not found", http.StatusNotFound)
+			return
+		}
+		http.Error(w, "internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	resp := make([]PeripheralResponse, len(peripherals))
+	for i, p := range peripherals {
+		resp[i] = peripheralResponse(p)
+	}
+	render.JSON(w, r, resp)
+}
+
+// SetPeripheralScheduleHandler handles PUT /api/devices/{id}/peripherals/{name}/schedule (session auth).
+type SetPeripheralScheduleHandler struct {
+	Service *PeripheralService
+}
+
+func (h *SetPeripheralScheduleHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	claims, ok := auth.ClaimsFromContext(r.Context())
+	if !ok {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	var schedule []ScheduleWindow
+	if err := render.DecodeJSON(r.Body, &schedule); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	deviceID := chi.URLParam(r, "id")
+	name := chi.URLParam(r, "name")
+	p, err := h.Service.SetSchedule(r.Context(), deviceID, claims.UserID, name, schedule)
+	if err != nil {
+		if errors.Is(err, ErrPeripheralNotFound) {
+			http.Error(w, "not found", http.StatusNotFound)
+			return
+		}
+		http.Error(w, "internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	render.JSON(w, r, peripheralResponse(p))
+}
+
+// DeletePeripheralHandler handles DELETE /api/devices/{id}/peripherals/{name} (session auth).
+type DeletePeripheralHandler struct {
+	Service *PeripheralService
+}
+
+func (h *DeletePeripheralHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	claims, ok := auth.ClaimsFromContext(r.Context())
+	if !ok {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	deviceID := chi.URLParam(r, "id")
+	name := chi.URLParam(r, "name")
+	if err := h.Service.Delete(r.Context(), deviceID, claims.UserID, name); err != nil {
+		if errors.Is(err, ErrPeripheralNotFound) {
+			http.Error(w, "not found", http.StatusNotFound)
+			return
+		}
+		http.Error(w, "internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
 // CommandHandler handles POST /api/devices/{id}/peripherals/{name}/commands (session auth).
 type CommandHandler struct {
 	Service *DeviceService

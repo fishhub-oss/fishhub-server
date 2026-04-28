@@ -195,7 +195,7 @@ func main() {
 	}
 
 	// ── MQTT publisher ────────────────────────────────────────────────────────
-	var mqttPublisher sensors.CommandPublisher = mqtt.NewNoOpPublisher()
+	var mqttPublisher mqtt.Publisher = mqtt.NewNoOpPublisher()
 	if cfg.HiveMQHost != "" {
 		p, err := mqtt.NewPublisher(cfg.HiveMQHost, cfg.HiveMQPort, cfg.HiveMQServerUser, cfg.HiveMQServerPass, logger)
 		if err != nil {
@@ -210,10 +210,12 @@ func main() {
 
 	// ── Stores & services ─────────────────────────────────────────────────────
 	deviceStore := sensors.NewDeviceStore(db)
+	peripheralStore := sensors.NewPeripheralStore(db)
 	provisioningStore := sensors.NewProvisioningStore(db)
 	outboxStore := outbox.NewPostgresStore(db)
 	readingsSvc := sensors.NewReadingsService(deviceStore, influxClient, influxClient, logger)
 	deviceSvc := sensors.NewDeviceService(deviceStore, hivemqClient, mqttPublisher, logger)
+	peripheralSvc := sensors.NewPeripheralService(db, peripheralStore, outboxStore, mqttPublisher, logger)
 	provisioningSvc := sensors.NewProvisioningService(provisioningStore, logger)
 	activationSvc := sensors.NewActivationService(db, provisioningStore, outboxStore, deviceSigner, logger)
 
@@ -222,6 +224,7 @@ func main() {
 		outboxStore,
 		[]outbox.EventProcessor{
 			sensors.NewHiveMQProvisionProcessor(hivemqClient, logger),
+			sensors.NewPeripheralPushProcessor(mqttPublisher, logger),
 		},
 		10*time.Second,
 		5,
@@ -264,6 +267,10 @@ func main() {
 		r.Patch("/api/devices/{id}", (&sensors.PatchDeviceHandler{Service: deviceSvc}).ServeHTTP)
 		r.Delete("/api/devices/{id}", (&sensors.DeleteDeviceHandler{Service: deviceSvc}).ServeHTTP)
 		r.Get("/api/devices/{id}/readings", (&sensors.ReadingsQueryHandler{Service: readingsSvc}).List)
+		r.Post("/api/devices/{id}/peripherals", (&sensors.CreatePeripheralHandler{Service: peripheralSvc}).ServeHTTP)
+		r.Get("/api/devices/{id}/peripherals", (&sensors.ListPeripheralsHandler{Service: peripheralSvc}).ServeHTTP)
+		r.Put("/api/devices/{id}/peripherals/{name}/schedule", (&sensors.SetPeripheralScheduleHandler{Service: peripheralSvc}).ServeHTTP)
+		r.Delete("/api/devices/{id}/peripherals/{name}", (&sensors.DeletePeripheralHandler{Service: peripheralSvc}).ServeHTTP)
 		r.Post("/api/devices/{id}/peripherals/{name}/commands", (&sensors.CommandHandler{Service: deviceSvc}).ServeHTTP)
 	})
 
