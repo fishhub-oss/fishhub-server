@@ -68,14 +68,34 @@ func TestParseSenML(t *testing.T) {
 		}
 	})
 
-	t.Run("records with unknown value type are skipped", func(t *testing.T) {
-		body := `[{"bn":"fishhub/device/","bt":1745000000},{"n":"label","vs":"hello"},{"n":"temperature","v":25.3}]`
+	t.Run("string value (vs) alongside float", func(t *testing.T) {
+		body := `[{"bn":"fishhub/device/","bt":1745000000},{"n":"light/source","vs":"schedule"},{"n":"temperature","v":25.3}]`
+		r, err := sensors.ParseSenML([]byte(body))
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(r.Measurements) != 2 {
+			t.Fatalf("expected 2 measurements, got %d", len(r.Measurements))
+		}
+		if r.Measurements[0].Name != "light/source" {
+			t.Errorf("expected first measurement 'light/source', got %q", r.Measurements[0].Name)
+		}
+		if v, ok := r.Measurements[0].Value.(string); !ok || v != "schedule" {
+			t.Errorf("expected string 'schedule', got %v", r.Measurements[0].Value)
+		}
+		if r.Measurements[1].Name != "temperature" {
+			t.Errorf("expected second measurement 'temperature', got %q", r.Measurements[1].Name)
+		}
+	})
+
+	t.Run("records with no supported value type are skipped", func(t *testing.T) {
+		body := `[{"bn":"fishhub/device/","bt":1745000000},{"n":"empty"},{"n":"temperature","v":25.3}]`
 		r, err := sensors.ParseSenML([]byte(body))
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
 		if len(r.Measurements) != 1 {
-			t.Fatalf("expected 1 measurement (label skipped), got %d", len(r.Measurements))
+			t.Fatalf("expected 1 measurement (empty skipped), got %d", len(r.Measurements))
 		}
 		if r.Measurements[0].Name != "temperature" {
 			t.Errorf("expected 'temperature', got %q", r.Measurements[0].Name)
@@ -117,8 +137,21 @@ func TestParseSenML(t *testing.T) {
 		}
 	})
 
+	t.Run("string-only pack parses successfully", func(t *testing.T) {
+		r, err := sensors.ParseSenML([]byte(`[{"bn":"fishhub/device/","bt":1745000000},{"n":"light/source","vs":"heartbeat"}]`))
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(r.Measurements) != 1 {
+			t.Fatalf("expected 1 measurement, got %d", len(r.Measurements))
+		}
+		if v, ok := r.Measurements[0].Value.(string); !ok || v != "heartbeat" {
+			t.Errorf("expected string 'heartbeat', got %v", r.Measurements[0].Value)
+		}
+	})
+
 	t.Run("all measurement records have no supported value type", func(t *testing.T) {
-		_, err := sensors.ParseSenML([]byte(`[{"bn":"fishhub/device/","bt":1745000000},{"n":"label","vs":"hello"}]`))
+		_, err := sensors.ParseSenML([]byte(`[{"bn":"fishhub/device/","bt":1745000000},{"n":"empty"}]`))
 		if !errors.Is(err, sensors.ErrEmptyEntries) {
 			t.Errorf("expected ErrEmptyEntries, got %v", err)
 		}

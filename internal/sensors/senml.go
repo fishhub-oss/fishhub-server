@@ -13,12 +13,13 @@ var (
 )
 
 type senmlRecord struct {
-	BaseName  string   `json:"bn"`
-	BaseTime  int64    `json:"bt"`
-	Name      string   `json:"n"`
-	Unit      string   `json:"u"`
-	Value     *float64 `json:"v"`
-	BoolValue *bool    `json:"vb"`
+	BaseName    string   `json:"bn"`
+	BaseTime    int64    `json:"bt"`
+	Name        string   `json:"n"`
+	Unit        string   `json:"u"`
+	Value       *float64 `json:"v"`
+	BoolValue   *bool    `json:"vb"`
+	StringValue *string  `json:"vs"`
 }
 
 type Measurement struct {
@@ -56,6 +57,8 @@ func ParseSenML(body []byte) (SenMLReading, error) {
 			measurements = append(measurements, Measurement{Name: r.Name, Unit: r.Unit, Value: *r.Value})
 		case r.BoolValue != nil:
 			measurements = append(measurements, Measurement{Name: r.Name, Unit: r.Unit, Value: *r.BoolValue})
+		case r.StringValue != nil:
+			measurements = append(measurements, Measurement{Name: r.Name, Unit: r.Unit, Value: *r.StringValue})
 		}
 	}
 

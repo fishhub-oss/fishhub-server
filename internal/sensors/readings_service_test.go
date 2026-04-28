@@ -15,7 +15,7 @@ var discardLogger = slog.New(slog.NewTextHandler(io.Discard, nil))
 
 func TestReadingsService_Query_HappyPath(t *testing.T) {
 	now := time.Now()
-	expected := []sensors.ReadingPoint{{Timestamp: now, Values: map[string]float64{"temperature": 25.5}}}
+	expected := []sensors.ReadingPoint{{Timestamp: now, Values: map[string]any{"temperature": 25.5}}}
 	svc := sensors.NewReadingsService(&stubDeviceStore{}, &stubReadingQuerier{points: expected}, nil, discardLogger)
 	points, err := svc.Query(context.Background(), "usr-1", sensors.ReadingQuery{DeviceID: "dev-1"})
 	if err != nil {

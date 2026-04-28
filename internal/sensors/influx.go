@@ -25,7 +25,7 @@ type ReadingQuery struct {
 
 type ReadingPoint struct {
 	Timestamp time.Time
-	Values    map[string]float64
+	Values    map[string]any
 }
 
 type ReadingWriter interface {
@@ -105,7 +105,7 @@ func (c *influxDBClient) QueryReadings(ctx context.Context, q ReadingQuery) ([]R
 	var points []ReadingPoint
 	for iter.Next() {
 		row := iter.Value()
-		p := ReadingPoint{Values: make(map[string]float64)}
+		p := ReadingPoint{Values: make(map[string]any)}
 		if t, ok := row["time"].(time.Time); ok {
 			p.Timestamp = t.UTC()
 		}
@@ -125,6 +125,8 @@ func (c *influxDBClient) QueryReadings(ctx context.Context, q ReadingQuery) ([]R
 				} else {
 					p.Values[k] = 0
 				}
+			case string:
+				p.Values[k] = val
 			}
 		}
 		if len(p.Values) == 0 {
