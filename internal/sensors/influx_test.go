@@ -158,6 +158,48 @@ func TestWriteReading_Integration(t *testing.T) {
 	}
 }
 
+func TestWriteAndQueryStringField_Integration(t *testing.T) {
+	host := startInfluxDB(t)
+	createDatabase(t, host)
+
+	client, err := sensors.NewInfluxClient(host, testToken, testDatabase)
+	if err != nil {
+		t.Fatalf("new client: %v", err)
+	}
+
+	ts := time.Unix(1713000001, 0).UTC()
+	err = client.WriteReading(context.Background(), sensors.Reading{
+		DeviceID:  "string-test-device",
+		UserID:    "test-user",
+		Timestamp: ts,
+		Measurements: map[string]any{
+			"light/source": "schedule",
+			"temperature":  float64(24.0),
+		},
+	})
+	if err != nil {
+		t.Fatalf("write reading: %v", err)
+	}
+
+	points, err := client.QueryReadings(context.Background(), sensors.ReadingQuery{
+		DeviceID: "string-test-device",
+		From:     ts.Add(-time.Minute),
+		To:       ts.Add(time.Minute),
+	})
+	if err != nil {
+		t.Fatalf("query readings: %v", err)
+	}
+	if len(points) == 0 {
+		t.Fatal("expected at least one reading, got none")
+	}
+	if v, ok := points[0].Values["light/source"].(string); !ok || v != "schedule" {
+		t.Errorf("expected light/source 'schedule', got %v", points[0].Values["light/source"])
+	}
+	if points[0].Values["temperature"] != float64(24.0) {
+		t.Errorf("expected temperature 24.0, got %v", points[0].Values["temperature"])
+	}
+}
+
 func TestQueryReadings_Integration(t *testing.T) {
 	host := startInfluxDB(t)
 	createDatabase(t, host)
@@ -193,6 +235,6 @@ func TestQueryReadings_Integration(t *testing.T) {
 		t.Fatal("expected at least one reading, got none")
 	}
 	if points[0].Values["temperature"] != 22.5 {
-		t.Errorf("expected temperature 22.5, got %f", points[0].Values["temperature"])
+		t.Errorf("expected temperature 22.5, got %v", points[0].Values["temperature"])
 	}
 }

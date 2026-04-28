@@ -150,7 +150,7 @@ func TestReadingsHandler_Create(t *testing.T) {
 
 func TestReadingsQueryHandler_List(t *testing.T) {
 	ts := time.Date(2026, 4, 20, 12, 0, 0, 0, time.UTC)
-	points := []sensors.ReadingPoint{{Timestamp: ts, Values: map[string]float64{"temperature": 25.4}}}
+	points := []sensors.ReadingPoint{{Timestamp: ts, Values: map[string]any{"temperature": 25.4}}}
 
 	makeReq := func(deviceID, query string) *http.Request {
 		req := httptest.NewRequest(http.MethodGet, "/api/devices/"+deviceID+"/readings"+query, nil)
@@ -179,7 +179,7 @@ func TestReadingsQueryHandler_List(t *testing.T) {
 			t.Fatalf("expected 1 reading, got %d", len(body.Readings))
 		}
 		if body.Readings[0].Values["temperature"] != 25.4 {
-			t.Errorf("expected temperature 25.4, got %f", body.Readings[0].Values["temperature"])
+			t.Errorf("expected temperature 25.4, got %v", body.Readings[0].Values["temperature"])
 		}
 	})
 
@@ -220,6 +220,31 @@ func TestReadingsQueryHandler_List(t *testing.T) {
 		}
 		if body.Readings == nil || len(body.Readings) != 0 {
 			t.Errorf("expected empty readings slice, got %v", body.Readings)
+		}
+	})
+
+	t.Run("string values are included in response", func(t *testing.T) {
+		stringPoints := []sensors.ReadingPoint{{
+			Timestamp: ts,
+			Values:    map[string]any{"light/source": "schedule", "temperature": 25.4},
+		}}
+		h := &sensors.ReadingsQueryHandler{
+			Service: newReadingsService(nil, &stubReadingQuerier{points: stringPoints}, &stubDeviceStore{device: newDevice("dev-1")}),
+		}
+		rec := httptest.NewRecorder()
+		h.List(rec, makeReq("dev-1", ""))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d", rec.Code)
+		}
+		var body sensors.ReadingsQueryResponse
+		if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		if len(body.Readings) != 1 {
+			t.Fatalf("expected 1 reading, got %d", len(body.Readings))
+		}
+		if body.Readings[0].Values["light/source"] != "schedule" {
+			t.Errorf("expected light/source 'schedule', got %v", body.Readings[0].Values["light/source"])
 		}
 	})
 

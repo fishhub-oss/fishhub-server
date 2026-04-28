@@ -92,8 +92,8 @@ type ReadingsQueryHandler struct {
 }
 
 type ReadingPointResponse struct {
-	Timestamp string             `json:"timestamp"`
-	Values    map[string]float64 `json:"values"`
+	Timestamp string         `json:"timestamp"`
+	Values    map[string]any `json:"values"`
 }
 
 type ReadingsQueryResponse struct {
