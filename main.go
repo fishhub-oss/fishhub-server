@@ -230,7 +230,7 @@ func main() {
 	// ── MQTT readings subscription ────────────────────────────────────────────
 	readingsMQTTHandler := sensors.NewReadingsMQTTHandler(deviceStore, readingsSvc, logger)
 	if err := mqttSubscriber.Subscribe(ctx, "fishhub/+/readings", readingsMQTTHandler.Handle); err != nil {
-		logger.Warn("mqtt readings subscription failed — falling back to HTTP only", "error", err)
+		logger.Error("mqtt readings subscription failed", "error", err)
 	}
 
 	// ── Outbox runner ─────────────────────────────────────────────────────────
@@ -265,7 +265,6 @@ func main() {
 
 	r.Group(func(r chi.Router) {
 		r.Use(platform.DeviceAuthenticator(deviceSigner))
-		r.Post("/readings", (&sensors.ReadingsHandler{Service: readingsSvc}).Create)
 		r.Get("/devices/{id}/status", (&sensors.ActivationStatusHandler{
 			Store:    deviceStore,
 			MQTTHost: cfg.HiveMQHost,

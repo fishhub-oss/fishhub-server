@@ -16,9 +16,6 @@ import (
 	"github.com/go-chi/chi/v5"
 )
 
-const validSenML = `[{"bn":"fishhub/device/","bt":1713000000},{"n":"temperature","u":"Cel","v":23.4}]`
-const multiSenML = `[{"bn":"fishhub/device/","bt":1713000000},{"n":"temperature","u":"Cel","v":23.4},{"n":"ph","u":"pH","v":7.2}]`
-
 func withDevice(r *http.Request, info sensors.DeviceInfo) *http.Request {
 	ctx := context.WithValue(r.Context(), sensors.DeviceContextKey, info)
 	return r.WithContext(ctx)
@@ -49,93 +46,6 @@ func newReadingsService(writer *stubReadingWriter, querier *stubReadingQuerier, 
 		w = writer
 	}
 	return sensors.NewReadingsService(store, querier, w, discardLogger)
-}
-
-// ── ReadingsHandler ───────────────────────────────────────────────────────────
-
-func TestReadingsHandler_Create(t *testing.T) {
-	device := sensors.DeviceInfo{DeviceID: "device-uuid", UserID: "user-uuid"}
-
-	t.Run("valid payload with writer returns 201 and calls writer", func(t *testing.T) {
-		w := &stubReadingWriter{}
-		h := &sensors.ReadingsHandler{Service: newReadingsService(w, nil, &stubDeviceStore{})}
-		req := withDevice(httptest.NewRequest(http.MethodPost, "/readings", strings.NewReader(validSenML)), device)
-		rec := httptest.NewRecorder()
-		h.Create(rec, req)
-		if rec.Code != http.StatusCreated {
-			t.Errorf("expected 201, got %d", rec.Code)
-		}
-		if !w.called {
-			t.Error("expected writer to be called")
-		}
-		if w.reading.DeviceID != "device-uuid" {
-			t.Errorf("expected device_id 'device-uuid', got %q", w.reading.DeviceID)
-		}
-		if w.reading.UserID != "user-uuid" {
-			t.Errorf("expected user_id 'user-uuid', got %q", w.reading.UserID)
-		}
-		if v, ok := w.reading.Measurements["temperature"].(float64); !ok || v != 23.4 {
-			t.Errorf("expected temperature 23.4, got %v", w.reading.Measurements["temperature"])
-		}
-	})
-
-	t.Run("multi-sensor payload writes all fields", func(t *testing.T) {
-		w := &stubReadingWriter{}
-		h := &sensors.ReadingsHandler{Service: newReadingsService(w, nil, &stubDeviceStore{})}
-		req := withDevice(httptest.NewRequest(http.MethodPost, "/readings", strings.NewReader(multiSenML)), device)
-		rec := httptest.NewRecorder()
-		h.Create(rec, req)
-		if rec.Code != http.StatusCreated {
-			t.Errorf("expected 201, got %d", rec.Code)
-		}
-		if len(w.reading.Measurements) != 2 {
-			t.Errorf("expected 2 measurements, got %d", len(w.reading.Measurements))
-		}
-	})
-
-	t.Run("writer error returns 500", func(t *testing.T) {
-		w := &stubReadingWriter{err: errors.New("influx down")}
-		h := &sensors.ReadingsHandler{Service: newReadingsService(w, nil, &stubDeviceStore{})}
-		req := withDevice(httptest.NewRequest(http.MethodPost, "/readings", strings.NewReader(validSenML)), device)
-		rec := httptest.NewRecorder()
-		h.Create(rec, req)
-		assertErrorCode(t, rec, http.StatusInternalServerError, "internal_error")
-	})
-
-	t.Run("nil writer returns 201 (degraded mode)", func(t *testing.T) {
-		h := &sensors.ReadingsHandler{Service: newReadingsService(nil, nil, &stubDeviceStore{})}
-		req := withDevice(httptest.NewRequest(http.MethodPost, "/readings", strings.NewReader(validSenML)), device)
-		rec := httptest.NewRecorder()
-		h.Create(rec, req)
-		if rec.Code != http.StatusCreated {
-			t.Errorf("expected 201, got %d", rec.Code)
-		}
-	})
-
-	t.Run("malformed JSON returns 400", func(t *testing.T) {
-		h := &sensors.ReadingsHandler{Service: newReadingsService(nil, nil, &stubDeviceStore{})}
-		req := withDevice(httptest.NewRequest(http.MethodPost, "/readings", strings.NewReader(`not json`)), device)
-		rec := httptest.NewRecorder()
-		h.Create(rec, req)
-		assertErrorCode(t, rec, http.StatusBadRequest, "invalid_request")
-	})
-
-	t.Run("missing base time returns 400", func(t *testing.T) {
-		h := &sensors.ReadingsHandler{Service: newReadingsService(nil, nil, &stubDeviceStore{})}
-		body := `[{"bn":"fishhub/device/"},{"n":"temperature","v":23.4}]`
-		req := withDevice(httptest.NewRequest(http.MethodPost, "/readings", strings.NewReader(body)), device)
-		rec := httptest.NewRecorder()
-		h.Create(rec, req)
-		assertErrorCode(t, rec, http.StatusBadRequest, "invalid_request")
-	})
-
-	t.Run("no device in context returns 401", func(t *testing.T) {
-		h := &sensors.ReadingsHandler{Service: newReadingsService(nil, nil, &stubDeviceStore{})}
-		req := httptest.NewRequest(http.MethodPost, "/readings", strings.NewReader(validSenML))
-		rec := httptest.NewRecorder()
-		h.Create(rec, req)
-		assertErrorCode(t, rec, http.StatusUnauthorized, "unauthorized")
-	})
 }
 
 // ── ReadingsQueryHandler ──────────────────────────────────────────────────────

@@ -49,43 +49,6 @@ func (h *DevicesHandler) List(w http.ResponseWriter, r *http.Request) {
 	render.JSON(w, r, resp)
 }
 
-// ReadingsHandler handles POST /readings (device JWT auth).
-type ReadingsHandler struct {
-	Service *ReadingsService
-}
-
-func (h *ReadingsHandler) Create(w http.ResponseWriter, r *http.Request) {
-	device, ok := DeviceFromContext(r.Context())
-	if !ok {
-		apierr.Write(w, http.StatusUnauthorized, "unauthorized", "missing or invalid credentials")
-		return
-	}
-
-	body, err := io.ReadAll(r.Body)
-	if err != nil {
-		apierr.Write(w, http.StatusBadRequest, "invalid_request", "failed to read request body")
-		return
-	}
-
-	if err := h.Service.Write(r.Context(), device, body); err != nil {
-		if errors.Is(err, ErrEmptyPayload) ||
-			errors.Is(err, ErrMissingBaseTime) ||
-			errors.Is(err, ErrEmptyEntries) {
-			apierr.Write(w, http.StatusBadRequest, "invalid_request", err.Error())
-			return
-		}
-		if errors.Is(err, ErrInfluxWrite) {
-			apierr.Write(w, http.StatusInternalServerError, "internal_error", "failed to persist reading")
-			return
-		}
-		apierr.Write(w, http.StatusBadRequest, "invalid_request", "invalid payload")
-		return
-	}
-
-	render.Status(r, http.StatusCreated)
-	render.JSON(w, r, map[string]string{})
-}
-
 // ReadingsQueryHandler handles GET /api/devices/{id}/readings (session auth).
 type ReadingsQueryHandler struct {
 	Service *ReadingsService
