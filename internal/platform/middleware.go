@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/fishhub-oss/fishhub-server/internal/apierr"
 	"github.com/fishhub-oss/fishhub-server/internal/auth"
 	"github.com/fishhub-oss/fishhub-server/internal/devicejwt"
 	"github.com/fishhub-oss/fishhub-server/internal/sensors"
@@ -48,14 +49,14 @@ func DeviceAuthenticator(signer devicejwt.Signer) func(http.Handler) http.Handle
 			raw := bearerToken(r)
 			if raw == "" {
 				slog.Warn("device auth failure", "reason", "missing bearer token", "path", r.URL.Path)
-				http.Error(w, "missing or malformed authorization header", http.StatusUnauthorized)
+				apierr.Write(w, http.StatusUnauthorized, "unauthorized", "missing or malformed authorization header")
 				return
 			}
 
 			pub := signer.PublicKey()
 			if pub == nil {
 				slog.Warn("device auth failure", "reason", "signer not configured", "path", r.URL.Path)
-				http.Error(w, "device auth not configured", http.StatusUnauthorized)
+				apierr.Write(w, http.StatusUnauthorized, "unauthorized", "device auth not configured")
 				return
 			}
 
@@ -67,14 +68,14 @@ func DeviceAuthenticator(signer devicejwt.Signer) func(http.Handler) http.Handle
 			}, jwt.WithValidMethods([]string{"RS256"}))
 			if err != nil || !token.Valid {
 				slog.Warn("device auth failure", "reason", "invalid token", "path", r.URL.Path, "error", err)
-				http.Error(w, "invalid token", http.StatusUnauthorized)
+				apierr.Write(w, http.StatusUnauthorized, "unauthorized", "invalid token")
 				return
 			}
 
 			claims, ok := token.Claims.(jwt.MapClaims)
 			if !ok {
 				slog.Warn("device auth failure", "reason", "invalid claims type", "path", r.URL.Path)
-				http.Error(w, "invalid token claims", http.StatusUnauthorized)
+				apierr.Write(w, http.StatusUnauthorized, "unauthorized", "invalid token claims")
 				return
 			}
 
@@ -82,7 +83,7 @@ func DeviceAuthenticator(signer devicejwt.Signer) func(http.Handler) http.Handle
 			userID, _ := claims["user_id"].(string)
 			if deviceID == "" || userID == "" {
 				slog.Warn("device auth failure", "reason", "missing claims", "path", r.URL.Path)
-				http.Error(w, "invalid token claims", http.StatusUnauthorized)
+				apierr.Write(w, http.StatusUnauthorized, "unauthorized", "invalid token claims")
 				return
 			}
 
@@ -115,14 +116,14 @@ func SessionAuthenticator(svc auth.AuthService) func(http.Handler) http.Handler 
 			}
 			if token == "" {
 				slog.Warn("session auth failure", "reason", "missing token", "path", r.URL.Path)
-				http.Error(w, "unauthorized", http.StatusUnauthorized)
+				apierr.Write(w, http.StatusUnauthorized, "unauthorized", "missing or invalid credentials")
 				return
 			}
 
 			userID, err := svc.ValidateSessionJWT(token)
 			if err != nil {
 				slog.Warn("session auth failure", "reason", "invalid token", "path", r.URL.Path, "error", err)
-				http.Error(w, "unauthorized", http.StatusUnauthorized)
+				apierr.Write(w, http.StatusUnauthorized, "unauthorized", "missing or invalid credentials")
 				return
 			}
 
