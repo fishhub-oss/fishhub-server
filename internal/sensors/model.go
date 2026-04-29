@@ -31,6 +31,7 @@ var ErrInvalidCommand          = errors.New("action must be 'set' or 'schedule'"
 var ErrInfluxWrite             = errors.New("failed to persist reading")
 var ErrPeripheralNotFound      = errors.New("peripheral not found")
 var ErrPeripheralAlreadyExists = errors.New("peripheral already exists")
+var ErrPeripheralPinInUse      = errors.New("peripheral pin already in use")
 
 type DeviceInfo struct {
 	DeviceID string

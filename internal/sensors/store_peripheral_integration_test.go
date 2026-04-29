@@ -72,6 +72,20 @@ func TestPeripheralStore_integration(t *testing.T) {
 		}
 	})
 
+	t.Run("create with duplicate pin returns ErrPeripheralPinInUse", func(t *testing.T) {
+		tx, err := db.BeginTx(ctx, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer tx.Rollback()
+
+		// pin 5 is already used by the "light" peripheral created above
+		_, err = store.CreatePeripheral(ctx, tx, deviceID, userID, "pump", "relay", 5)
+		if !errors.Is(err, sensors.ErrPeripheralPinInUse) {
+			t.Errorf("expected ErrPeripheralPinInUse, got %v", err)
+		}
+	})
+
 	t.Run("create with unknown device returns ErrDeviceNotFound", func(t *testing.T) {
 		tx, err := db.BeginTx(ctx, nil)
 		if err != nil {
