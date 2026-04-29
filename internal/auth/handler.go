@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 
+	"github.com/fishhub-oss/fishhub-server/internal/apierr"
 	"github.com/go-chi/render"
 )
 
@@ -29,40 +30,40 @@ type verifyRequest struct {
 func (h *VerifyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	var req verifyRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "invalid request body", http.StatusBadRequest)
+		apierr.Write(w, http.StatusBadRequest, "invalid_request", "invalid request body")
 		return
 	}
 	if req.Provider == "" || req.IDToken == "" {
-		http.Error(w, "provider and id_token are required", http.StatusBadRequest)
+		apierr.Write(w, http.StatusBadRequest, "invalid_request", "provider and id_token are required")
 		return
 	}
 
 	user, err := h.service.VerifyAndUpsert(r.Context(), req.Provider, req.IDToken)
 	if err != nil {
 		if errors.Is(err, ErrUnsupportedProvider) {
-			http.Error(w, "unsupported provider", http.StatusUnprocessableEntity)
+			apierr.Write(w, http.StatusUnprocessableEntity, "invalid_request", "unsupported provider")
 			return
 		}
 		if errors.Is(err, ErrInvalidIDToken) {
-			http.Error(w, "invalid id token", http.StatusUnauthorized)
+			apierr.Write(w, http.StatusUnauthorized, "unauthorized", "invalid id token")
 			return
 		}
 		h.logger.Error("auth verify", "error", err)
-		http.Error(w, "internal server error", http.StatusInternalServerError)
+		apierr.Write(w, http.StatusInternalServerError, "internal_error", "internal server error")
 		return
 	}
 
 	sessionToken, err := h.service.IssueSessionJWT(user.ID)
 	if err != nil {
 		h.logger.Error("auth verify: issue session jwt", "error", err)
-		http.Error(w, "internal server error", http.StatusInternalServerError)
+		apierr.Write(w, http.StatusInternalServerError, "internal_error", "internal server error")
 		return
 	}
 
 	refreshToken, err := h.service.IssueRefreshToken(r.Context(), user.ID)
 	if err != nil {
 		h.logger.Error("auth verify: issue refresh token", "error", err)
-		http.Error(w, "internal server error", http.StatusInternalServerError)
+		apierr.Write(w, http.StatusInternalServerError, "internal_error", "internal server error")
 		return
 	}
 
@@ -91,22 +92,22 @@ type refreshRequest struct {
 func (h *RefreshHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	var req refreshRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "invalid request body", http.StatusBadRequest)
+		apierr.Write(w, http.StatusBadRequest, "invalid_request", "invalid request body")
 		return
 	}
 	if req.RefreshToken == "" {
-		http.Error(w, "refresh_token is required", http.StatusBadRequest)
+		apierr.Write(w, http.StatusBadRequest, "invalid_request", "refresh_token is required")
 		return
 	}
 
 	newRaw, sessionJWT, err := h.service.RotateRefreshToken(r.Context(), req.RefreshToken)
 	if err != nil {
 		if errors.Is(err, ErrTokenNotFound) || errors.Is(err, ErrTokenExpired) || errors.Is(err, ErrTokenRevoked) {
-			http.Error(w, "invalid or expired refresh token", http.StatusUnauthorized)
+			apierr.Write(w, http.StatusUnauthorized, "unauthorized", "invalid or expired refresh token")
 			return
 		}
 		h.logger.Error("auth refresh", "error", err)
-		http.Error(w, "internal server error", http.StatusInternalServerError)
+		apierr.Write(w, http.StatusInternalServerError, "internal_error", "internal server error")
 		return
 	}
 

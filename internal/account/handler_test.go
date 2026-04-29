@@ -13,6 +13,22 @@ import (
 	"github.com/fishhub-oss/fishhub-server/internal/auth"
 )
 
+func assertErrorCode(t *testing.T, rec *httptest.ResponseRecorder, wantStatus int, wantCode string) {
+	t.Helper()
+	if rec.Code != wantStatus {
+		t.Fatalf("status: got %d, want %d", rec.Code, wantStatus)
+	}
+	var body struct {
+		Code string `json:"code"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
+		t.Fatalf("decode error body: %v", err)
+	}
+	if body.Code != wantCode {
+		t.Errorf("code: got %q, want %q", body.Code, wantCode)
+	}
+}
+
 type stubAccountStore struct {
 	account account.Account
 	err     error
@@ -64,29 +80,20 @@ func TestMeHandler(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/api/me", nil)
 		w := httptest.NewRecorder()
 		h.ServeHTTP(w, req)
-
-		if w.Code != http.StatusUnauthorized {
-			t.Errorf("expected 401, got %d", w.Code)
-		}
+		assertErrorCode(t, w, http.StatusUnauthorized, "unauthorized")
 	})
 
 	t.Run("returns 404 when account not found", func(t *testing.T) {
 		h := &account.MeHandler{Service: &account.AccountService{Store: &stubAccountStore{err: account.ErrAccountNotFound}}}
 		w := httptest.NewRecorder()
 		h.ServeHTTP(w, requestWithClaims("user-uuid"))
-
-		if w.Code != http.StatusNotFound {
-			t.Errorf("expected 404, got %d", w.Code)
-		}
+		assertErrorCode(t, w, http.StatusNotFound, "account_not_found")
 	})
 
 	t.Run("returns 500 on store error", func(t *testing.T) {
 		h := &account.MeHandler{Service: &account.AccountService{Store: &stubAccountStore{err: errors.New("db error")}}}
 		w := httptest.NewRecorder()
 		h.ServeHTTP(w, requestWithClaims("user-uuid"))
-
-		if w.Code != http.StatusInternalServerError {
-			t.Errorf("expected 500, got %d", w.Code)
-		}
+		assertErrorCode(t, w, http.StatusInternalServerError, "internal_error")
 	})
 }

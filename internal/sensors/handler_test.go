@@ -99,9 +99,7 @@ func TestReadingsHandler_Create(t *testing.T) {
 		req := withDevice(httptest.NewRequest(http.MethodPost, "/readings", strings.NewReader(validSenML)), device)
 		rec := httptest.NewRecorder()
 		h.Create(rec, req)
-		if rec.Code != http.StatusInternalServerError {
-			t.Errorf("expected 500, got %d", rec.Code)
-		}
+		assertErrorCode(t, rec, http.StatusInternalServerError, "internal_error")
 	})
 
 	t.Run("nil writer returns 201 (degraded mode)", func(t *testing.T) {
@@ -119,9 +117,7 @@ func TestReadingsHandler_Create(t *testing.T) {
 		req := withDevice(httptest.NewRequest(http.MethodPost, "/readings", strings.NewReader(`not json`)), device)
 		rec := httptest.NewRecorder()
 		h.Create(rec, req)
-		if rec.Code != http.StatusBadRequest {
-			t.Errorf("expected 400, got %d", rec.Code)
-		}
+		assertErrorCode(t, rec, http.StatusBadRequest, "invalid_request")
 	})
 
 	t.Run("missing base time returns 400", func(t *testing.T) {
@@ -130,9 +126,7 @@ func TestReadingsHandler_Create(t *testing.T) {
 		req := withDevice(httptest.NewRequest(http.MethodPost, "/readings", strings.NewReader(body)), device)
 		rec := httptest.NewRecorder()
 		h.Create(rec, req)
-		if rec.Code != http.StatusBadRequest {
-			t.Errorf("expected 400, got %d", rec.Code)
-		}
+		assertErrorCode(t, rec, http.StatusBadRequest, "invalid_request")
 	})
 
 	t.Run("no device in context returns 401", func(t *testing.T) {
@@ -140,9 +134,7 @@ func TestReadingsHandler_Create(t *testing.T) {
 		req := httptest.NewRequest(http.MethodPost, "/readings", strings.NewReader(validSenML))
 		rec := httptest.NewRecorder()
 		h.Create(rec, req)
-		if rec.Code != http.StatusUnauthorized {
-			t.Errorf("expected 401, got %d", rec.Code)
-		}
+		assertErrorCode(t, rec, http.StatusUnauthorized, "unauthorized")
 	})
 }
 
@@ -189,9 +181,7 @@ func TestReadingsQueryHandler_List(t *testing.T) {
 		}
 		rec := httptest.NewRecorder()
 		h.List(rec, makeReq("dev-other", ""))
-		if rec.Code != http.StatusNotFound {
-			t.Errorf("expected 404, got %d", rec.Code)
-		}
+		assertErrorCode(t, rec, http.StatusNotFound, "device_not_found")
 	})
 
 	t.Run("invalid from param returns 400", func(t *testing.T) {
@@ -200,9 +190,7 @@ func TestReadingsQueryHandler_List(t *testing.T) {
 		}
 		rec := httptest.NewRecorder()
 		h.List(rec, makeReq("dev-1", "?from=not-a-date"))
-		if rec.Code != http.StatusBadRequest {
-			t.Errorf("expected 400, got %d", rec.Code)
-		}
+		assertErrorCode(t, rec, http.StatusBadRequest, "invalid_request")
 	})
 
 	t.Run("empty readings returns 200 with empty array", func(t *testing.T) {
@@ -296,9 +284,7 @@ func TestDevicesHandler_List(t *testing.T) {
 		h := &sensors.DevicesHandler{Service: newSvc(&stubDeviceStore{})}
 		rec := httptest.NewRecorder()
 		h.List(rec, httptest.NewRequest(http.MethodGet, "/api/devices", nil))
-		if rec.Code != http.StatusUnauthorized {
-			t.Errorf("expected 401, got %d", rec.Code)
-		}
+		assertErrorCode(t, rec, http.StatusUnauthorized, "unauthorized")
 	})
 
 	t.Run("store error returns 500", func(t *testing.T) {
@@ -306,9 +292,7 @@ func TestDevicesHandler_List(t *testing.T) {
 		req := withClaims(httptest.NewRequest(http.MethodGet, "/api/devices", nil), "usr-1")
 		rec := httptest.NewRecorder()
 		h.List(rec, req)
-		if rec.Code != http.StatusInternalServerError {
-			t.Errorf("expected 500, got %d", rec.Code)
-		}
+		assertErrorCode(t, rec, http.StatusInternalServerError, "internal_error")
 	})
 }
 
@@ -352,27 +336,21 @@ func TestPatchDeviceHandler(t *testing.T) {
 		h := &sensors.PatchDeviceHandler{Service: newPatchSvc(&stubDeviceStore{})}
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, makeReq("dev-1", `{"name":""}`))
-		if rec.Code != http.StatusBadRequest {
-			t.Errorf("expected 400, got %d", rec.Code)
-		}
+		assertErrorCode(t, rec, http.StatusBadRequest, "invalid_request")
 	})
 
 	t.Run("device not found returns 404", func(t *testing.T) {
 		h := &sensors.PatchDeviceHandler{Service: newPatchSvc(&stubDeviceStore{patchErr: sensors.ErrDeviceNotFound})}
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, makeReq("dev-x", `{"name":"Tank A"}`))
-		if rec.Code != http.StatusNotFound {
-			t.Errorf("expected 404, got %d", rec.Code)
-		}
+		assertErrorCode(t, rec, http.StatusNotFound, "device_not_found")
 	})
 
 	t.Run("store error returns 500", func(t *testing.T) {
 		h := &sensors.PatchDeviceHandler{Service: newPatchSvc(&stubDeviceStore{patchErr: errors.New("db down")})}
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, makeReq("dev-1", `{"name":"Tank A"}`))
-		if rec.Code != http.StatusInternalServerError {
-			t.Errorf("expected 500, got %d", rec.Code)
-		}
+		assertErrorCode(t, rec, http.StatusInternalServerError, "internal_error")
 	})
 
 	t.Run("missing claims returns 401", func(t *testing.T) {
@@ -381,9 +359,7 @@ func TestPatchDeviceHandler(t *testing.T) {
 		req = withChiParam(req, "id", "dev-1")
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, req)
-		if rec.Code != http.StatusUnauthorized {
-			t.Errorf("expected 401, got %d", rec.Code)
-		}
+		assertErrorCode(t, rec, http.StatusUnauthorized, "unauthorized")
 	})
 }
 
@@ -421,9 +397,7 @@ func TestProvisionHandler(t *testing.T) {
 		req := httptest.NewRequest(http.MethodPost, "/api/devices/provision", nil)
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, req)
-		if rec.Code != http.StatusUnauthorized {
-			t.Errorf("expected 401, got %d", rec.Code)
-		}
+		assertErrorCode(t, rec, http.StatusUnauthorized, "unauthorized")
 	})
 
 	t.Run("store error returns 500", func(t *testing.T) {
@@ -433,9 +407,7 @@ func TestProvisionHandler(t *testing.T) {
 		req := withClaims(httptest.NewRequest(http.MethodPost, "/api/devices/provision", nil), "user-uuid")
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, req)
-		if rec.Code != http.StatusInternalServerError {
-			t.Errorf("expected 500, got %d", rec.Code)
-		}
+		assertErrorCode(t, rec, http.StatusInternalServerError, "internal_error")
 	})
 }
 
@@ -486,9 +458,7 @@ func TestActivateHandler(t *testing.T) {
 		req := httptest.NewRequest(http.MethodPost, "/devices/activate", strings.NewReader(validBody))
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, req)
-		if rec.Code != http.StatusInternalServerError {
-			t.Errorf("expected 500, got %d", rec.Code)
-		}
+		assertErrorCode(t, rec, http.StatusInternalServerError, "internal_error")
 	})
 
 	t.Run("missing code returns 400", func(t *testing.T) {
@@ -496,9 +466,7 @@ func TestActivateHandler(t *testing.T) {
 		req := httptest.NewRequest(http.MethodPost, "/devices/activate", strings.NewReader(`{}`))
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, req)
-		if rec.Code != http.StatusBadRequest {
-			t.Errorf("expected 400, got %d", rec.Code)
-		}
+		assertErrorCode(t, rec, http.StatusBadRequest, "invalid_request")
 	})
 
 	t.Run("unknown code returns 404", func(t *testing.T) {
@@ -509,9 +477,7 @@ func TestActivateHandler(t *testing.T) {
 		req := httptest.NewRequest(http.MethodPost, "/devices/activate", strings.NewReader(validBody))
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, req)
-		if rec.Code != http.StatusNotFound {
-			t.Errorf("expected 404, got %d", rec.Code)
-		}
+		assertErrorCode(t, rec, http.StatusNotFound, "provisioning_code_not_found")
 	})
 
 	t.Run("already used code returns 409", func(t *testing.T) {
@@ -522,9 +488,7 @@ func TestActivateHandler(t *testing.T) {
 		req := httptest.NewRequest(http.MethodPost, "/devices/activate", strings.NewReader(validBody))
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, req)
-		if rec.Code != http.StatusConflict {
-			t.Errorf("expected 409, got %d", rec.Code)
-		}
+		assertErrorCode(t, rec, http.StatusConflict, "provisioning_code_conflict")
 	})
 
 	t.Run("activate error returns 500", func(t *testing.T) {
@@ -535,9 +499,7 @@ func TestActivateHandler(t *testing.T) {
 		req := httptest.NewRequest(http.MethodPost, "/devices/activate", strings.NewReader(validBody))
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, req)
-		if rec.Code != http.StatusInternalServerError {
-			t.Errorf("expected 500, got %d", rec.Code)
-		}
+		assertErrorCode(t, rec, http.StatusInternalServerError, "internal_error")
 	})
 }
 
@@ -612,22 +574,17 @@ func TestActivationStatusHandler(t *testing.T) {
 		}
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, makeReq("dev-x", sensors.DeviceInfo{DeviceID: "dev-x", UserID: "usr-1"}))
-		if rec.Code != http.StatusNotFound {
-			t.Errorf("expected 404, got %d", rec.Code)
-		}
+		assertErrorCode(t, rec, http.StatusNotFound, "device_not_found")
 	})
 
 	t.Run("device ID mismatch returns 403", func(t *testing.T) {
 		h := &sensors.ActivationStatusHandler{Store: &stubDeviceStore{}}
 		rec := httptest.NewRecorder()
-		// JWT claims dev-1 but URL param is dev-2
 		req := httptest.NewRequest(http.MethodGet, "/devices/dev-2/status", nil)
 		req = withDevice(req, sensors.DeviceInfo{DeviceID: "dev-1", UserID: "usr-1"})
 		req = withChiParam(req, "id", "dev-2")
 		h.ServeHTTP(rec, req)
-		if rec.Code != http.StatusForbidden {
-			t.Errorf("expected 403, got %d", rec.Code)
-		}
+		assertErrorCode(t, rec, http.StatusForbidden, "forbidden")
 	})
 
 	t.Run("no device in context returns 401", func(t *testing.T) {
@@ -636,9 +593,7 @@ func TestActivationStatusHandler(t *testing.T) {
 		req = withChiParam(req, "id", "dev-1")
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, req)
-		if rec.Code != http.StatusUnauthorized {
-			t.Errorf("expected 401, got %d", rec.Code)
-		}
+		assertErrorCode(t, rec, http.StatusUnauthorized, "unauthorized")
 	})
 }
 
@@ -677,27 +632,21 @@ func TestCommandHandler(t *testing.T) {
 		h := newCommandHandler(&stubDeviceStore{findErr: sensors.ErrDeviceNotFound}, &stubPublisher{})
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, makeReq(body, "user-1"))
-		if rec.Code != http.StatusNotFound {
-			t.Errorf("expected 404, got %d", rec.Code)
-		}
+		assertErrorCode(t, rec, http.StatusNotFound, "device_not_found")
 	})
 
 	t.Run("400 on invalid action", func(t *testing.T) {
 		h := newCommandHandler(&stubDeviceStore{}, &stubPublisher{})
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, makeReq(`{"action":"invalid"}`, "user-1"))
-		if rec.Code != http.StatusBadRequest {
-			t.Errorf("expected 400, got %d", rec.Code)
-		}
+		assertErrorCode(t, rec, http.StatusBadRequest, "invalid_request")
 	})
 
 	t.Run("500 on publisher error", func(t *testing.T) {
 		h := newCommandHandler(&stubDeviceStore{}, &stubPublisher{err: errors.New("broker down")})
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, makeReq(body, "user-1"))
-		if rec.Code != http.StatusInternalServerError {
-			t.Errorf("expected 500, got %d", rec.Code)
-		}
+		assertErrorCode(t, rec, http.StatusInternalServerError, "internal_error")
 	})
 }
 
@@ -750,26 +699,20 @@ func TestDeleteDeviceHandler(t *testing.T) {
 		h := newDeleteHandler(&stubDeviceStore{deleteErr: sensors.ErrDeviceNotFound}, &stubHiveMQClient{})
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, makeReq("dev-x", "user-uuid"))
-		if rec.Code != http.StatusNotFound {
-			t.Errorf("expected 404, got %d", rec.Code)
-		}
+		assertErrorCode(t, rec, http.StatusNotFound, "device_not_found")
 	})
 
 	t.Run("500 on store error", func(t *testing.T) {
 		h := newDeleteHandler(&stubDeviceStore{deleteErr: errors.New("db down")}, &stubHiveMQClient{})
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, makeReq("dev-uuid", "user-uuid"))
-		if rec.Code != http.StatusInternalServerError {
-			t.Errorf("expected 500, got %d", rec.Code)
-		}
+		assertErrorCode(t, rec, http.StatusInternalServerError, "internal_error")
 	})
 
 	t.Run("401 when no claims", func(t *testing.T) {
 		h := newDeleteHandler(&stubDeviceStore{}, &stubHiveMQClient{})
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, makeReq("dev-uuid", ""))
-		if rec.Code != http.StatusUnauthorized {
-			t.Errorf("expected 401, got %d", rec.Code)
-		}
+		assertErrorCode(t, rec, http.StatusUnauthorized, "unauthorized")
 	})
 }

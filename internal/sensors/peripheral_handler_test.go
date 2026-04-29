@@ -81,9 +81,7 @@ func TestListPeripheralsHandler(t *testing.T) {
 		h := &sensors.ListPeripheralsHandler{Service: svc}
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
-		if rec.Code != http.StatusUnauthorized {
-			t.Errorf("expected 401, got %d", rec.Code)
-		}
+		assertErrorCode(t, rec, http.StatusUnauthorized, "unauthorized")
 	})
 }
 
@@ -129,10 +127,7 @@ func TestSetPeripheralScheduleHandler(t *testing.T) {
 		)
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, req)
-
-		if rec.Code != http.StatusNotFound {
-			t.Errorf("expected 404, got %d", rec.Code)
-		}
+		assertErrorCode(t, rec, http.StatusNotFound, "peripheral_not_found")
 	})
 
 	t.Run("invalid body returns 400", func(t *testing.T) {
@@ -145,10 +140,7 @@ func TestSetPeripheralScheduleHandler(t *testing.T) {
 		)
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, req)
-
-		if rec.Code != http.StatusBadRequest {
-			t.Errorf("expected 400, got %d", rec.Code)
-		}
+		assertErrorCode(t, rec, http.StatusBadRequest, "invalid_request")
 	})
 }
 
@@ -165,9 +157,7 @@ func TestCreatePeripheralHandler(t *testing.T) {
 		)
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, req)
-		if rec.Code != http.StatusBadRequest {
-			t.Errorf("expected 400, got %d", rec.Code)
-		}
+		assertErrorCode(t, rec, http.StatusBadRequest, "invalid_request")
 	})
 
 	t.Run("missing name returns 400", func(t *testing.T) {
@@ -180,9 +170,7 @@ func TestCreatePeripheralHandler(t *testing.T) {
 		)
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, req)
-		if rec.Code != http.StatusBadRequest {
-			t.Errorf("expected 400, got %d", rec.Code)
-		}
+		assertErrorCode(t, rec, http.StatusBadRequest, "invalid_request")
 	})
 
 	t.Run("no auth returns 401", func(t *testing.T) {
@@ -191,9 +179,7 @@ func TestCreatePeripheralHandler(t *testing.T) {
 		req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{"name":"light","kind":"relay","pin":5}`))
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, req)
-		if rec.Code != http.StatusUnauthorized {
-			t.Errorf("expected 401, got %d", rec.Code)
-		}
+		assertErrorCode(t, rec, http.StatusUnauthorized, "unauthorized")
 	})
 
 	t.Run("already exists returns 409", func(t *testing.T) {
@@ -208,9 +194,7 @@ func TestCreatePeripheralHandler(t *testing.T) {
 		)
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, req)
-		if rec.Code != http.StatusConflict {
-			t.Errorf("expected 409, got %d", rec.Code)
-		}
+		assertErrorCode(t, rec, http.StatusConflict, "peripheral_name_conflict")
 	})
 
 	t.Run("device not found returns 404", func(t *testing.T) {
@@ -225,9 +209,7 @@ func TestCreatePeripheralHandler(t *testing.T) {
 		)
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, req)
-		if rec.Code != http.StatusNotFound {
-			t.Errorf("expected 404, got %d", rec.Code)
-		}
+		assertErrorCode(t, rec, http.StatusNotFound, "device_not_found")
 	})
 }
 
@@ -239,9 +221,7 @@ func TestDeletePeripheralHandler(t *testing.T) {
 		h := &sensors.DeletePeripheralHandler{Service: svc}
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, httptest.NewRequest(http.MethodDelete, "/", nil))
-		if rec.Code != http.StatusUnauthorized {
-			t.Errorf("expected 401, got %d", rec.Code)
-		}
+		assertErrorCode(t, rec, http.StatusUnauthorized, "unauthorized")
 	})
 
 	t.Run("peripheral not found returns 404", func(t *testing.T) {
@@ -256,9 +236,7 @@ func TestDeletePeripheralHandler(t *testing.T) {
 		)
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, req)
-		if rec.Code != http.StatusNotFound {
-			t.Errorf("expected 404, got %d", rec.Code)
-		}
+		assertErrorCode(t, rec, http.StatusNotFound, "peripheral_not_found")
 	})
 }
 

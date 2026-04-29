@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/http"
 
+	"github.com/fishhub-oss/fishhub-server/internal/apierr"
 	"github.com/fishhub-oss/fishhub-server/internal/auth"
 	"github.com/go-chi/render"
 )
@@ -23,17 +24,17 @@ type meResponse struct {
 func (h *MeHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	claims, ok := auth.ClaimsFromContext(r.Context())
 	if !ok {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		apierr.Write(w, http.StatusUnauthorized, "unauthorized", "missing or invalid credentials")
 		return
 	}
 
 	account, err := h.Service.Me(r.Context(), claims.UserID)
 	if err != nil {
 		if errors.Is(err, ErrAccountNotFound) {
-			http.Error(w, "account not found", http.StatusNotFound)
+			apierr.Write(w, http.StatusNotFound, "account_not_found", "account not found")
 			return
 		}
-		http.Error(w, "internal server error", http.StatusInternalServerError)
+		apierr.Write(w, http.StatusInternalServerError, "internal_error", "internal server error")
 		return
 	}
 

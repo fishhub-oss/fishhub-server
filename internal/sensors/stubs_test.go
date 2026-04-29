@@ -4,12 +4,31 @@ import (
 	"context"
 	"crypto/rsa"
 	"database/sql"
+	"encoding/json"
 	"errors"
+	"net/http/httptest"
+	"testing"
 	"time"
 
 	"github.com/fishhub-oss/fishhub-server/internal/outbox"
 	"github.com/fishhub-oss/fishhub-server/internal/sensors"
 )
+
+func assertErrorCode(t *testing.T, rec *httptest.ResponseRecorder, wantStatus int, wantCode string) {
+	t.Helper()
+	if rec.Code != wantStatus {
+		t.Fatalf("status: got %d, want %d", rec.Code, wantStatus)
+	}
+	var body struct {
+		Code string `json:"code"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
+		t.Fatalf("decode error body: %v", err)
+	}
+	if body.Code != wantCode {
+		t.Errorf("code: got %q, want %q", body.Code, wantCode)
+	}
+}
 
 // ── DeviceStore ───────────────────────────────────────────────────────────────
 
