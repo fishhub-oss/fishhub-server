@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/fishhub-oss/fishhub-server/internal/apierr"
 	"github.com/fishhub-oss/fishhub-server/internal/auth"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/render"
@@ -27,13 +28,13 @@ type DevicesHandler struct {
 func (h *DevicesHandler) List(w http.ResponseWriter, r *http.Request) {
 	claims, ok := auth.ClaimsFromContext(r.Context())
 	if !ok {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		apierr.Write(w, http.StatusUnauthorized, "unauthorized", "missing or invalid credentials")
 		return
 	}
 
 	devices, err := h.Service.List(r.Context(), claims.UserID)
 	if err != nil {
-		http.Error(w, "internal server error", http.StatusInternalServerError)
+		apierr.Write(w, http.StatusInternalServerError, "internal_error", "internal server error")
 		return
 	}
 
@@ -56,13 +57,13 @@ type ReadingsHandler struct {
 func (h *ReadingsHandler) Create(w http.ResponseWriter, r *http.Request) {
 	device, ok := DeviceFromContext(r.Context())
 	if !ok {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		apierr.Write(w, http.StatusUnauthorized, "unauthorized", "missing or invalid credentials")
 		return
 	}
 
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
-		http.Error(w, "failed to read body", http.StatusBadRequest)
+		apierr.Write(w, http.StatusBadRequest, "invalid_request", "failed to read request body")
 		return
 	}
 
@@ -70,15 +71,14 @@ func (h *ReadingsHandler) Create(w http.ResponseWriter, r *http.Request) {
 		if errors.Is(err, ErrEmptyPayload) ||
 			errors.Is(err, ErrMissingBaseTime) ||
 			errors.Is(err, ErrEmptyEntries) {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+			apierr.Write(w, http.StatusBadRequest, "invalid_request", err.Error())
 			return
 		}
 		if errors.Is(err, ErrInfluxWrite) {
-			http.Error(w, "failed to persist reading", http.StatusInternalServerError)
+			apierr.Write(w, http.StatusInternalServerError, "internal_error", "failed to persist reading")
 			return
 		}
-		// JSON parse errors and other malformed payload errors.
-		http.Error(w, "invalid payload", http.StatusBadRequest)
+		apierr.Write(w, http.StatusBadRequest, "invalid_request", "invalid payload")
 		return
 	}
 
@@ -106,7 +106,7 @@ type ReadingsQueryResponse struct {
 func (h *ReadingsQueryHandler) List(w http.ResponseWriter, r *http.Request) {
 	claims, ok := auth.ClaimsFromContext(r.Context())
 	if !ok {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		apierr.Write(w, http.StatusUnauthorized, "unauthorized", "missing or invalid credentials")
 		return
 	}
 
@@ -120,7 +120,7 @@ func (h *ReadingsQueryHandler) List(w http.ResponseWriter, r *http.Request) {
 	if v := r.URL.Query().Get("from"); v != "" {
 		t, err := time.Parse(time.RFC3339, v)
 		if err != nil {
-			http.Error(w, "invalid 'from' param: must be RFC3339", http.StatusBadRequest)
+			apierr.Write(w, http.StatusBadRequest, "invalid_request", "invalid 'from' param: must be RFC3339")
 			return
 		}
 		from = t
@@ -128,7 +128,7 @@ func (h *ReadingsQueryHandler) List(w http.ResponseWriter, r *http.Request) {
 	if v := r.URL.Query().Get("to"); v != "" {
 		t, err := time.Parse(time.RFC3339, v)
 		if err != nil {
-			http.Error(w, "invalid 'to' param: must be RFC3339", http.StatusBadRequest)
+			apierr.Write(w, http.StatusBadRequest, "invalid_request", "invalid 'to' param: must be RFC3339")
 			return
 		}
 		to = t
@@ -151,10 +151,10 @@ func (h *ReadingsQueryHandler) List(w http.ResponseWriter, r *http.Request) {
 	})
 	if err != nil {
 		if errors.Is(err, ErrDeviceNotFound) {
-			http.Error(w, "not found", http.StatusNotFound)
+			apierr.Write(w, http.StatusNotFound, "device_not_found", "device not found")
 			return
 		}
-		http.Error(w, "internal server error", http.StatusInternalServerError)
+		apierr.Write(w, http.StatusInternalServerError, "internal_error", "internal server error")
 		return
 	}
 
@@ -181,17 +181,17 @@ type DeleteDeviceHandler struct {
 func (h *DeleteDeviceHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	claims, ok := auth.ClaimsFromContext(r.Context())
 	if !ok {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		apierr.Write(w, http.StatusUnauthorized, "unauthorized", "missing or invalid credentials")
 		return
 	}
 
 	deviceID := chi.URLParam(r, "id")
 	if err := h.Service.Delete(r.Context(), deviceID, claims.UserID); err != nil {
 		if errors.Is(err, ErrDeviceNotFound) {
-			http.Error(w, "not found", http.StatusNotFound)
+			apierr.Write(w, http.StatusNotFound, "device_not_found", "device not found")
 			return
 		}
-		http.Error(w, "internal server error", http.StatusInternalServerError)
+		apierr.Write(w, http.StatusInternalServerError, "internal_error", "internal server error")
 		return
 	}
 
@@ -210,13 +210,13 @@ type patchDeviceRequest struct {
 func (h *PatchDeviceHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	claims, ok := auth.ClaimsFromContext(r.Context())
 	if !ok {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		apierr.Write(w, http.StatusUnauthorized, "unauthorized", "missing or invalid credentials")
 		return
 	}
 
 	var req patchDeviceRequest
 	if err := render.DecodeJSON(r.Body, &req); err != nil || req.Name == "" {
-		http.Error(w, "name is required", http.StatusBadRequest)
+		apierr.Write(w, http.StatusBadRequest, "invalid_request", "name is required")
 		return
 	}
 
@@ -224,10 +224,10 @@ func (h *PatchDeviceHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	device, err := h.Service.Patch(r.Context(), deviceID, claims.UserID, req.Name)
 	if err != nil {
 		if errors.Is(err, ErrDeviceNotFound) {
-			http.Error(w, "not found", http.StatusNotFound)
+			apierr.Write(w, http.StatusNotFound, "device_not_found", "device not found")
 			return
 		}
-		http.Error(w, "internal server error", http.StatusInternalServerError)
+		apierr.Write(w, http.StatusInternalServerError, "internal_error", "internal server error")
 		return
 	}
 
@@ -250,13 +250,13 @@ type provisionResponse struct {
 func (h *ProvisionHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	claims, ok := auth.ClaimsFromContext(r.Context())
 	if !ok {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		apierr.Write(w, http.StatusUnauthorized, "unauthorized", "missing or invalid credentials")
 		return
 	}
 
 	code, err := h.Service.Provision(r.Context(), claims.UserID)
 	if err != nil {
-		http.Error(w, "internal server error", http.StatusInternalServerError)
+		apierr.Write(w, http.StatusInternalServerError, "internal_error", "internal server error")
 		return
 	}
 
@@ -281,21 +281,21 @@ type activateResponse struct {
 func (h *ActivateHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	var req activateRequest
 	if err := render.DecodeJSON(r.Body, &req); err != nil || req.Code == "" {
-		http.Error(w, "code is required", http.StatusBadRequest)
+		apierr.Write(w, http.StatusBadRequest, "invalid_request", "code is required")
 		return
 	}
 
 	result, err := h.Service.Activate(r.Context(), req.Code)
 	if err != nil {
 		if errors.Is(err, ErrCodeNotFound) {
-			http.Error(w, "provisioning code not found", http.StatusNotFound)
+			apierr.Write(w, http.StatusNotFound, "provisioning_code_not_found", "provisioning code not found")
 			return
 		}
 		if errors.Is(err, ErrCodeAlreadyUsed) {
-			http.Error(w, "provisioning code already used", http.StatusConflict)
+			apierr.Write(w, http.StatusConflict, "provisioning_code_conflict", "provisioning code already used")
 			return
 		}
-		http.Error(w, "internal server error", http.StatusInternalServerError)
+		apierr.Write(w, http.StatusInternalServerError, "internal_error", "internal server error")
 		return
 	}
 
@@ -324,23 +324,23 @@ type activationStatusResponse struct {
 func (h *ActivationStatusHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	device, ok := DeviceFromContext(r.Context())
 	if !ok {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		apierr.Write(w, http.StatusUnauthorized, "unauthorized", "missing or invalid credentials")
 		return
 	}
 
 	deviceID := chi.URLParam(r, "id")
 	if deviceID != device.DeviceID {
-		http.Error(w, "forbidden", http.StatusForbidden)
+		apierr.Write(w, http.StatusForbidden, "forbidden", "access denied")
 		return
 	}
 
 	status, err := h.Store.GetActivationStatus(r.Context(), deviceID)
 	if err != nil {
 		if errors.Is(err, ErrDeviceNotFound) {
-			http.Error(w, "device not found", http.StatusNotFound)
+			apierr.Write(w, http.StatusNotFound, "device_not_found", "device not found")
 			return
 		}
-		http.Error(w, "internal server error", http.StatusInternalServerError)
+		apierr.Write(w, http.StatusInternalServerError, "internal_error", "internal server error")
 		return
 	}
 
@@ -405,17 +405,17 @@ type createPeripheralRequest struct {
 func (h *CreatePeripheralHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	claims, ok := auth.ClaimsFromContext(r.Context())
 	if !ok {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		apierr.Write(w, http.StatusUnauthorized, "unauthorized", "missing or invalid credentials")
 		return
 	}
 
 	var req createPeripheralRequest
 	if err := render.DecodeJSON(r.Body, &req); err != nil {
-		http.Error(w, "invalid request body", http.StatusBadRequest)
+		apierr.Write(w, http.StatusBadRequest, "invalid_request", "invalid request body")
 		return
 	}
 	if req.Name == "" || req.Kind == "" {
-		http.Error(w, "name and kind are required", http.StatusBadRequest)
+		apierr.Write(w, http.StatusBadRequest, "invalid_request", "name and kind are required")
 		return
 	}
 
@@ -423,18 +423,18 @@ func (h *CreatePeripheralHandler) ServeHTTP(w http.ResponseWriter, r *http.Reque
 	p, err := h.Service.Register(r.Context(), deviceID, claims.UserID, req.Name, req.Kind, req.Pin)
 	if err != nil {
 		if errors.Is(err, ErrDeviceNotFound) {
-			http.Error(w, "not found", http.StatusNotFound)
+			apierr.Write(w, http.StatusNotFound, "device_not_found", "device not found")
 			return
 		}
 		if errors.Is(err, ErrPeripheralAlreadyExists) {
-			http.Error(w, "peripheral already exists", http.StatusConflict)
+			apierr.Write(w, http.StatusConflict, "peripheral_name_conflict", "a peripheral with that name already exists")
 			return
 		}
 		if errors.Is(err, ErrPeripheralPinInUse) {
-			http.Error(w, "pin already in use by another peripheral", http.StatusConflict)
+			apierr.Write(w, http.StatusConflict, "peripheral_pin_conflict", "pin already in use by another peripheral")
 			return
 		}
-		http.Error(w, "internal server error", http.StatusInternalServerError)
+		apierr.Write(w, http.StatusInternalServerError, "internal_error", "internal server error")
 		return
 	}
 
@@ -450,14 +450,14 @@ type ListPeripheralsHandler struct {
 func (h *ListPeripheralsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	claims, ok := auth.ClaimsFromContext(r.Context())
 	if !ok {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		apierr.Write(w, http.StatusUnauthorized, "unauthorized", "missing or invalid credentials")
 		return
 	}
 
 	deviceID := chi.URLParam(r, "id")
 	peripherals, err := h.Service.List(r.Context(), deviceID, claims.UserID)
 	if err != nil {
-		http.Error(w, "internal server error", http.StatusInternalServerError)
+		apierr.Write(w, http.StatusInternalServerError, "internal_error", "internal server error")
 		return
 	}
 
@@ -476,13 +476,13 @@ type SetPeripheralScheduleHandler struct {
 func (h *SetPeripheralScheduleHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	claims, ok := auth.ClaimsFromContext(r.Context())
 	if !ok {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		apierr.Write(w, http.StatusUnauthorized, "unauthorized", "missing or invalid credentials")
 		return
 	}
 
 	var schedule []ScheduleWindow
 	if err := render.DecodeJSON(r.Body, &schedule); err != nil {
-		http.Error(w, "invalid request body", http.StatusBadRequest)
+		apierr.Write(w, http.StatusBadRequest, "invalid_request", "invalid request body")
 		return
 	}
 
@@ -491,10 +491,10 @@ func (h *SetPeripheralScheduleHandler) ServeHTTP(w http.ResponseWriter, r *http.
 	p, err := h.Service.SetSchedule(r.Context(), deviceID, claims.UserID, name, schedule)
 	if err != nil {
 		if errors.Is(err, ErrPeripheralNotFound) {
-			http.Error(w, "not found", http.StatusNotFound)
+			apierr.Write(w, http.StatusNotFound, "peripheral_not_found", "peripheral not found")
 			return
 		}
-		http.Error(w, "internal server error", http.StatusInternalServerError)
+		apierr.Write(w, http.StatusInternalServerError, "internal_error", "internal server error")
 		return
 	}
 
@@ -509,7 +509,7 @@ type DeletePeripheralHandler struct {
 func (h *DeletePeripheralHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	claims, ok := auth.ClaimsFromContext(r.Context())
 	if !ok {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		apierr.Write(w, http.StatusUnauthorized, "unauthorized", "missing or invalid credentials")
 		return
 	}
 
@@ -517,10 +517,10 @@ func (h *DeletePeripheralHandler) ServeHTTP(w http.ResponseWriter, r *http.Reque
 	name := chi.URLParam(r, "name")
 	if err := h.Service.Delete(r.Context(), deviceID, claims.UserID, name); err != nil {
 		if errors.Is(err, ErrPeripheralNotFound) {
-			http.Error(w, "not found", http.StatusNotFound)
+			apierr.Write(w, http.StatusNotFound, "peripheral_not_found", "peripheral not found")
 			return
 		}
-		http.Error(w, "internal server error", http.StatusInternalServerError)
+		apierr.Write(w, http.StatusInternalServerError, "internal_error", "internal server error")
 		return
 	}
 
@@ -535,7 +535,7 @@ type CommandHandler struct {
 func (h *CommandHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	claims, ok := auth.ClaimsFromContext(r.Context())
 	if !ok {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		apierr.Write(w, http.StatusUnauthorized, "unauthorized", "missing or invalid credentials")
 		return
 	}
 
@@ -544,20 +544,20 @@ func (h *CommandHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
-		http.Error(w, "failed to read body", http.StatusBadRequest)
+		apierr.Write(w, http.StatusBadRequest, "invalid_request", "failed to read request body")
 		return
 	}
 
 	if err := h.Service.SendCommand(r.Context(), deviceID, claims.UserID, peripheralName, body); err != nil {
 		if errors.Is(err, ErrDeviceNotFound) {
-			http.Error(w, "not found", http.StatusNotFound)
+			apierr.Write(w, http.StatusNotFound, "device_not_found", "device not found")
 			return
 		}
 		if errors.Is(err, ErrInvalidCommand) {
-			http.Error(w, ErrInvalidCommand.Error(), http.StatusBadRequest)
+			apierr.Write(w, http.StatusBadRequest, "invalid_request", ErrInvalidCommand.Error())
 			return
 		}
-		http.Error(w, "internal server error", http.StatusInternalServerError)
+		apierr.Write(w, http.StatusInternalServerError, "internal_error", "internal server error")
 		return
 	}
 
