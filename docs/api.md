@@ -4,6 +4,36 @@ Base URL: `http://localhost:8080` (development)
 
 ---
 
+## Error responses
+
+All error responses return JSON with a consistent structure:
+
+```json
+{
+  "code": "snake_case_error_code",
+  "message": "Human-readable description"
+}
+```
+
+`code` is a stable machine-readable identifier — clients should switch on this, never on `message`. `message` is for humans (logs, dev tools) and may change without notice.
+
+| HTTP status | `code` | Situation |
+|---|---|---|
+| 400 | `invalid_request` | Malformed JSON, missing required fields, or invalid query params |
+| 401 | `unauthorized` | Missing or invalid auth |
+| 403 | `forbidden` | Authenticated but not allowed (e.g. JWT sub mismatch) |
+| 404 | `device_not_found` | Device does not exist or is not owned by the caller |
+| 404 | `peripheral_not_found` | Peripheral does not exist |
+| 404 | `account_not_found` | Account does not exist |
+| 404 | `provisioning_code_not_found` | Provisioning code does not exist |
+| 409 | `peripheral_name_conflict` | Active peripheral with the same name already exists |
+| 409 | `peripheral_pin_conflict` | Active peripheral with the same pin already exists |
+| 409 | `provisioning_code_conflict` | Provisioning code has already been used |
+| 422 | `invalid_request` | Unsupported OIDC provider |
+| 500 | `internal_error` | Unexpected server error |
+
+---
+
 ## GET /health
 
 Health check. No authentication required.
