@@ -364,14 +364,16 @@ type CommandPublisher interface {
 }
 
 type PeripheralResponse struct {
-	ID        string           `json:"id"`
-	DeviceID  string           `json:"device_id"`
-	Name      string           `json:"name"`
-	Kind      string           `json:"kind"`
-	Pin       int              `json:"pin"`
-	Schedule  []ScheduleWindow `json:"schedule"`
-	CreatedAt string           `json:"created_at"`
-	UpdatedAt string           `json:"updated_at"`
+	ID          string           `json:"id"`
+	DeviceID    string           `json:"device_id"`
+	Name        string           `json:"name"`
+	Kind        string           `json:"kind"`
+	Pin         int              `json:"pin"`
+	Category    string           `json:"category"`
+	ControlMode *string          `json:"control_mode"`
+	Schedule    []ScheduleWindow `json:"schedule"`
+	CreatedAt   string           `json:"created_at"`
+	UpdatedAt   string           `json:"updated_at"`
 }
 
 func peripheralResponse(p Peripheral) PeripheralResponse {
@@ -380,14 +382,16 @@ func peripheralResponse(p Peripheral) PeripheralResponse {
 		schedule = []ScheduleWindow{}
 	}
 	return PeripheralResponse{
-		ID:        p.ID,
-		DeviceID:  p.DeviceID,
-		Name:      p.Name,
-		Kind:      p.Kind,
-		Pin:       p.Pin,
-		Schedule:  schedule,
-		CreatedAt: p.CreatedAt.UTC().Format(time.RFC3339),
-		UpdatedAt: p.UpdatedAt.UTC().Format(time.RFC3339),
+		ID:          p.ID,
+		DeviceID:    p.DeviceID,
+		Name:        p.Name,
+		Kind:        p.Kind,
+		Pin:         p.Pin,
+		Category:    p.Category,
+		ControlMode: p.ControlMode,
+		Schedule:    schedule,
+		CreatedAt:   p.CreatedAt.UTC().Format(time.RFC3339),
+		UpdatedAt:   p.UpdatedAt.UTC().Format(time.RFC3339),
 	}
 }
 
@@ -397,9 +401,10 @@ type CreatePeripheralHandler struct {
 }
 
 type createPeripheralRequest struct {
-	Name string `json:"name"`
-	Kind string `json:"kind"`
-	Pin  int    `json:"pin"`
+	Name     string `json:"name"`
+	Kind     string `json:"kind"`
+	Pin      int    `json:"pin"`
+	Category string `json:"category"` // optional; defaults to "sensor"
 }
 
 func (h *CreatePeripheralHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -418,9 +423,16 @@ func (h *CreatePeripheralHandler) ServeHTTP(w http.ResponseWriter, r *http.Reque
 		apierr.Write(w, http.StatusBadRequest, "invalid_request", "name and kind are required")
 		return
 	}
+	if req.Category == "" {
+		req.Category = "sensor"
+	}
+	if req.Category != "sensor" && req.Category != "actuator" {
+		apierr.Write(w, http.StatusBadRequest, "invalid_request", "category must be 'sensor' or 'actuator'")
+		return
+	}
 
 	deviceID := chi.URLParam(r, "id")
-	p, err := h.Service.Register(r.Context(), deviceID, claims.UserID, req.Name, req.Kind, req.Pin)
+	p, err := h.Service.Register(r.Context(), deviceID, claims.UserID, req.Name, req.Kind, req.Category, req.Pin)
 	if err != nil {
 		if errors.Is(err, ErrDeviceNotFound) {
 			apierr.Write(w, http.StatusNotFound, "device_not_found", "device not found")
@@ -525,6 +537,51 @@ func (h *DeletePeripheralHandler) ServeHTTP(w http.ResponseWriter, r *http.Reque
 	}
 
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// SetControlModeHandler handles PATCH /api/devices/{id}/peripherals/{name}/control-mode (session auth).
+type SetControlModeHandler struct {
+	Service *PeripheralService
+}
+
+type setControlModeRequest struct {
+	Mode string `json:"mode"`
+}
+
+func (h *SetControlModeHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	claims, ok := auth.ClaimsFromContext(r.Context())
+	if !ok {
+		apierr.Write(w, http.StatusUnauthorized, "unauthorized", "missing or invalid credentials")
+		return
+	}
+
+	var req setControlModeRequest
+	if err := render.DecodeJSON(r.Body, &req); err != nil {
+		apierr.Write(w, http.StatusBadRequest, "invalid_request", "invalid request body")
+		return
+	}
+	if req.Mode != "automatic" && req.Mode != "manual" {
+		apierr.Write(w, http.StatusBadRequest, "invalid_request", "mode must be 'automatic' or 'manual'")
+		return
+	}
+
+	deviceID := chi.URLParam(r, "id")
+	name := chi.URLParam(r, "name")
+	p, err := h.Service.SetControlMode(r.Context(), deviceID, claims.UserID, name, req.Mode)
+	if err != nil {
+		if errors.Is(err, ErrPeripheralNotFound) {
+			apierr.Write(w, http.StatusNotFound, "peripheral_not_found", "peripheral not found")
+			return
+		}
+		if errors.Is(err, ErrNotAnActuator) {
+			apierr.Write(w, http.StatusUnprocessableEntity, "not_an_actuator", "control mode is only supported for actuator peripherals")
+			return
+		}
+		apierr.Write(w, http.StatusInternalServerError, "internal_error", "internal server error")
+		return
+	}
+
+	render.JSON(w, r, peripheralResponse(p))
 }
 
 // CommandHandler handles POST /api/devices/{id}/peripherals/{name}/commands (session auth).

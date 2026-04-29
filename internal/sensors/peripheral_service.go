@@ -10,6 +10,7 @@ import (
 
 	"github.com/fishhub-oss/fishhub-server/internal/mqtt"
 	"github.com/fishhub-oss/fishhub-server/internal/outbox"
+	"github.com/google/uuid"
 )
 
 // PeripheralService orchestrates peripheral registration, listing, schedule updates, and deletion.
@@ -41,14 +42,14 @@ func NewPeripheralService(
 }
 
 // Register creates a new peripheral and enqueues a peripheral.push outbox event atomically.
-func (s *PeripheralService) Register(ctx context.Context, deviceID, userID, name, kind string, pin int) (Peripheral, error) {
+func (s *PeripheralService) Register(ctx context.Context, deviceID, userID, name, kind, category string, pin int) (Peripheral, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return Peripheral{}, fmt.Errorf("register peripheral: begin tx: %w", err)
 	}
 	defer tx.Rollback()
 
-	p, err := s.store.CreatePeripheral(ctx, tx, deviceID, userID, name, kind, pin)
+	p, err := s.store.CreatePeripheral(ctx, tx, deviceID, userID, name, kind, category, pin)
 	if err != nil {
 		if !errors.Is(err, ErrDeviceNotFound) && !errors.Is(err, ErrPeripheralAlreadyExists) {
 			s.logger.Error("register peripheral: create", "device_id", deviceID, "name", name, "error", err)
@@ -96,6 +97,7 @@ func (s *PeripheralService) SetSchedule(ctx context.Context, deviceID, userID, n
 	}
 
 	msg, err := json.Marshal(map[string]any{
+		"id":      uuid.NewString(),
 		"action":  "schedule",
 		"windows": schedule,
 	})
@@ -107,6 +109,46 @@ func (s *PeripheralService) SetSchedule(ctx context.Context, deviceID, userID, n
 	topic := fmt.Sprintf("fishhub/%s/commands/%s", deviceID, name)
 	if err := s.publisher.Publish(ctx, topic, msg); err != nil {
 		s.logger.Warn("set peripheral schedule: mqtt publish failed", "device_id", deviceID, "name", name, "error", err)
+	}
+
+	return p, nil
+}
+
+// SetControlMode updates control_mode for an actuator peripheral.
+// Publishes the set_mode MQTT command before committing — rolls back on publish failure.
+func (s *PeripheralService) SetControlMode(ctx context.Context, deviceID, userID, name, mode string) (Peripheral, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return Peripheral{}, fmt.Errorf("set control mode: begin tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	p, err := s.store.SetControlMode(ctx, tx, deviceID, userID, name, mode)
+	if err != nil {
+		if !errors.Is(err, ErrPeripheralNotFound) && !errors.Is(err, ErrNotAnActuator) {
+			s.logger.Error("set control mode: store", "device_id", deviceID, "name", name, "error", err)
+		}
+		return Peripheral{}, err
+	}
+
+	msg, err := json.Marshal(map[string]any{
+		"id":     uuid.NewString(),
+		"action": "set_mode",
+		"mode":   mode,
+	})
+	if err != nil {
+		return Peripheral{}, fmt.Errorf("set control mode: marshal mqtt payload: %w", err)
+	}
+
+	topic := fmt.Sprintf("fishhub/%s/commands/%s", deviceID, name)
+	if err := s.publisher.Publish(ctx, topic, msg); err != nil {
+		s.logger.Error("set control mode: mqtt publish failed", "device_id", deviceID, "name", name, "error", err)
+		return Peripheral{}, fmt.Errorf("set control mode: mqtt publish: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		s.logger.Error("set control mode: commit", "device_id", deviceID, "name", name, "error", err)
+		return Peripheral{}, fmt.Errorf("set control mode: commit: %w", err)
 	}
 
 	return p, nil

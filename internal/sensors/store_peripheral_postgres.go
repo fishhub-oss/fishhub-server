@@ -17,7 +17,7 @@ func NewPeripheralStore(db *sql.DB) PeripheralStore {
 	return &postgresPeripheralStore{db: db}
 }
 
-func (s *postgresPeripheralStore) CreatePeripheral(ctx context.Context, tx *sql.Tx, deviceID, userID, name, kind string, pin int) (Peripheral, error) {
+func (s *postgresPeripheralStore) CreatePeripheral(ctx context.Context, tx *sql.Tx, deviceID, userID, name, kind, category string, pin int) (Peripheral, error) {
 	var exists bool
 	err := s.db.QueryRowContext(ctx,
 		`SELECT EXISTS(SELECT 1 FROM devices WHERE id = $1 AND user_id = $2 AND deleted_at IS NULL)`,
@@ -31,12 +31,15 @@ func (s *postgresPeripheralStore) CreatePeripheral(ctx context.Context, tx *sql.
 	}
 
 	var p Peripheral
+	var controlMode sql.NullString
 	err = tx.QueryRowContext(ctx, `
-		INSERT INTO peripherals (device_id, name, kind, pin)
-		VALUES ($1, $2, $3, $4)
-		RETURNING id, device_id, name, kind, pin, created_at, updated_at
-	`, deviceID, name, kind, pin).Scan(
-		&p.ID, &p.DeviceID, &p.Name, &p.Kind, &p.Pin, &p.CreatedAt, &p.UpdatedAt,
+		INSERT INTO peripherals (device_id, name, kind, pin, category, control_mode)
+		VALUES ($1, $2, $3, $4, $5,
+			CASE WHEN $5 = 'actuator' THEN 'automatic' ELSE NULL END)
+		RETURNING id, device_id, name, kind, pin, category, control_mode, created_at, updated_at
+	`, deviceID, name, kind, pin, category).Scan(
+		&p.ID, &p.DeviceID, &p.Name, &p.Kind, &p.Pin,
+		&p.Category, &controlMode, &p.CreatedAt, &p.UpdatedAt,
 	)
 	if err != nil {
 		switch uniqueViolationIndex(err) {
@@ -50,12 +53,16 @@ func (s *postgresPeripheralStore) CreatePeripheral(ctx context.Context, tx *sql.
 		}
 		return Peripheral{}, fmt.Errorf("create peripheral: insert: %w", err)
 	}
+	if controlMode.Valid {
+		p.ControlMode = &controlMode.String
+	}
 	return p, nil
 }
 
 func (s *postgresPeripheralStore) ListPeripherals(ctx context.Context, deviceID, userID string) ([]Peripheral, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT p.id, p.device_id, p.name, p.kind, p.pin, p.schedule, p.created_at, p.updated_at
+		SELECT p.id, p.device_id, p.name, p.kind, p.pin, p.category, p.control_mode,
+		       p.schedule, p.created_at, p.updated_at
 		FROM peripherals p
 		JOIN devices d ON d.id = p.device_id
 		WHERE p.device_id = $1
@@ -72,9 +79,17 @@ func (s *postgresPeripheralStore) ListPeripherals(ctx context.Context, deviceID,
 	peripherals := []Peripheral{}
 	for rows.Next() {
 		var p Peripheral
+		var controlMode sql.NullString
 		var scheduleJSON []byte
-		if err := rows.Scan(&p.ID, &p.DeviceID, &p.Name, &p.Kind, &p.Pin, &scheduleJSON, &p.CreatedAt, &p.UpdatedAt); err != nil {
+		if err := rows.Scan(
+			&p.ID, &p.DeviceID, &p.Name, &p.Kind, &p.Pin,
+			&p.Category, &controlMode, &scheduleJSON,
+			&p.CreatedAt, &p.UpdatedAt,
+		); err != nil {
 			return nil, fmt.Errorf("list peripherals: scan: %w", err)
+		}
+		if controlMode.Valid {
+			p.ControlMode = &controlMode.String
 		}
 		if scheduleJSON != nil {
 			if err := json.Unmarshal(scheduleJSON, &p.Schedule); err != nil {
@@ -93,6 +108,8 @@ func (s *postgresPeripheralStore) SetPeripheralSchedule(ctx context.Context, dev
 	}
 
 	var p Peripheral
+	var controlMode sql.NullString
+	var scheduleOut []byte
 	err = s.db.QueryRowContext(ctx, `
 		UPDATE peripherals p
 		SET schedule = $1, updated_at = now()
@@ -103,9 +120,12 @@ func (s *postgresPeripheralStore) SetPeripheralSchedule(ctx context.Context, dev
 		  AND p.name = $4
 		  AND p.deleted_at IS NULL
 		  AND d.deleted_at IS NULL
-		RETURNING p.id, p.device_id, p.name, p.kind, p.pin, p.schedule, p.created_at, p.updated_at
+		RETURNING p.id, p.device_id, p.name, p.kind, p.pin, p.category, p.control_mode,
+		          p.schedule, p.created_at, p.updated_at
 	`, scheduleJSON, userID, deviceID, name).Scan(
-		&p.ID, &p.DeviceID, &p.Name, &p.Kind, &p.Pin, &scheduleJSON, &p.CreatedAt, &p.UpdatedAt,
+		&p.ID, &p.DeviceID, &p.Name, &p.Kind, &p.Pin,
+		&p.Category, &controlMode, &scheduleOut,
+		&p.CreatedAt, &p.UpdatedAt,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Peripheral{}, ErrPeripheralNotFound
@@ -113,8 +133,68 @@ func (s *postgresPeripheralStore) SetPeripheralSchedule(ctx context.Context, dev
 	if err != nil {
 		return Peripheral{}, fmt.Errorf("set peripheral schedule: update: %w", err)
 	}
-	if err := json.Unmarshal(scheduleJSON, &p.Schedule); err != nil {
+	if controlMode.Valid {
+		p.ControlMode = &controlMode.String
+	}
+	if err := json.Unmarshal(scheduleOut, &p.Schedule); err != nil {
 		return Peripheral{}, fmt.Errorf("set peripheral schedule: unmarshal: %w", err)
+	}
+	return p, nil
+}
+
+func (s *postgresPeripheralStore) SetControlMode(ctx context.Context, tx *sql.Tx, deviceID, userID, name, mode string) (Peripheral, error) {
+	var p Peripheral
+	var controlMode sql.NullString
+	var scheduleJSON []byte
+	err := tx.QueryRowContext(ctx, `
+		UPDATE peripherals p
+		SET control_mode = $1, updated_at = now()
+		FROM devices d
+		WHERE p.device_id = d.id
+		  AND d.user_id = $2
+		  AND p.device_id = $3
+		  AND p.name = $4
+		  AND p.category = 'actuator'
+		  AND p.deleted_at IS NULL
+		  AND d.deleted_at IS NULL
+		RETURNING p.id, p.device_id, p.name, p.kind, p.pin, p.category, p.control_mode,
+		          p.schedule, p.created_at, p.updated_at
+	`, mode, userID, deviceID, name).Scan(
+		&p.ID, &p.DeviceID, &p.Name, &p.Kind, &p.Pin,
+		&p.Category, &controlMode, &scheduleJSON,
+		&p.CreatedAt, &p.UpdatedAt,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		// Distinguish "not an actuator" from "not found".
+		var category string
+		lookupErr := s.db.QueryRowContext(ctx, `
+			SELECT p.category
+			FROM peripherals p
+			JOIN devices d ON d.id = p.device_id
+			WHERE p.device_id = $1
+			  AND d.user_id = $2
+			  AND p.name = $3
+			  AND p.deleted_at IS NULL
+			  AND d.deleted_at IS NULL
+		`, deviceID, userID, name).Scan(&category)
+		if errors.Is(lookupErr, sql.ErrNoRows) {
+			return Peripheral{}, ErrPeripheralNotFound
+		}
+		if lookupErr != nil {
+			return Peripheral{}, fmt.Errorf("set control mode: lookup: %w", lookupErr)
+		}
+		return Peripheral{}, ErrNotAnActuator
+	}
+	if err != nil {
+		return Peripheral{}, fmt.Errorf("set control mode: update: %w", err)
+	}
+	if controlMode.Valid {
+		p.ControlMode = &controlMode.String
+	}
+	if scheduleJSON != nil {
+		if err := json.Unmarshal(scheduleJSON, &p.Schedule); err != nil {
+			return Peripheral{}, fmt.Errorf("set control mode: unmarshal schedule: %w", err)
+		}
 	}
 	return p, nil
 }
@@ -154,7 +234,6 @@ func uniqueViolationIndex(err error) string {
 	if !strings.Contains(msg, "23505") {
 		return ""
 	}
-	// pq error messages include the constraint name after "unique constraint"
 	const marker = `unique constraint "`
 	idx := strings.Index(msg, marker)
 	if idx < 0 {

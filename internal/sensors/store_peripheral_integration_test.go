@@ -24,14 +24,14 @@ func TestPeripheralStore_integration(t *testing.T) {
 		t.Fatalf("insert device: %v", err)
 	}
 
-	t.Run("create peripheral", func(t *testing.T) {
+	t.Run("create actuator peripheral", func(t *testing.T) {
 		tx, err := db.BeginTx(ctx, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
 		defer tx.Rollback()
 
-		p, err := store.CreatePeripheral(ctx, tx, deviceID, userID, "light", "relay", 5)
+		p, err := store.CreatePeripheral(ctx, tx, deviceID, userID, "light", "relay", "actuator", 5)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -44,9 +44,37 @@ func TestPeripheralStore_integration(t *testing.T) {
 		if p.Name != "light" || p.Kind != "relay" || p.Pin != 5 {
 			t.Errorf("unexpected peripheral: %+v", p)
 		}
+		if p.Category != "actuator" {
+			t.Errorf("expected category=actuator, got %q", p.Category)
+		}
+		if p.ControlMode == nil || *p.ControlMode != "automatic" {
+			t.Errorf("expected control_mode=automatic, got %v", p.ControlMode)
+		}
 	})
 
-	t.Run("list returns created peripheral", func(t *testing.T) {
+	t.Run("create sensor peripheral has nil control_mode", func(t *testing.T) {
+		tx, err := db.BeginTx(ctx, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer tx.Rollback()
+
+		p, err := store.CreatePeripheral(ctx, tx, deviceID, userID, "temp", "ds18b20", "sensor", 4)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if err := tx.Commit(); err != nil {
+			t.Fatal(err)
+		}
+		if p.Category != "sensor" {
+			t.Errorf("expected category=sensor, got %q", p.Category)
+		}
+		if p.ControlMode != nil {
+			t.Errorf("expected nil control_mode for sensor, got %v", p.ControlMode)
+		}
+	})
+
+	t.Run("list returns created peripherals with category and control_mode", func(t *testing.T) {
 		peripherals, err := store.ListPeripherals(ctx, deviceID, userID)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -54,8 +82,20 @@ func TestPeripheralStore_integration(t *testing.T) {
 		if len(peripherals) == 0 {
 			t.Fatal("expected at least one peripheral")
 		}
-		if peripherals[0].Name != "light" {
-			t.Errorf("expected 'light', got %q", peripherals[0].Name)
+		found := false
+		for _, p := range peripherals {
+			if p.Name == "light" {
+				found = true
+				if p.Category != "actuator" {
+					t.Errorf("expected actuator, got %q", p.Category)
+				}
+				if p.ControlMode == nil || *p.ControlMode != "automatic" {
+					t.Errorf("expected automatic control_mode, got %v", p.ControlMode)
+				}
+			}
+		}
+		if !found {
+			t.Error("light peripheral not found in list")
 		}
 	})
 
@@ -66,7 +106,7 @@ func TestPeripheralStore_integration(t *testing.T) {
 		}
 		defer tx.Rollback()
 
-		_, err = store.CreatePeripheral(ctx, tx, deviceID, userID, "light", "relay", 6)
+		_, err = store.CreatePeripheral(ctx, tx, deviceID, userID, "light", "relay", "actuator", 6)
 		if !errors.Is(err, sensors.ErrPeripheralAlreadyExists) {
 			t.Errorf("expected ErrPeripheralAlreadyExists, got %v", err)
 		}
@@ -80,7 +120,7 @@ func TestPeripheralStore_integration(t *testing.T) {
 		defer tx.Rollback()
 
 		// pin 5 is already used by the "light" peripheral created above
-		_, err = store.CreatePeripheral(ctx, tx, deviceID, userID, "pump", "relay", 5)
+		_, err = store.CreatePeripheral(ctx, tx, deviceID, userID, "pump", "relay", "actuator", 5)
 		if !errors.Is(err, sensors.ErrPeripheralPinInUse) {
 			t.Errorf("expected ErrPeripheralPinInUse, got %v", err)
 		}
@@ -93,7 +133,7 @@ func TestPeripheralStore_integration(t *testing.T) {
 		}
 		defer tx.Rollback()
 
-		_, err = store.CreatePeripheral(ctx, tx, "00000000-0000-0000-0000-000000000099", userID, "pump", "relay", 7)
+		_, err = store.CreatePeripheral(ctx, tx, "00000000-0000-0000-0000-000000000099", userID, "pump", "relay", "actuator", 7)
 		if !errors.Is(err, sensors.ErrDeviceNotFound) {
 			t.Errorf("expected ErrDeviceNotFound, got %v", err)
 		}
@@ -114,6 +154,51 @@ func TestPeripheralStore_integration(t *testing.T) {
 
 	t.Run("set schedule on unknown peripheral returns ErrPeripheralNotFound", func(t *testing.T) {
 		_, err := store.SetPeripheralSchedule(ctx, deviceID, userID, "nope", nil)
+		if !errors.Is(err, sensors.ErrPeripheralNotFound) {
+			t.Errorf("expected ErrPeripheralNotFound, got %v", err)
+		}
+	})
+
+	t.Run("set control mode on actuator", func(t *testing.T) {
+		tx, err := db.BeginTx(ctx, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer tx.Rollback()
+
+		p, err := store.SetControlMode(ctx, tx, deviceID, userID, "light", "manual")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if err := tx.Commit(); err != nil {
+			t.Fatal(err)
+		}
+		if p.ControlMode == nil || *p.ControlMode != "manual" {
+			t.Errorf("expected control_mode=manual, got %v", p.ControlMode)
+		}
+	})
+
+	t.Run("set control mode on sensor returns ErrNotAnActuator", func(t *testing.T) {
+		tx, err := db.BeginTx(ctx, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer tx.Rollback()
+
+		_, err = store.SetControlMode(ctx, tx, deviceID, userID, "temp", "manual")
+		if !errors.Is(err, sensors.ErrNotAnActuator) {
+			t.Errorf("expected ErrNotAnActuator, got %v", err)
+		}
+	})
+
+	t.Run("set control mode on unknown peripheral returns ErrPeripheralNotFound", func(t *testing.T) {
+		tx, err := db.BeginTx(ctx, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer tx.Rollback()
+
+		_, err = store.SetControlMode(ctx, tx, deviceID, userID, "ghost", "manual")
 		if !errors.Is(err, sensors.ErrPeripheralNotFound) {
 			t.Errorf("expected ErrPeripheralNotFound, got %v", err)
 		}
@@ -179,7 +264,7 @@ func TestPeripheralStore_integration(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		p, err := store.CreatePeripheral(ctx, tx, deviceID, userID, "light", "relay", 5)
+		p, err := store.CreatePeripheral(ctx, tx, deviceID, userID, "light", "relay", "actuator", 5)
 		if err != nil {
 			tx.Rollback()
 			t.Fatalf("re-create after delete: %v", err)

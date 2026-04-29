@@ -7,14 +7,16 @@ import (
 )
 
 type Peripheral struct {
-	ID        string
-	DeviceID  string
-	Name      string
-	Kind      string
-	Pin       int
-	Schedule  []ScheduleWindow
-	CreatedAt time.Time
-	UpdatedAt time.Time
+	ID          string
+	DeviceID    string
+	Name        string
+	Kind        string
+	Pin         int
+	Category    string  // "sensor" | "actuator"
+	ControlMode *string // nil for sensors; "automatic"|"manual" for actuators
+	Schedule    []ScheduleWindow
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
 }
 
 type ScheduleWindow struct {
@@ -24,6 +26,7 @@ type ScheduleWindow struct {
 	Days  []int   `json:"days,omitempty"`
 }
 
+var ErrNotAnActuator           = errors.New("peripheral is not an actuator")
 var ErrDeviceNotFound          = errors.New("device not found")
 var ErrCodeNotFound            = errors.New("provisioning code not found")
 var ErrCodeAlreadyUsed         = errors.New("provisioning code already used")

@@ -13,15 +13,18 @@ import (
 )
 
 func newPeripheral(name string) sensors.Peripheral {
+	mode := "automatic"
 	return sensors.Peripheral{
-		ID:        "pid-1",
-		DeviceID:  "dev-1",
-		Name:      name,
-		Kind:      "relay",
-		Pin:       5,
-		Schedule:  nil,
-		CreatedAt: time.Now(),
-		UpdatedAt: time.Now(),
+		ID:          "pid-1",
+		DeviceID:    "dev-1",
+		Name:        name,
+		Kind:        "relay",
+		Pin:         5,
+		Category:    "actuator",
+		ControlMode: &mode,
+		Schedule:    nil,
+		CreatedAt:   time.Now(),
+		UpdatedAt:   time.Now(),
 	}
 }
 
@@ -210,6 +213,102 @@ func TestCreatePeripheralHandler(t *testing.T) {
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, req)
 		assertErrorCode(t, rec, http.StatusNotFound, "device_not_found")
+	})
+}
+
+// ── SetControlModeHandler ─────────────────────────────────────────────────────
+
+func TestSetControlModeHandler(t *testing.T) {
+	t.Run("returns 200 with updated peripheral", func(t *testing.T) {
+		p := newPeripheral("light")
+		mode := "manual"
+		p.ControlMode = &mode
+		db := testutil.NewTestDB(t)
+		store := &stubPeripheralStore{controlModeP: p}
+		svc := sensors.NewPeripheralService(db, store, &stubOutboxStore{}, &stubPublisher{}, discardLogger)
+		h := &sensors.SetControlModeHandler{Service: svc}
+
+		req := withChiParams(
+			withClaims(httptest.NewRequest(http.MethodPatch, "/", strings.NewReader(`{"mode":"manual"}`)), "user-1"),
+			map[string]string{"id": "dev-1", "name": "light"},
+		)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+		}
+		var resp map[string]any
+		if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		if resp["control_mode"] != "manual" {
+			t.Errorf("expected control_mode=manual, got %v", resp["control_mode"])
+		}
+	})
+
+	t.Run("invalid mode returns 400", func(t *testing.T) {
+		svc := sensors.NewPeripheralService(nil, &stubPeripheralStore{}, &stubOutboxStore{}, &stubPublisher{}, discardLogger)
+		h := &sensors.SetControlModeHandler{Service: svc}
+
+		req := withChiParams(
+			withClaims(httptest.NewRequest(http.MethodPatch, "/", strings.NewReader(`{"mode":"unknown"}`)), "user-1"),
+			map[string]string{"id": "dev-1", "name": "light"},
+		)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		assertErrorCode(t, rec, http.StatusBadRequest, "invalid_request")
+	})
+
+	t.Run("missing mode returns 400", func(t *testing.T) {
+		svc := sensors.NewPeripheralService(nil, &stubPeripheralStore{}, &stubOutboxStore{}, &stubPublisher{}, discardLogger)
+		h := &sensors.SetControlModeHandler{Service: svc}
+
+		req := withChiParams(
+			withClaims(httptest.NewRequest(http.MethodPatch, "/", strings.NewReader(`{}`)), "user-1"),
+			map[string]string{"id": "dev-1", "name": "light"},
+		)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		assertErrorCode(t, rec, http.StatusBadRequest, "invalid_request")
+	})
+
+	t.Run("peripheral not found returns 404", func(t *testing.T) {
+		db := testutil.NewTestDB(t)
+		store := &stubPeripheralStore{controlModeErr: sensors.ErrPeripheralNotFound}
+		svc := sensors.NewPeripheralService(db, store, &stubOutboxStore{}, &stubPublisher{}, discardLogger)
+		h := &sensors.SetControlModeHandler{Service: svc}
+
+		req := withChiParams(
+			withClaims(httptest.NewRequest(http.MethodPatch, "/", strings.NewReader(`{"mode":"manual"}`)), "user-1"),
+			map[string]string{"id": "dev-1", "name": "ghost"},
+		)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		assertErrorCode(t, rec, http.StatusNotFound, "peripheral_not_found")
+	})
+
+	t.Run("sensor peripheral returns 422", func(t *testing.T) {
+		db := testutil.NewTestDB(t)
+		store := &stubPeripheralStore{controlModeErr: sensors.ErrNotAnActuator}
+		svc := sensors.NewPeripheralService(db, store, &stubOutboxStore{}, &stubPublisher{}, discardLogger)
+		h := &sensors.SetControlModeHandler{Service: svc}
+
+		req := withChiParams(
+			withClaims(httptest.NewRequest(http.MethodPatch, "/", strings.NewReader(`{"mode":"manual"}`)), "user-1"),
+			map[string]string{"id": "dev-1", "name": "temp"},
+		)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		assertErrorCode(t, rec, http.StatusUnprocessableEntity, "not_an_actuator")
+	})
+
+	t.Run("no auth returns 401", func(t *testing.T) {
+		svc := sensors.NewPeripheralService(nil, &stubPeripheralStore{}, &stubOutboxStore{}, &stubPublisher{}, discardLogger)
+		h := &sensors.SetControlModeHandler{Service: svc}
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest(http.MethodPatch, "/", strings.NewReader(`{"mode":"manual"}`)))
+		assertErrorCode(t, rec, http.StatusUnauthorized, "unauthorized")
 	})
 }
 
