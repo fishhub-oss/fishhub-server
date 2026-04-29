@@ -11,6 +11,22 @@ import (
 	"github.com/fishhub-oss/fishhub-server/internal/auth"
 )
 
+func assertErrorCode(t *testing.T, rec *httptest.ResponseRecorder, wantStatus int, wantCode string) {
+	t.Helper()
+	if rec.Code != wantStatus {
+		t.Fatalf("status: got %d, want %d", rec.Code, wantStatus)
+	}
+	var body struct {
+		Code string `json:"code"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
+		t.Fatalf("decode error body: %v", err)
+	}
+	if body.Code != wantCode {
+		t.Errorf("code: got %q, want %q", body.Code, wantCode)
+	}
+}
+
 type stubAuthService struct {
 	user           auth.User
 	upsertErr      error
@@ -78,9 +94,7 @@ func TestVerifyHandler(t *testing.T) {
 		req := httptest.NewRequest(http.MethodPost, "/auth/verify", bytes.NewReader(body))
 		w := httptest.NewRecorder()
 		h.ServeHTTP(w, req)
-		if w.Code != http.StatusBadRequest {
-			t.Errorf("expected 400, got %d", w.Code)
-		}
+		assertErrorCode(t, w, http.StatusBadRequest, "invalid_request")
 	})
 
 	t.Run("missing provider returns 400", func(t *testing.T) {
@@ -89,9 +103,7 @@ func TestVerifyHandler(t *testing.T) {
 		req := httptest.NewRequest(http.MethodPost, "/auth/verify", bytes.NewReader(body))
 		w := httptest.NewRecorder()
 		h.ServeHTTP(w, req)
-		if w.Code != http.StatusBadRequest {
-			t.Errorf("expected 400, got %d", w.Code)
-		}
+		assertErrorCode(t, w, http.StatusBadRequest, "invalid_request")
 	})
 
 	t.Run("unsupported provider returns 422", func(t *testing.T) {
@@ -100,9 +112,7 @@ func TestVerifyHandler(t *testing.T) {
 		req := httptest.NewRequest(http.MethodPost, "/auth/verify", bytes.NewReader(body))
 		w := httptest.NewRecorder()
 		h.ServeHTTP(w, req)
-		if w.Code != http.StatusUnprocessableEntity {
-			t.Errorf("expected 422, got %d", w.Code)
-		}
+		assertErrorCode(t, w, http.StatusUnprocessableEntity, "invalid_request")
 	})
 
 	t.Run("invalid id token returns 401", func(t *testing.T) {
@@ -111,9 +121,7 @@ func TestVerifyHandler(t *testing.T) {
 		req := httptest.NewRequest(http.MethodPost, "/auth/verify", bytes.NewReader(body))
 		w := httptest.NewRecorder()
 		h.ServeHTTP(w, req)
-		if w.Code != http.StatusUnauthorized {
-			t.Errorf("expected 401, got %d", w.Code)
-		}
+		assertErrorCode(t, w, http.StatusUnauthorized, "unauthorized")
 	})
 
 	t.Run("malformed JSON returns 400", func(t *testing.T) {
@@ -121,9 +129,7 @@ func TestVerifyHandler(t *testing.T) {
 		req := httptest.NewRequest(http.MethodPost, "/auth/verify", bytes.NewReader([]byte("not json")))
 		w := httptest.NewRecorder()
 		h.ServeHTTP(w, req)
-		if w.Code != http.StatusBadRequest {
-			t.Errorf("expected 400, got %d", w.Code)
-		}
+		assertErrorCode(t, w, http.StatusBadRequest, "invalid_request")
 	})
 }
 
@@ -157,9 +163,7 @@ func TestRefreshHandler(t *testing.T) {
 		req := httptest.NewRequest(http.MethodPost, "/auth/refresh", bytes.NewReader(body))
 		w := httptest.NewRecorder()
 		h.ServeHTTP(w, req)
-		if w.Code != http.StatusBadRequest {
-			t.Errorf("expected 400, got %d", w.Code)
-		}
+		assertErrorCode(t, w, http.StatusBadRequest, "invalid_request")
 	})
 
 	t.Run("malformed JSON returns 400", func(t *testing.T) {
@@ -167,9 +171,7 @@ func TestRefreshHandler(t *testing.T) {
 		req := httptest.NewRequest(http.MethodPost, "/auth/refresh", bytes.NewReader([]byte("not json")))
 		w := httptest.NewRecorder()
 		h.ServeHTTP(w, req)
-		if w.Code != http.StatusBadRequest {
-			t.Errorf("expected 400, got %d", w.Code)
-		}
+		assertErrorCode(t, w, http.StatusBadRequest, "invalid_request")
 	})
 
 	for _, tc := range []struct {
@@ -186,9 +188,7 @@ func TestRefreshHandler(t *testing.T) {
 			req := httptest.NewRequest(http.MethodPost, "/auth/refresh", bytes.NewReader(body))
 			w := httptest.NewRecorder()
 			h.ServeHTTP(w, req)
-			if w.Code != http.StatusUnauthorized {
-				t.Errorf("expected 401, got %d", w.Code)
-			}
+			assertErrorCode(t, w, http.StatusUnauthorized, "unauthorized")
 		})
 	}
 }
