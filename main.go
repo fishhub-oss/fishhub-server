@@ -285,7 +285,7 @@ func main() {
 		r.Get("/api/devices/{id}/peripherals", (&sensors.ListPeripheralsHandler{Service: peripheralSvc}).ServeHTTP)
 		r.Put("/api/devices/{id}/peripherals/{name}/schedule", (&sensors.SetPeripheralScheduleHandler{Service: peripheralSvc}).ServeHTTP)
 		r.Delete("/api/devices/{id}/peripherals/{name}", (&sensors.DeletePeripheralHandler{Service: peripheralSvc}).ServeHTTP)
-		r.Patch("/api/devices/{id}/peripherals/{name}/control-mode", (&sensors.SetControlModeHandler{Service: peripheralSvc}).ServeHTTP)
+		r.Patch("/api/devices/{id}/peripherals/{name}/control_mode", (&sensors.SetControlModeHandler{Service: peripheralSvc}).ServeHTTP)
 		r.Post("/api/devices/{id}/peripherals/{name}/commands", (&sensors.CommandHandler{Service: deviceSvc}).ServeHTTP)
 	})
 
