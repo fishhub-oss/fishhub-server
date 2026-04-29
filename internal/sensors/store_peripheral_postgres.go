@@ -39,7 +39,13 @@ func (s *postgresPeripheralStore) CreatePeripheral(ctx context.Context, tx *sql.
 		&p.ID, &p.DeviceID, &p.Name, &p.Kind, &p.Pin, &p.CreatedAt, &p.UpdatedAt,
 	)
 	if err != nil {
-		if isUniqueViolation(err) {
+		switch uniqueViolationIndex(err) {
+		case "peripherals_device_name_active_idx":
+			return Peripheral{}, ErrPeripheralAlreadyExists
+		case "peripherals_device_pin_active_idx":
+			return Peripheral{}, ErrPeripheralPinInUse
+		case "":
+		default:
 			return Peripheral{}, ErrPeripheralAlreadyExists
 		}
 		return Peripheral{}, fmt.Errorf("create peripheral: insert: %w", err)
@@ -138,6 +144,26 @@ func (s *postgresPeripheralStore) DeletePeripheral(ctx context.Context, tx *sql.
 	return nil
 }
 
-func isUniqueViolation(err error) bool {
-	return err != nil && strings.Contains(err.Error(), "23505")
+// uniqueViolationIndex returns the index name from a Postgres unique-violation
+// error (SQLSTATE 23505), or "" if the error is not a unique violation.
+func uniqueViolationIndex(err error) string {
+	if err == nil {
+		return ""
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "23505") {
+		return ""
+	}
+	// pq error messages include the constraint name after "unique constraint"
+	const marker = `unique constraint "`
+	idx := strings.Index(msg, marker)
+	if idx < 0 {
+		return "unknown"
+	}
+	rest := msg[idx+len(marker):]
+	end := strings.Index(rest, `"`)
+	if end < 0 {
+		return "unknown"
+	}
+	return rest[:end]
 }

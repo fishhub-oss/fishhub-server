@@ -430,6 +430,10 @@ func (h *CreatePeripheralHandler) ServeHTTP(w http.ResponseWriter, r *http.Reque
 			http.Error(w, "peripheral already exists", http.StatusConflict)
 			return
 		}
+		if errors.Is(err, ErrPeripheralPinInUse) {
+			http.Error(w, "pin already in use by another peripheral", http.StatusConflict)
+			return
+		}
 		http.Error(w, "internal server error", http.StatusInternalServerError)
 		return
 	}
