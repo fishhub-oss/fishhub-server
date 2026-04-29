@@ -199,8 +199,11 @@ func (s *postgresPeripheralStore) SetControlMode(ctx context.Context, tx *sql.Tx
 	return p, nil
 }
 
-func (s *postgresPeripheralStore) DeletePeripheral(ctx context.Context, tx *sql.Tx, deviceID, userID, name string) error {
-	result, err := tx.ExecContext(ctx, `
+func (s *postgresPeripheralStore) DeletePeripheral(ctx context.Context, tx *sql.Tx, deviceID, userID, name string) (Peripheral, error) {
+	var p Peripheral
+	var controlMode sql.NullString
+	var schedule []byte
+	err := tx.QueryRowContext(ctx, `
 		UPDATE peripherals p
 		SET deleted_at = now()
 		FROM devices d
@@ -210,18 +213,24 @@ func (s *postgresPeripheralStore) DeletePeripheral(ctx context.Context, tx *sql.
 		  AND p.name = $3
 		  AND p.deleted_at IS NULL
 		  AND d.deleted_at IS NULL
-	`, userID, deviceID, name)
+		RETURNING p.id, p.device_id, p.name, p.kind, p.pin, p.category, p.control_mode, p.schedule, p.created_at, p.updated_at
+	`, userID, deviceID, name).Scan(
+		&p.ID, &p.DeviceID, &p.Name, &p.Kind, &p.Pin,
+		&p.Category, &controlMode, &schedule, &p.CreatedAt, &p.UpdatedAt,
+	)
+	if err == sql.ErrNoRows {
+		return Peripheral{}, ErrPeripheralNotFound
+	}
 	if err != nil {
-		return fmt.Errorf("delete peripheral: %w", err)
+		return Peripheral{}, fmt.Errorf("delete peripheral: %w", err)
 	}
-	n, err := result.RowsAffected()
-	if err != nil {
-		return fmt.Errorf("delete peripheral: rows affected: %w", err)
+	if controlMode.Valid {
+		p.ControlMode = &controlMode.String
 	}
-	if n == 0 {
-		return ErrPeripheralNotFound
+	if err := json.Unmarshal(schedule, &p.Schedule); err != nil {
+		p.Schedule = []ScheduleWindow{}
 	}
-	return nil
+	return p, nil
 }
 
 // uniqueViolationIndex returns the index name from a Postgres unique-violation

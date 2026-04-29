@@ -227,8 +227,12 @@ func TestPeripheralStore_integration(t *testing.T) {
 		}
 		defer tx.Rollback()
 
-		if err := store.DeletePeripheral(ctx, tx, deviceID, userID, "light"); err != nil {
+		deleted, err := store.DeletePeripheral(ctx, tx, deviceID, userID, "light")
+		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
+		}
+		if deleted.Kind != "relay" || deleted.Pin != 5 {
+			t.Errorf("expected kind=relay pin=5, got kind=%s pin=%d", deleted.Kind, deleted.Pin)
 		}
 		if err := tx.Commit(); err != nil {
 			t.Fatal(err)
@@ -253,7 +257,7 @@ func TestPeripheralStore_integration(t *testing.T) {
 		}
 		defer tx.Rollback()
 
-		err = store.DeletePeripheral(ctx, tx, deviceID, userID, "ghost")
+		_, err = store.DeletePeripheral(ctx, tx, deviceID, userID, "ghost")
 		if !errors.Is(err, sensors.ErrPeripheralNotFound) {
 			t.Errorf("expected ErrPeripheralNotFound, got %v", err)
 		}

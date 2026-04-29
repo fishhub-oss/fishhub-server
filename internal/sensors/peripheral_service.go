@@ -59,7 +59,7 @@ func (s *PeripheralService) Register(ctx context.Context, deviceID, userID, name
 
 	if err := s.outbox.Insert(ctx, tx, EventTypePeripheralPush, PeripheralPushPayload{
 		DeviceID: deviceID,
-		Name:     name,
+		Name:     fmt.Sprintf("%s-%d", kind, pin),
 		Op:       "create",
 		Kind:     kind,
 		Pin:      pin,
@@ -162,7 +162,8 @@ func (s *PeripheralService) Delete(ctx context.Context, deviceID, userID, name s
 	}
 	defer tx.Rollback()
 
-	if err := s.store.DeletePeripheral(ctx, tx, deviceID, userID, name); err != nil {
+	deleted, err := s.store.DeletePeripheral(ctx, tx, deviceID, userID, name)
+	if err != nil {
 		if !errors.Is(err, ErrPeripheralNotFound) {
 			s.logger.Error("delete peripheral: store", "device_id", deviceID, "name", name, "error", err)
 		}
@@ -171,7 +172,7 @@ func (s *PeripheralService) Delete(ctx context.Context, deviceID, userID, name s
 
 	if err := s.outbox.Insert(ctx, tx, EventTypePeripheralPush, PeripheralPushPayload{
 		DeviceID: deviceID,
-		Name:     name,
+		Name:     fmt.Sprintf("%s-%d", deleted.Kind, deleted.Pin),
 		Op:       "delete",
 	}, peripheralPushClaimTimeoutSeconds); err != nil {
 		s.logger.Error("delete peripheral: enqueue push", "device_id", deviceID, "name", name, "error", err)

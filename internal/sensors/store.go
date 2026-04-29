@@ -57,9 +57,9 @@ type PeripheralStore interface {
 	// Returns ErrPeripheralNotFound if the peripheral does not exist or is not reachable by userID.
 	// Returns ErrNotAnActuator if the peripheral's category is not "actuator".
 	SetControlMode(ctx context.Context, tx *sql.Tx, deviceID, userID, name, mode string) (Peripheral, error)
-	// DeletePeripheral soft-deletes the peripheral (sets deleted_at).
+	// DeletePeripheral soft-deletes the peripheral (sets deleted_at) and returns it.
 	// Returns ErrPeripheralNotFound if the peripheral does not exist or is not reachable by userID.
-	DeletePeripheral(ctx context.Context, tx *sql.Tx, deviceID, userID, name string) error
+	DeletePeripheral(ctx context.Context, tx *sql.Tx, deviceID, userID, name string) (Peripheral, error)
 }
 
 type ProvisioningStore interface {

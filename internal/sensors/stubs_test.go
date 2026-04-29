@@ -213,8 +213,8 @@ func (s *stubPeripheralStore) SetPeripheralSchedule(_ context.Context, _, _, _ s
 func (s *stubPeripheralStore) SetControlMode(_ context.Context, _ *sql.Tx, _, _, _, _ string) (sensors.Peripheral, error) {
 	return s.controlModeP, s.controlModeErr
 }
-func (s *stubPeripheralStore) DeletePeripheral(_ context.Context, _ *sql.Tx, _, _, _ string) error {
-	return s.deleteErr
+func (s *stubPeripheralStore) DeletePeripheral(_ context.Context, _ *sql.Tx, _, _, _ string) (sensors.Peripheral, error) {
+	return s.created, s.deleteErr
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
