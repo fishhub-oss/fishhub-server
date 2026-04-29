@@ -190,16 +190,18 @@ func (s *stubActivationStatusStore) GetActivationStatus(_ context.Context, _ str
 // ── PeripheralStore ───────────────────────────────────────────────────────────
 
 type stubPeripheralStore struct {
-	created    sensors.Peripheral
-	createErr  error
-	listed     []sensors.Peripheral
-	listErr    error
-	scheduled  sensors.Peripheral
-	schedErr   error
-	deleteErr  error
+	created          sensors.Peripheral
+	createErr        error
+	listed           []sensors.Peripheral
+	listErr          error
+	scheduled        sensors.Peripheral
+	schedErr         error
+	controlModeP     sensors.Peripheral
+	controlModeErr   error
+	deleteErr        error
 }
 
-func (s *stubPeripheralStore) CreatePeripheral(_ context.Context, _ *sql.Tx, _, _, _, _ string, _ int) (sensors.Peripheral, error) {
+func (s *stubPeripheralStore) CreatePeripheral(_ context.Context, _ *sql.Tx, _, _, _, _, _ string, _ int) (sensors.Peripheral, error) {
 	return s.created, s.createErr
 }
 func (s *stubPeripheralStore) ListPeripherals(_ context.Context, _, _ string) ([]sensors.Peripheral, error) {
@@ -207,6 +209,9 @@ func (s *stubPeripheralStore) ListPeripherals(_ context.Context, _, _ string) ([
 }
 func (s *stubPeripheralStore) SetPeripheralSchedule(_ context.Context, _, _, _ string, _ []sensors.ScheduleWindow) (sensors.Peripheral, error) {
 	return s.scheduled, s.schedErr
+}
+func (s *stubPeripheralStore) SetControlMode(_ context.Context, _ *sql.Tx, _, _, _, _ string) (sensors.Peripheral, error) {
+	return s.controlModeP, s.controlModeErr
 }
 func (s *stubPeripheralStore) DeletePeripheral(_ context.Context, _ *sql.Tx, _, _, _ string) error {
 	return s.deleteErr
