@@ -45,45 +45,6 @@ Health check. No authentication required.
 
 ---
 
-## POST /readings
-
-> **Deprecated:** devices should publish readings via MQTT to `fishhub/{device_id}/readings` instead (see fishhub-oss/fishhub-firmware#46). This endpoint remains functional as a fallback.
-
-Accepts a SenML reading from an authenticated device.
-
-**Headers**
-```
-Authorization: Bearer <device-jwt>
-Content-Type: application/json
-```
-
-**Request body** — SenML JSON (RFC 8428)
-```json
-[{
-  "bn": "fishhub/device/",
-  "bt": 1713000000,
-  "e": [{"n": "temperature", "u": "Cel", "v": 23.4}]
-}]
-```
-
-| Field | Type | Description |
-|---|---|---|
-| `bn` | string | Base name |
-| `bt` | int64 | Base time — Unix UTC timestamp of the reading |
-| `e[*].n` | string | Measurement name (e.g. `"temperature"`) |
-| `e[*].u` | string | Unit (e.g. `"Cel"`) |
-| `e[*].v` | float | Measurement value |
-
-**Response `201`** — `{}`
-
-**Response `400`** — malformed JSON, missing `bt`, or empty entries
-
-**Response `401`** — missing or invalid device JWT
-
-**Response `500`** — InfluxDB write failure
-
----
-
 ## POST /auth/verify
 
 Verifies a Google OIDC ID token and issues a session JWT + refresh token. Called by the web frontend after the OAuth callback.
