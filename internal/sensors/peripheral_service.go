@@ -10,6 +10,7 @@ import (
 
 	"github.com/fishhub-oss/fishhub-server/internal/mqtt"
 	"github.com/fishhub-oss/fishhub-server/internal/outbox"
+	"github.com/google/uuid"
 )
 
 // PeripheralService orchestrates peripheral registration, listing, schedule updates, and deletion.
@@ -96,6 +97,7 @@ func (s *PeripheralService) SetSchedule(ctx context.Context, deviceID, userID, n
 	}
 
 	msg, err := json.Marshal(map[string]any{
+		"id":      uuid.NewString(),
 		"action":  "schedule",
 		"windows": schedule,
 	})
@@ -130,6 +132,7 @@ func (s *PeripheralService) SetControlMode(ctx context.Context, deviceID, userID
 	}
 
 	msg, err := json.Marshal(map[string]any{
+		"id":     uuid.NewString(),
 		"action": "set_mode",
 		"mode":   mode,
 	})
