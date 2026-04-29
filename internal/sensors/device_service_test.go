@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/fishhub-oss/fishhub-server/internal/sensors"
+	"github.com/fishhub-oss/fishhub-server/internal/testutil"
 )
 
 func TestDeviceService_Delete_HappyPath(t *testing.T) {
@@ -32,38 +33,46 @@ func TestDeviceService_Delete_HiveMQErrorIsLogged(t *testing.T) {
 	}
 }
 
-func TestDeviceService_SendCommand_HappyPath(t *testing.T) {
+func newPeripheralSvcForCommand(t *testing.T, pStore *stubPeripheralStore, pub *stubPublisher) *sensors.PeripheralService {
+	t.Helper()
+	return sensors.NewPeripheralService(testutil.NewTestDB(t), pStore, &stubOutboxStore{}, pub, discardLogger)
+}
+
+func TestPeripheralService_SendCommand_HappyPath(t *testing.T) {
 	pub := &stubPublisher{}
-	svc := sensors.NewDeviceService(&stubDeviceStore{}, &stubHiveMQClient{}, pub, discardLogger)
-	body := []byte(`{"action":"set","state":true}`)
-	if err := svc.SendCommand(context.Background(), "dev-1", "usr-1", "light", body); err != nil {
+	relay := sensors.Peripheral{ID: "p-1", DeviceID: "dev-1", Kind: "relay", Pin: 5}
+	svc := newPeripheralSvcForCommand(t, &stubPeripheralStore{created: relay}, pub)
+	body := []byte(`{"action":"set","value":1}`)
+	if err := svc.SendCommand(context.Background(), "dev-1", "usr-1", "p-1", body); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if pub.publishedTopic != "fishhub/dev-1/commands/light" {
+	if pub.publishedTopic != "fishhub/dev-1/commands/relay-5" {
 		t.Errorf("topic: got %q", pub.publishedTopic)
 	}
 }
 
-func TestDeviceService_SendCommand_NotFound(t *testing.T) {
-	svc := sensors.NewDeviceService(&stubDeviceStore{findErr: sensors.ErrDeviceNotFound}, &stubHiveMQClient{}, &stubPublisher{}, discardLogger)
-	err := svc.SendCommand(context.Background(), "dev-1", "usr-1", "light", []byte(`{"action":"set"}`))
-	if !errors.Is(err, sensors.ErrDeviceNotFound) {
-		t.Errorf("expected ErrDeviceNotFound, got %v", err)
+func TestPeripheralService_SendCommand_NotFound(t *testing.T) {
+	svc := newPeripheralSvcForCommand(t, &stubPeripheralStore{createErr: sensors.ErrPeripheralNotFound}, &stubPublisher{})
+	err := svc.SendCommand(context.Background(), "dev-1", "usr-1", "p-1", []byte(`{"action":"set","value":1}`))
+	if !errors.Is(err, sensors.ErrPeripheralNotFound) {
+		t.Errorf("expected ErrPeripheralNotFound, got %v", err)
 	}
 }
 
-func TestDeviceService_SendCommand_InvalidAction(t *testing.T) {
-	svc := sensors.NewDeviceService(&stubDeviceStore{}, &stubHiveMQClient{}, &stubPublisher{}, discardLogger)
-	err := svc.SendCommand(context.Background(), "dev-1", "usr-1", "light", []byte(`{"action":"delete"}`))
+func TestPeripheralService_SendCommand_InvalidAction(t *testing.T) {
+	relay := sensors.Peripheral{ID: "p-1", DeviceID: "dev-1", Kind: "relay", Pin: 5}
+	svc := newPeripheralSvcForCommand(t, &stubPeripheralStore{created: relay}, &stubPublisher{})
+	err := svc.SendCommand(context.Background(), "dev-1", "usr-1", "p-1", []byte(`{"action":"delete"}`))
 	if !errors.Is(err, sensors.ErrInvalidCommand) {
 		t.Errorf("expected ErrInvalidCommand, got %v", err)
 	}
 }
 
-func TestDeviceService_SendCommand_PublishError(t *testing.T) {
+func TestPeripheralService_SendCommand_PublishError(t *testing.T) {
 	publishErr := errors.New("broker unreachable")
-	svc := sensors.NewDeviceService(&stubDeviceStore{}, &stubHiveMQClient{}, &stubPublisher{err: publishErr}, discardLogger)
-	err := svc.SendCommand(context.Background(), "dev-1", "usr-1", "light", []byte(`{"action":"set"}`))
+	relay := sensors.Peripheral{ID: "p-1", DeviceID: "dev-1", Kind: "relay", Pin: 5}
+	svc := newPeripheralSvcForCommand(t, &stubPeripheralStore{created: relay}, &stubPublisher{err: publishErr})
+	err := svc.SendCommand(context.Background(), "dev-1", "usr-1", "p-1", []byte(`{"action":"set","value":1}`))
 	if !errors.Is(err, publishErr) {
 		t.Errorf("expected wrapped publishErr, got %v", err)
 	}

@@ -207,6 +207,9 @@ func (s *stubPeripheralStore) CreatePeripheral(_ context.Context, _ *sql.Tx, _, 
 func (s *stubPeripheralStore) ListPeripherals(_ context.Context, _, _ string) ([]sensors.Peripheral, error) {
 	return s.listed, s.listErr
 }
+func (s *stubPeripheralStore) GetPeripheral(_ context.Context, _, _, _ string) (sensors.Peripheral, error) {
+	return s.created, s.createErr
+}
 func (s *stubPeripheralStore) SetPeripheralSchedule(_ context.Context, _, _, _ string, _ []sensors.ScheduleWindow) (sensors.Peripheral, error) {
 	return s.scheduled, s.schedErr
 }
