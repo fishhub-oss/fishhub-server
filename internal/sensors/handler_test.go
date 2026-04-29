@@ -599,25 +599,28 @@ func TestActivationStatusHandler(t *testing.T) {
 
 // ── CommandHandler ────────────────────────────────────────────────────────────
 
-func newCommandHandler(store *stubDeviceStore, pub *stubPublisher) *sensors.CommandHandler {
+func newCommandHandler(t *testing.T, pStore *stubPeripheralStore, pub *stubPublisher) *sensors.CommandHandler {
+	t.Helper()
 	return &sensors.CommandHandler{
-		Service: sensors.NewDeviceService(store, &stubHiveMQClient{}, pub, discardLogger),
+		Service: sensors.NewPeripheralService(testutil.NewTestDB(t), pStore, &stubOutboxStore{}, pub, discardLogger),
 	}
 }
 
 func TestCommandHandler(t *testing.T) {
-	const body = `{"action":"set","state":true,"id":"cmd-1"}`
+	const body = `{"action":"set","id":"cmd-1","value":1}`
+
+	relay := sensors.Peripheral{ID: "p-1", DeviceID: "dev-1", Kind: "relay", Pin: 5, Category: "actuator"}
 
 	makeReq := func(body, userID string) *http.Request {
 		r := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
 		r = withClaims(r, userID)
-		r = withChiParams(r, map[string]string{"id": "dev-1", "name": "light"})
+		r = withChiParams(r, map[string]string{"id": "dev-1", "peripheralId": "p-1"})
 		return r
 	}
 
 	t.Run("204 on success", func(t *testing.T) {
 		pub := &stubPublisher{}
-		h := newCommandHandler(&stubDeviceStore{}, pub)
+		h := newCommandHandler(t, &stubPeripheralStore{created: relay}, pub)
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, makeReq(body, "user-1"))
 		if rec.Code != http.StatusNoContent {
@@ -628,22 +631,22 @@ func TestCommandHandler(t *testing.T) {
 		}
 	})
 
-	t.Run("404 when device not found", func(t *testing.T) {
-		h := newCommandHandler(&stubDeviceStore{findErr: sensors.ErrDeviceNotFound}, &stubPublisher{})
+	t.Run("404 when peripheral not found", func(t *testing.T) {
+		h := newCommandHandler(t, &stubPeripheralStore{createErr: sensors.ErrPeripheralNotFound}, &stubPublisher{})
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, makeReq(body, "user-1"))
-		assertErrorCode(t, rec, http.StatusNotFound, "device_not_found")
+		assertErrorCode(t, rec, http.StatusNotFound, "peripheral_not_found")
 	})
 
 	t.Run("400 on invalid action", func(t *testing.T) {
-		h := newCommandHandler(&stubDeviceStore{}, &stubPublisher{})
+		h := newCommandHandler(t, &stubPeripheralStore{created: relay}, &stubPublisher{})
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, makeReq(`{"action":"invalid"}`, "user-1"))
 		assertErrorCode(t, rec, http.StatusBadRequest, "invalid_request")
 	})
 
 	t.Run("500 on publisher error", func(t *testing.T) {
-		h := newCommandHandler(&stubDeviceStore{}, &stubPublisher{err: errors.New("broker down")})
+		h := newCommandHandler(t, &stubPeripheralStore{created: relay}, &stubPublisher{err: errors.New("broker down")})
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, makeReq(body, "user-1"))
 		assertErrorCode(t, rec, http.StatusInternalServerError, "internal_error")

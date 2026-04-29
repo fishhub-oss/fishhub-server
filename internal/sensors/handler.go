@@ -480,7 +480,7 @@ func (h *ListPeripheralsHandler) ServeHTTP(w http.ResponseWriter, r *http.Reques
 	render.JSON(w, r, resp)
 }
 
-// SetPeripheralScheduleHandler handles PUT /api/devices/{id}/peripherals/{name}/schedule (session auth).
+// SetPeripheralScheduleHandler handles PUT /api/devices/{id}/peripherals/{peripheralId}/schedule (session auth).
 type SetPeripheralScheduleHandler struct {
 	Service *PeripheralService
 }
@@ -499,8 +499,8 @@ func (h *SetPeripheralScheduleHandler) ServeHTTP(w http.ResponseWriter, r *http.
 	}
 
 	deviceID := chi.URLParam(r, "id")
-	name := chi.URLParam(r, "name")
-	p, err := h.Service.SetSchedule(r.Context(), deviceID, claims.UserID, name, schedule)
+	peripheralID := chi.URLParam(r, "peripheralId")
+	p, err := h.Service.SetSchedule(r.Context(), deviceID, claims.UserID, peripheralID, schedule)
 	if err != nil {
 		if errors.Is(err, ErrPeripheralNotFound) {
 			apierr.Write(w, http.StatusNotFound, "peripheral_not_found", "peripheral not found")
@@ -513,7 +513,7 @@ func (h *SetPeripheralScheduleHandler) ServeHTTP(w http.ResponseWriter, r *http.
 	render.JSON(w, r, peripheralResponse(p))
 }
 
-// DeletePeripheralHandler handles DELETE /api/devices/{id}/peripherals/{name} (session auth).
+// DeletePeripheralHandler handles DELETE /api/devices/{id}/peripherals/{peripheralId} (session auth).
 type DeletePeripheralHandler struct {
 	Service *PeripheralService
 }
@@ -526,8 +526,8 @@ func (h *DeletePeripheralHandler) ServeHTTP(w http.ResponseWriter, r *http.Reque
 	}
 
 	deviceID := chi.URLParam(r, "id")
-	name := chi.URLParam(r, "name")
-	if err := h.Service.Delete(r.Context(), deviceID, claims.UserID, name); err != nil {
+	peripheralID := chi.URLParam(r, "peripheralId")
+	if err := h.Service.Delete(r.Context(), deviceID, claims.UserID, peripheralID); err != nil {
 		if errors.Is(err, ErrPeripheralNotFound) {
 			apierr.Write(w, http.StatusNotFound, "peripheral_not_found", "peripheral not found")
 			return
@@ -539,7 +539,7 @@ func (h *DeletePeripheralHandler) ServeHTTP(w http.ResponseWriter, r *http.Reque
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// SetControlModeHandler handles PATCH /api/devices/{id}/peripherals/{name}/control-mode (session auth).
+// SetControlModeHandler handles PATCH /api/devices/{id}/peripherals/{peripheralId}/control-mode (session auth).
 type SetControlModeHandler struct {
 	Service *PeripheralService
 }
@@ -566,8 +566,8 @@ func (h *SetControlModeHandler) ServeHTTP(w http.ResponseWriter, r *http.Request
 	}
 
 	deviceID := chi.URLParam(r, "id")
-	name := chi.URLParam(r, "name")
-	p, err := h.Service.SetControlMode(r.Context(), deviceID, claims.UserID, name, req.Mode)
+	peripheralID := chi.URLParam(r, "peripheralId")
+	p, err := h.Service.SetControlMode(r.Context(), deviceID, claims.UserID, peripheralID, req.Mode)
 	if err != nil {
 		if errors.Is(err, ErrPeripheralNotFound) {
 			apierr.Write(w, http.StatusNotFound, "peripheral_not_found", "peripheral not found")
@@ -584,9 +584,9 @@ func (h *SetControlModeHandler) ServeHTTP(w http.ResponseWriter, r *http.Request
 	render.JSON(w, r, peripheralResponse(p))
 }
 
-// CommandHandler handles POST /api/devices/{id}/peripherals/{name}/commands (session auth).
+// CommandHandler handles POST /api/devices/{id}/peripherals/{peripheralId}/commands (session auth).
 type CommandHandler struct {
-	Service *DeviceService
+	Service *PeripheralService
 }
 
 func (h *CommandHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -597,7 +597,7 @@ func (h *CommandHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	deviceID := chi.URLParam(r, "id")
-	peripheralName := chi.URLParam(r, "name")
+	peripheralName := chi.URLParam(r, "peripheralId")
 
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
@@ -606,8 +606,8 @@ func (h *CommandHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.Service.SendCommand(r.Context(), deviceID, claims.UserID, peripheralName, body); err != nil {
-		if errors.Is(err, ErrDeviceNotFound) {
-			apierr.Write(w, http.StatusNotFound, "device_not_found", "device not found")
+		if errors.Is(err, ErrPeripheralNotFound) {
+			apierr.Write(w, http.StatusNotFound, "peripheral_not_found", "peripheral not found")
 			return
 		}
 		if errors.Is(err, ErrInvalidCommand) {

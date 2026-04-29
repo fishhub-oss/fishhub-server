@@ -101,7 +101,43 @@ func (s *postgresPeripheralStore) ListPeripherals(ctx context.Context, deviceID,
 	return peripherals, rows.Err()
 }
 
-func (s *postgresPeripheralStore) SetPeripheralSchedule(ctx context.Context, deviceID, userID, name string, schedule []ScheduleWindow) (Peripheral, error) {
+func (s *postgresPeripheralStore) GetPeripheral(ctx context.Context, deviceID, userID, peripheralID string) (Peripheral, error) {
+	var p Peripheral
+	var controlMode sql.NullString
+	var scheduleJSON []byte
+	err := s.db.QueryRowContext(ctx, `
+		SELECT p.id, p.device_id, p.name, p.kind, p.pin, p.category, p.control_mode,
+		       p.schedule, p.created_at, p.updated_at
+		FROM peripherals p
+		JOIN devices d ON d.id = p.device_id
+		WHERE p.device_id = $1
+		  AND d.user_id = $2
+		  AND p.id = $3
+		  AND p.deleted_at IS NULL
+		  AND d.deleted_at IS NULL
+	`, deviceID, userID, peripheralID).Scan(
+		&p.ID, &p.DeviceID, &p.Name, &p.Kind, &p.Pin,
+		&p.Category, &controlMode, &scheduleJSON,
+		&p.CreatedAt, &p.UpdatedAt,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Peripheral{}, ErrPeripheralNotFound
+	}
+	if err != nil {
+		return Peripheral{}, fmt.Errorf("get peripheral: %w", err)
+	}
+	if controlMode.Valid {
+		p.ControlMode = &controlMode.String
+	}
+	if scheduleJSON != nil {
+		if err := json.Unmarshal(scheduleJSON, &p.Schedule); err != nil {
+			return Peripheral{}, fmt.Errorf("get peripheral: unmarshal schedule: %w", err)
+		}
+	}
+	return p, nil
+}
+
+func (s *postgresPeripheralStore) SetPeripheralSchedule(ctx context.Context, deviceID, userID, peripheralID string, schedule []ScheduleWindow) (Peripheral, error) {
 	scheduleJSON, err := json.Marshal(schedule)
 	if err != nil {
 		return Peripheral{}, fmt.Errorf("set peripheral schedule: marshal: %w", err)
@@ -117,12 +153,12 @@ func (s *postgresPeripheralStore) SetPeripheralSchedule(ctx context.Context, dev
 		WHERE p.device_id = d.id
 		  AND d.user_id = $2
 		  AND p.device_id = $3
-		  AND p.name = $4
+		  AND p.id = $4
 		  AND p.deleted_at IS NULL
 		  AND d.deleted_at IS NULL
 		RETURNING p.id, p.device_id, p.name, p.kind, p.pin, p.category, p.control_mode,
 		          p.schedule, p.created_at, p.updated_at
-	`, scheduleJSON, userID, deviceID, name).Scan(
+	`, scheduleJSON, userID, deviceID, peripheralID).Scan(
 		&p.ID, &p.DeviceID, &p.Name, &p.Kind, &p.Pin,
 		&p.Category, &controlMode, &scheduleOut,
 		&p.CreatedAt, &p.UpdatedAt,
@@ -142,7 +178,7 @@ func (s *postgresPeripheralStore) SetPeripheralSchedule(ctx context.Context, dev
 	return p, nil
 }
 
-func (s *postgresPeripheralStore) SetControlMode(ctx context.Context, tx *sql.Tx, deviceID, userID, name, mode string) (Peripheral, error) {
+func (s *postgresPeripheralStore) SetControlMode(ctx context.Context, tx *sql.Tx, deviceID, userID, peripheralID, mode string) (Peripheral, error) {
 	var p Peripheral
 	var controlMode sql.NullString
 	var scheduleJSON []byte
@@ -153,13 +189,13 @@ func (s *postgresPeripheralStore) SetControlMode(ctx context.Context, tx *sql.Tx
 		WHERE p.device_id = d.id
 		  AND d.user_id = $2
 		  AND p.device_id = $3
-		  AND p.name = $4
+		  AND p.id = $4
 		  AND p.category = 'actuator'
 		  AND p.deleted_at IS NULL
 		  AND d.deleted_at IS NULL
 		RETURNING p.id, p.device_id, p.name, p.kind, p.pin, p.category, p.control_mode,
 		          p.schedule, p.created_at, p.updated_at
-	`, mode, userID, deviceID, name).Scan(
+	`, mode, userID, deviceID, peripheralID).Scan(
 		&p.ID, &p.DeviceID, &p.Name, &p.Kind, &p.Pin,
 		&p.Category, &controlMode, &scheduleJSON,
 		&p.CreatedAt, &p.UpdatedAt,
@@ -173,10 +209,10 @@ func (s *postgresPeripheralStore) SetControlMode(ctx context.Context, tx *sql.Tx
 			JOIN devices d ON d.id = p.device_id
 			WHERE p.device_id = $1
 			  AND d.user_id = $2
-			  AND p.name = $3
+			  AND p.id = $3
 			  AND p.deleted_at IS NULL
 			  AND d.deleted_at IS NULL
-		`, deviceID, userID, name).Scan(&category)
+		`, deviceID, userID, peripheralID).Scan(&category)
 		if errors.Is(lookupErr, sql.ErrNoRows) {
 			return Peripheral{}, ErrPeripheralNotFound
 		}
@@ -199,29 +235,38 @@ func (s *postgresPeripheralStore) SetControlMode(ctx context.Context, tx *sql.Tx
 	return p, nil
 }
 
-func (s *postgresPeripheralStore) DeletePeripheral(ctx context.Context, tx *sql.Tx, deviceID, userID, name string) error {
-	result, err := tx.ExecContext(ctx, `
+func (s *postgresPeripheralStore) DeletePeripheral(ctx context.Context, tx *sql.Tx, deviceID, userID, peripheralID string) (Peripheral, error) {
+	var p Peripheral
+	var controlMode sql.NullString
+	var schedule []byte
+	err := tx.QueryRowContext(ctx, `
 		UPDATE peripherals p
 		SET deleted_at = now()
 		FROM devices d
 		WHERE p.device_id = d.id
 		  AND d.user_id = $1
 		  AND p.device_id = $2
-		  AND p.name = $3
+		  AND p.id = $3
 		  AND p.deleted_at IS NULL
 		  AND d.deleted_at IS NULL
-	`, userID, deviceID, name)
+		RETURNING p.id, p.device_id, p.name, p.kind, p.pin, p.category, p.control_mode, p.schedule, p.created_at, p.updated_at
+	`, userID, deviceID, peripheralID).Scan(
+		&p.ID, &p.DeviceID, &p.Name, &p.Kind, &p.Pin,
+		&p.Category, &controlMode, &schedule, &p.CreatedAt, &p.UpdatedAt,
+	)
+	if err == sql.ErrNoRows {
+		return Peripheral{}, ErrPeripheralNotFound
+	}
 	if err != nil {
-		return fmt.Errorf("delete peripheral: %w", err)
+		return Peripheral{}, fmt.Errorf("delete peripheral: %w", err)
 	}
-	n, err := result.RowsAffected()
-	if err != nil {
-		return fmt.Errorf("delete peripheral: rows affected: %w", err)
+	if controlMode.Valid {
+		p.ControlMode = &controlMode.String
 	}
-	if n == 0 {
-		return ErrPeripheralNotFound
+	if err := json.Unmarshal(schedule, &p.Schedule); err != nil {
+		p.Schedule = []ScheduleWindow{}
 	}
-	return nil
+	return p, nil
 }
 
 // uniqueViolationIndex returns the index name from a Postgres unique-violation

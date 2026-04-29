@@ -1,6 +1,7 @@
 package sensors
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -59,7 +60,7 @@ func (s *PeripheralService) Register(ctx context.Context, deviceID, userID, name
 
 	if err := s.outbox.Insert(ctx, tx, EventTypePeripheralPush, PeripheralPushPayload{
 		DeviceID: deviceID,
-		Name:     name,
+		Name:     fmt.Sprintf("%s-%d", kind, pin),
 		Op:       "create",
 		Kind:     kind,
 		Pin:      pin,
@@ -87,11 +88,11 @@ func (s *PeripheralService) List(ctx context.Context, deviceID, userID string) (
 }
 
 // SetSchedule persists the schedule to DB and publishes it synchronously via MQTT.
-func (s *PeripheralService) SetSchedule(ctx context.Context, deviceID, userID, name string, schedule []ScheduleWindow) (Peripheral, error) {
-	p, err := s.store.SetPeripheralSchedule(ctx, deviceID, userID, name, schedule)
+func (s *PeripheralService) SetSchedule(ctx context.Context, deviceID, userID, peripheralID string, schedule []ScheduleWindow) (Peripheral, error) {
+	p, err := s.store.SetPeripheralSchedule(ctx, deviceID, userID, peripheralID, schedule)
 	if err != nil {
 		if !errors.Is(err, ErrPeripheralNotFound) {
-			s.logger.Error("set peripheral schedule: store", "device_id", deviceID, "name", name, "error", err)
+			s.logger.Error("set peripheral schedule: store", "device_id", deviceID, "peripheral_id", peripheralID, "error", err)
 		}
 		return Peripheral{}, err
 	}
@@ -102,13 +103,13 @@ func (s *PeripheralService) SetSchedule(ctx context.Context, deviceID, userID, n
 		"windows": schedule,
 	})
 	if err != nil {
-		s.logger.Error("set peripheral schedule: marshal mqtt payload", "device_id", deviceID, "name", name, "error", err)
+		s.logger.Error("set peripheral schedule: marshal mqtt payload", "device_id", deviceID, "peripheral_id", peripheralID, "error", err)
 		return p, nil
 	}
 
-	topic := fmt.Sprintf("fishhub/%s/commands/%s", deviceID, name)
+	topic := fmt.Sprintf("fishhub/%s/commands/%s-%d", deviceID, p.Kind, p.Pin)
 	if err := s.publisher.Publish(ctx, topic, msg); err != nil {
-		s.logger.Warn("set peripheral schedule: mqtt publish failed", "device_id", deviceID, "name", name, "error", err)
+		s.logger.Warn("set peripheral schedule: mqtt publish failed", "device_id", deviceID, "peripheral_id", peripheralID, "error", err)
 	}
 
 	return p, nil
@@ -116,17 +117,17 @@ func (s *PeripheralService) SetSchedule(ctx context.Context, deviceID, userID, n
 
 // SetControlMode updates control_mode for an actuator peripheral.
 // Publishes the set_mode MQTT command before committing — rolls back on publish failure.
-func (s *PeripheralService) SetControlMode(ctx context.Context, deviceID, userID, name, mode string) (Peripheral, error) {
+func (s *PeripheralService) SetControlMode(ctx context.Context, deviceID, userID, peripheralID, mode string) (Peripheral, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return Peripheral{}, fmt.Errorf("set control mode: begin tx: %w", err)
 	}
 	defer tx.Rollback()
 
-	p, err := s.store.SetControlMode(ctx, tx, deviceID, userID, name, mode)
+	p, err := s.store.SetControlMode(ctx, tx, deviceID, userID, peripheralID, mode)
 	if err != nil {
 		if !errors.Is(err, ErrPeripheralNotFound) && !errors.Is(err, ErrNotAnActuator) {
-			s.logger.Error("set control mode: store", "device_id", deviceID, "name", name, "error", err)
+			s.logger.Error("set control mode: store", "device_id", deviceID, "peripheral_id", peripheralID, "error", err)
 		}
 		return Peripheral{}, err
 	}
@@ -140,46 +141,74 @@ func (s *PeripheralService) SetControlMode(ctx context.Context, deviceID, userID
 		return Peripheral{}, fmt.Errorf("set control mode: marshal mqtt payload: %w", err)
 	}
 
-	topic := fmt.Sprintf("fishhub/%s/commands/%s", deviceID, name)
+	topic := fmt.Sprintf("fishhub/%s/commands/%s-%d", deviceID, p.Kind, p.Pin)
 	if err := s.publisher.Publish(ctx, topic, msg); err != nil {
-		s.logger.Error("set control mode: mqtt publish failed", "device_id", deviceID, "name", name, "error", err)
+		s.logger.Error("set control mode: mqtt publish failed", "device_id", deviceID, "peripheral_id", peripheralID, "error", err)
 		return Peripheral{}, fmt.Errorf("set control mode: mqtt publish: %w", err)
 	}
 
 	if err := tx.Commit(); err != nil {
-		s.logger.Error("set control mode: commit", "device_id", deviceID, "name", name, "error", err)
+		s.logger.Error("set control mode: commit", "device_id", deviceID, "peripheral_id", peripheralID, "error", err)
 		return Peripheral{}, fmt.Errorf("set control mode: commit: %w", err)
 	}
 
 	return p, nil
 }
 
+// SendCommand resolves the peripheral by ID to get its kind+pin, then publishes the raw
+// command payload to the device's MQTT topic using the kind-pin address.
+func (s *PeripheralService) SendCommand(ctx context.Context, deviceID, userID, peripheralID string, body []byte) error {
+	p, err := s.store.GetPeripheral(ctx, deviceID, userID, peripheralID)
+	if err != nil {
+		if !errors.Is(err, ErrPeripheralNotFound) {
+			s.logger.Error("send command: get peripheral", "device_id", deviceID, "peripheral_id", peripheralID, "error", err)
+		}
+		return err
+	}
+
+	var req struct {
+		Action string `json:"action"`
+	}
+	if err := json.NewDecoder(bytes.NewReader(body)).Decode(&req); err != nil ||
+		(req.Action != "set" && req.Action != "schedule") {
+		return ErrInvalidCommand
+	}
+
+	topic := fmt.Sprintf("fishhub/%s/commands/%s-%d", deviceID, p.Kind, p.Pin)
+	if err := s.publisher.Publish(ctx, topic, body); err != nil {
+		s.logger.Error("send command: mqtt publish", "device_id", deviceID, "peripheral_id", peripheralID, "error", err)
+		return fmt.Errorf("mqtt publish: %w", err)
+	}
+	return nil
+}
+
 // Delete soft-deletes the peripheral and enqueues a peripheral.push delete event atomically.
-func (s *PeripheralService) Delete(ctx context.Context, deviceID, userID, name string) error {
+func (s *PeripheralService) Delete(ctx context.Context, deviceID, userID, peripheralID string) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("delete peripheral: begin tx: %w", err)
 	}
 	defer tx.Rollback()
 
-	if err := s.store.DeletePeripheral(ctx, tx, deviceID, userID, name); err != nil {
+	deleted, err := s.store.DeletePeripheral(ctx, tx, deviceID, userID, peripheralID)
+	if err != nil {
 		if !errors.Is(err, ErrPeripheralNotFound) {
-			s.logger.Error("delete peripheral: store", "device_id", deviceID, "name", name, "error", err)
+			s.logger.Error("delete peripheral: store", "device_id", deviceID, "peripheral_id", peripheralID, "error", err)
 		}
 		return err
 	}
 
 	if err := s.outbox.Insert(ctx, tx, EventTypePeripheralPush, PeripheralPushPayload{
 		DeviceID: deviceID,
-		Name:     name,
+		Name:     fmt.Sprintf("%s-%d", deleted.Kind, deleted.Pin),
 		Op:       "delete",
 	}, peripheralPushClaimTimeoutSeconds); err != nil {
-		s.logger.Error("delete peripheral: enqueue push", "device_id", deviceID, "name", name, "error", err)
+		s.logger.Error("delete peripheral: enqueue push", "device_id", deviceID, "peripheral_id", peripheralID, "error", err)
 		return fmt.Errorf("delete peripheral: enqueue push: %w", err)
 	}
 
 	if err := tx.Commit(); err != nil {
-		s.logger.Error("delete peripheral: commit", "device_id", deviceID, "name", name, "error", err)
+		s.logger.Error("delete peripheral: commit", "device_id", deviceID, "peripheral_id", peripheralID, "error", err)
 		return fmt.Errorf("delete peripheral: commit: %w", err)
 	}
 

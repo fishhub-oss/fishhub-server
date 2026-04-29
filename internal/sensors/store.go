@@ -50,16 +50,19 @@ type PeripheralStore interface {
 	// ListPeripherals returns active (non-deleted) peripherals for the device owned by userID.
 	// Returns an empty slice if the device does not exist or is not owned by userID.
 	ListPeripherals(ctx context.Context, deviceID, userID string) ([]Peripheral, error)
+	// GetPeripheral returns a single active peripheral by ID, scoped to the device and user.
+	// Returns ErrPeripheralNotFound if it does not exist or is not reachable by userID.
+	GetPeripheral(ctx context.Context, deviceID, userID, peripheralID string) (Peripheral, error)
 	// SetPeripheralSchedule persists the schedule and returns the updated peripheral.
 	// Returns ErrPeripheralNotFound if the peripheral does not exist or is not reachable by userID.
-	SetPeripheralSchedule(ctx context.Context, deviceID, userID, name string, schedule []ScheduleWindow) (Peripheral, error)
+	SetPeripheralSchedule(ctx context.Context, deviceID, userID, peripheralID string, schedule []ScheduleWindow) (Peripheral, error)
 	// SetControlMode updates control_mode for an actuator peripheral within the provided transaction.
 	// Returns ErrPeripheralNotFound if the peripheral does not exist or is not reachable by userID.
 	// Returns ErrNotAnActuator if the peripheral's category is not "actuator".
-	SetControlMode(ctx context.Context, tx *sql.Tx, deviceID, userID, name, mode string) (Peripheral, error)
-	// DeletePeripheral soft-deletes the peripheral (sets deleted_at).
+	SetControlMode(ctx context.Context, tx *sql.Tx, deviceID, userID, peripheralID, mode string) (Peripheral, error)
+	// DeletePeripheral soft-deletes the peripheral (sets deleted_at) and returns it.
 	// Returns ErrPeripheralNotFound if the peripheral does not exist or is not reachable by userID.
-	DeletePeripheral(ctx context.Context, tx *sql.Tx, deviceID, userID, name string) error
+	DeletePeripheral(ctx context.Context, tx *sql.Tx, deviceID, userID, peripheralID string) (Peripheral, error)
 }
 
 type ProvisioningStore interface {
