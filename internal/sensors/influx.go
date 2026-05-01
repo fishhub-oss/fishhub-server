@@ -7,40 +7,13 @@ import (
 
 	influxdb3 "github.com/InfluxCommunity/influxdb3-go/v2/influxdb3"
 	"github.com/apache/arrow-go/v18/arrow"
+	"github.com/fishhub-oss/fishhub-server/internal/measurement"
 )
 
-type Reading struct {
-	DeviceID     string
-	UserID       string
-	Timestamp    time.Time
-	Measurements map[string]any
-}
-
-type ReadingQuery struct {
-	DeviceID     string
-	From         time.Time
-	To           time.Time
-	Window       string
-	Measurements []string
-}
-
-type ReadingPoint struct {
-	Timestamp time.Time
-	Values    map[string]any
-}
-
-type ReadingWriter interface {
-	WriteReading(ctx context.Context, r Reading) error
-}
-
-type ReadingQuerier interface {
-	QueryReadings(ctx context.Context, q ReadingQuery) ([]ReadingPoint, error)
-	QueryLastReadings(ctx context.Context, deviceID string) (*ReadingPoint, error)
-}
-
+// InfluxClient combines measurement.Writer and measurement.Querier.
 type InfluxClient interface {
-	ReadingWriter
-	ReadingQuerier
+	measurement.Writer
+	measurement.Querier
 }
 
 type influxDBClient struct {
@@ -60,12 +33,7 @@ func NewInfluxClient(host, token, database string) (InfluxClient, error) {
 	return &influxDBClient{client: client, database: database}, nil
 }
 
-// NewReadingWriter constructs a writer-only InfluxDB client (kept for backwards compat).
-func NewReadingWriter(host, token, database string) (ReadingWriter, error) {
-	return NewInfluxClient(host, token, database)
-}
-
-func (c *influxDBClient) WriteReading(ctx context.Context, r Reading) error {
+func (c *influxDBClient) WriteReading(ctx context.Context, r measurement.Reading) error {
 	tags := map[string]string{
 		"device_id": r.DeviceID,
 		"user_id":   r.UserID,
@@ -79,14 +47,14 @@ func (c *influxDBClient) WriteReading(ctx context.Context, r Reading) error {
 
 var reservedColumns = map[string]bool{"time": true, "device_id": true, "user_id": true}
 
-// QueryLastReadings returns a single ReadingPoint containing the last known non-null
+// QueryLastReadings returns a single Point containing the last known non-null
 // value for every field the device has ever written. Returns nil if the device has no data.
 //
 // Two-step approach required by InfluxDB 3's schema-on-write model:
-//   1. SELECT * LIMIT 1 to discover which field columns actually exist.
-//   2. LAST_VALUE(field IGNORE NULLS) OVER () to get the latest value per field
-//      independently (different peripherals write at different timestamps).
-func (c *influxDBClient) QueryLastReadings(ctx context.Context, deviceID string) (*ReadingPoint, error) {
+//  1. SELECT * LIMIT 1 to discover which field columns actually exist.
+//  2. LAST_VALUE(field IGNORE NULLS) OVER () to get the latest value per field
+//     independently (different peripherals write at different timestamps).
+func (c *influxDBClient) QueryLastReadings(ctx context.Context, deviceID string) (*measurement.Point, error) {
 	discoverSQL := fmt.Sprintf(
 		`SELECT * FROM sensors WHERE device_id = '%s' ORDER BY time DESC LIMIT 1`,
 		deviceID,
@@ -123,7 +91,7 @@ func (c *influxDBClient) QueryLastReadings(ctx context.Context, deviceID string)
 		return nil, fmt.Errorf("influx query last readings: %w", err)
 	}
 
-	p := &ReadingPoint{Values: make(map[string]any)}
+	p := &measurement.Point{Values: make(map[string]any)}
 	for iter2.Next() {
 		row := iter2.Value()
 		// MAX(time) OVER () returns arrow.Timestamp (nanoseconds), not time.Time.
@@ -159,7 +127,7 @@ func (c *influxDBClient) QueryLastReadings(ctx context.Context, deviceID string)
 	return p, nil
 }
 
-func (c *influxDBClient) QueryReadings(ctx context.Context, q ReadingQuery) ([]ReadingPoint, error) {
+func (c *influxDBClient) QueryReadings(ctx context.Context, q measurement.Query) ([]measurement.Point, error) {
 	// Always SELECT * — requesting specific columns fails if a field has never been
 	// written to InfluxDB yet. Filter to requested measurements in Go instead.
 	sql := fmt.Sprintf(
@@ -173,8 +141,6 @@ func (c *influxDBClient) QueryReadings(ctx context.Context, q ReadingQuery) ([]R
 		q.To.UTC().Format(time.RFC3339),
 	)
 
-	// Build a set of requested measurements for O(1) lookup.
-	// Empty set means return all fields.
 	wantAll := len(q.Measurements) == 0
 	want := make(map[string]bool, len(q.Measurements))
 	for _, m := range q.Measurements {
@@ -186,10 +152,10 @@ func (c *influxDBClient) QueryReadings(ctx context.Context, q ReadingQuery) ([]R
 		return nil, fmt.Errorf("influx query: %w", err)
 	}
 
-	var points []ReadingPoint
+	var points []measurement.Point
 	for iter.Next() {
 		row := iter.Value()
-		p := ReadingPoint{Values: make(map[string]any)}
+		p := measurement.Point{Values: make(map[string]any)}
 		if t, ok := row["time"].(time.Time); ok {
 			p.Timestamp = t.UTC()
 		}
