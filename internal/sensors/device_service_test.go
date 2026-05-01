@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/fishhub-oss/fishhub-server/internal/device"
 	"github.com/fishhub-oss/fishhub-server/internal/sensors"
 	"github.com/fishhub-oss/fishhub-server/internal/testutil"
 )
@@ -81,7 +82,7 @@ func TestPeripheralService_SendCommand_PublishError(t *testing.T) {
 // ── List tests ────────────────────────────────────────────────────────────────
 
 func TestDeviceService_List_HappyPath(t *testing.T) {
-	devices := []sensors.Device{
+	devices := []device.Device{
 		{ID: "dev-1", Name: "Tank", CreatedAt: time.Now()},
 	}
 	svc := sensors.NewDeviceService(&stubDeviceStore{listDevices: devices}, &stubHiveMQClient{}, &stubPublisher{}, discardLogger)
@@ -97,7 +98,7 @@ func TestDeviceService_List_HappyPath(t *testing.T) {
 // ── Patch tests ───────────────────────────────────────────────────────────────
 
 func TestDeviceService_Patch_HappyPath(t *testing.T) {
-	updated := sensors.Device{ID: "dev-1", Name: "Tank A", CreatedAt: time.Now()}
+	updated := device.Device{ID: "dev-1", Name: "Tank A", CreatedAt: time.Now()}
 	svc := sensors.NewDeviceService(&stubDeviceStore{patchDevice: updated}, &stubHiveMQClient{}, &stubPublisher{}, discardLogger)
 	got, err := svc.Patch(context.Background(), "dev-1", "usr-1", "Tank A")
 	if err != nil {

@@ -45,13 +45,13 @@ func (s *ReadingsService) Query(ctx context.Context, userID string, q ReadingQue
 
 // Write parses a SenML payload and writes the reading to InfluxDB.
 // If writer is nil the call is a no-op (InfluxDB not configured).
-func (s *ReadingsService) Write(ctx context.Context, device DeviceInfo, body []byte) error {
+func (s *ReadingsService) Write(ctx context.Context, deviceID, userID string, body []byte) error {
 	reading, err := senml.Parse(body)
 	if err != nil {
 		return err
 	}
 
-	s.logger.Info("reading received", "device_id", device.DeviceID, "bytes", len(body))
+	s.logger.Info("reading received", "device_id", deviceID, "bytes", len(body))
 
 	if s.writer == nil {
 		return nil
@@ -62,12 +62,12 @@ func (s *ReadingsService) Write(ctx context.Context, device DeviceInfo, body []b
 		fields[m.Name] = m.Value
 	}
 	if err := s.writer.WriteReading(ctx, Reading{
-		DeviceID:     device.DeviceID,
-		UserID:       device.UserID,
+		DeviceID:     deviceID,
+		UserID:       userID,
 		Timestamp:    time.Unix(reading.BaseTime, 0).UTC(),
 		Measurements: fields,
 	}); err != nil {
-		s.logger.Error("influx write", "device_id", device.DeviceID, "error", err)
+		s.logger.Error("influx write", "device_id", deviceID, "error", err)
 		return fmt.Errorf("%w: %w", ErrInfluxWrite, err)
 	}
 	return nil

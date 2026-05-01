@@ -11,13 +11,14 @@ import (
 	"time"
 
 	"github.com/fishhub-oss/fishhub-server/internal/auth"
+	"github.com/fishhub-oss/fishhub-server/internal/device"
 	"github.com/fishhub-oss/fishhub-server/internal/sensors"
 	"github.com/fishhub-oss/fishhub-server/internal/testutil"
 	"github.com/go-chi/chi/v5"
 )
 
-func withDevice(r *http.Request, info sensors.DeviceInfo) *http.Request {
-	ctx := context.WithValue(r.Context(), sensors.DeviceContextKey, info)
+func withDevice(r *http.Request, info device.Info) *http.Request {
+	ctx := context.WithValue(r.Context(), device.ContextKey, info)
 	return r.WithContext(ctx)
 }
 
@@ -173,7 +174,7 @@ func TestDevicesHandler_List(t *testing.T) {
 	}
 
 	t.Run("returns devices for user", func(t *testing.T) {
-		devices := []sensors.Device{newDevice("dev-1"), newDevice("dev-2")}
+		devices := []device.Device{newDevice("dev-1"), newDevice("dev-2")}
 		h := &sensors.DevicesHandler{Service: newSvc(&stubDeviceStore{listDevices: devices})}
 		req := withClaims(httptest.NewRequest(http.MethodGet, "/api/devices", nil), "usr-1")
 		rec := httptest.NewRecorder()
@@ -223,7 +224,7 @@ func TestPatchDeviceHandler(t *testing.T) {
 	}
 
 	t.Run("valid name returns 200 with updated device", func(t *testing.T) {
-		updated := sensors.Device{ID: "dev-1", Name: "Tank A", CreatedAt: ts}
+		updated := device.Device{ID: "dev-1", Name: "Tank A", CreatedAt: ts}
 		h := &sensors.PatchDeviceHandler{Service: newPatchSvc(&stubDeviceStore{patchDevice: updated})}
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, makeReq("dev-1", `{"name":"Tank A"}`))
@@ -416,7 +417,7 @@ func TestActivateHandler(t *testing.T) {
 // ── ActivationStatusHandler ──────────────────────────────────────────────────
 
 func TestActivationStatusHandler(t *testing.T) {
-	makeReq := func(deviceID string, info sensors.DeviceInfo) *http.Request {
+	makeReq := func(deviceID string, info device.Info) *http.Request {
 		req := httptest.NewRequest(http.MethodGet, "/devices/"+deviceID+"/status", nil)
 		req = withDevice(req, info)
 		req = withChiParam(req, "id", deviceID)
@@ -430,7 +431,7 @@ func TestActivationStatusHandler(t *testing.T) {
 			MQTTPort: 8883,
 		}
 		rec := httptest.NewRecorder()
-		h.ServeHTTP(rec, makeReq("dev-1", sensors.DeviceInfo{DeviceID: "dev-1", UserID: "usr-1"}))
+		h.ServeHTTP(rec, makeReq("dev-1", device.Info{DeviceID: "dev-1", UserID: "usr-1"}))
 		if rec.Code != http.StatusOK {
 			t.Fatalf("expected 200, got %d", rec.Code)
 		}
@@ -449,7 +450,7 @@ func TestActivationStatusHandler(t *testing.T) {
 	t.Run("ready returns 200 with credentials", func(t *testing.T) {
 		h := &sensors.ActivationStatusHandler{
 			Store: &stubActivationStatusStore{
-				status: sensors.ActivationStatus{
+				status: device.ActivationStatus{
 					Ready:        true,
 					MQTTUsername: "device-abc",
 					MQTTPassword: "secret-pass",
@@ -459,7 +460,7 @@ func TestActivationStatusHandler(t *testing.T) {
 			MQTTPort: 8883,
 		}
 		rec := httptest.NewRecorder()
-		h.ServeHTTP(rec, makeReq("dev-1", sensors.DeviceInfo{DeviceID: "dev-1", UserID: "usr-1"}))
+		h.ServeHTTP(rec, makeReq("dev-1", device.Info{DeviceID: "dev-1", UserID: "usr-1"}))
 		if rec.Code != http.StatusOK {
 			t.Fatalf("expected 200, got %d", rec.Code)
 		}
@@ -483,7 +484,7 @@ func TestActivationStatusHandler(t *testing.T) {
 			Store: &stubActivationStatusStore{err: sensors.ErrDeviceNotFound},
 		}
 		rec := httptest.NewRecorder()
-		h.ServeHTTP(rec, makeReq("dev-x", sensors.DeviceInfo{DeviceID: "dev-x", UserID: "usr-1"}))
+		h.ServeHTTP(rec, makeReq("dev-x", device.Info{DeviceID: "dev-x", UserID: "usr-1"}))
 		assertErrorCode(t, rec, http.StatusNotFound, "device_not_found")
 	})
 
@@ -491,7 +492,7 @@ func TestActivationStatusHandler(t *testing.T) {
 		h := &sensors.ActivationStatusHandler{Store: &stubDeviceStore{}}
 		rec := httptest.NewRecorder()
 		req := httptest.NewRequest(http.MethodGet, "/devices/dev-2/status", nil)
-		req = withDevice(req, sensors.DeviceInfo{DeviceID: "dev-1", UserID: "usr-1"})
+		req = withDevice(req, device.Info{DeviceID: "dev-1", UserID: "usr-1"})
 		req = withChiParam(req, "id", "dev-2")
 		h.ServeHTTP(rec, req)
 		assertErrorCode(t, rec, http.StatusForbidden, "forbidden")
