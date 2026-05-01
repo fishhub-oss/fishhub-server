@@ -34,6 +34,7 @@ type ReadingWriter interface {
 
 type ReadingQuerier interface {
 	QueryReadings(ctx context.Context, q ReadingQuery) ([]ReadingPoint, error)
+	QueryLastReadings(ctx context.Context, deviceID string) (*ReadingPoint, error)
 }
 
 type InfluxClient interface {
@@ -73,6 +74,83 @@ func (c *influxDBClient) WriteReading(ctx context.Context, r Reading) error {
 		return fmt.Errorf("influx write: %w", err)
 	}
 	return nil
+}
+
+var reservedColumns = map[string]bool{"time": true, "device_id": true, "user_id": true}
+
+// QueryLastReadings returns a single ReadingPoint containing the last known non-null
+// value for every field the device has ever written. Returns nil if the device has no data.
+//
+// Two-step approach required by InfluxDB 3's schema-on-write model:
+//   1. SELECT * LIMIT 1 to discover which field columns actually exist.
+//   2. LAST_VALUE(field IGNORE NULLS) OVER () to get the latest value per field
+//      independently (different peripherals write at different timestamps).
+func (c *influxDBClient) QueryLastReadings(ctx context.Context, deviceID string) (*ReadingPoint, error) {
+	discoverSQL := fmt.Sprintf(
+		`SELECT * FROM sensors WHERE device_id = '%s' ORDER BY time DESC LIMIT 1`,
+		deviceID,
+	)
+	iter, err := c.client.Query(ctx, discoverSQL)
+	if err != nil {
+		return nil, fmt.Errorf("influx query last readings (discover): %w", err)
+	}
+
+	var fields []string
+	for iter.Next() {
+		for k := range iter.Value() {
+			if !reservedColumns[k] {
+				fields = append(fields, k)
+			}
+		}
+		break
+	}
+	if len(fields) == 0 {
+		return nil, nil
+	}
+
+	selectCols := ""
+	for _, f := range fields {
+		selectCols += fmt.Sprintf(`, LAST_VALUE("%s" IGNORE NULLS) OVER () AS "%s"`, f, f)
+	}
+	lastSQL := fmt.Sprintf(
+		`SELECT MAX(time) OVER () AS time%s FROM sensors WHERE device_id = '%s' LIMIT 1`,
+		selectCols,
+		deviceID,
+	)
+	iter2, err := c.client.Query(ctx, lastSQL)
+	if err != nil {
+		return nil, fmt.Errorf("influx query last readings: %w", err)
+	}
+
+	p := &ReadingPoint{Values: make(map[string]any)}
+	for iter2.Next() {
+		row := iter2.Value()
+		if t, ok := row["time"].(time.Time); ok {
+			p.Timestamp = t.UTC()
+		}
+		for k, v := range row {
+			if reservedColumns[k] {
+				continue
+			}
+			switch val := v.(type) {
+			case float64:
+				p.Values[k] = val
+			case bool:
+				if val {
+					p.Values[k] = 1
+				} else {
+					p.Values[k] = 0
+				}
+			case string:
+				p.Values[k] = val
+			}
+		}
+		break
+	}
+	if len(p.Values) == 0 {
+		return nil, nil
+	}
+	return p, nil
 }
 
 func (c *influxDBClient) QueryReadings(ctx context.Context, q ReadingQuery) ([]ReadingPoint, error) {

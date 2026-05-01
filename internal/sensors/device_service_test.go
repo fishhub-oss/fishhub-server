@@ -35,7 +35,7 @@ func TestDeviceService_Delete_HiveMQErrorIsLogged(t *testing.T) {
 
 func newPeripheralSvcForCommand(t *testing.T, pStore *stubPeripheralStore, pub *stubPublisher) *sensors.PeripheralService {
 	t.Helper()
-	return sensors.NewPeripheralService(testutil.NewTestDB(t), pStore, &stubOutboxStore{}, pub, discardLogger)
+	return sensors.NewPeripheralService(testutil.NewTestDB(t), pStore, &stubOutboxStore{}, nil, pub, discardLogger)
 }
 
 func TestPeripheralService_SendCommand_HappyPath(t *testing.T) {

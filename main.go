@@ -223,7 +223,7 @@ func main() {
 	outboxStore := outbox.NewPostgresStore(db)
 	readingsSvc := sensors.NewReadingsService(deviceStore, influxClient, influxClient, logger)
 	deviceSvc := sensors.NewDeviceService(deviceStore, hivemqClient, mqttPublisher, logger)
-	peripheralSvc := sensors.NewPeripheralService(db, peripheralStore, outboxStore, mqttPublisher, logger)
+	peripheralSvc := sensors.NewPeripheralService(db, peripheralStore, outboxStore, influxClient, mqttPublisher, logger)
 	provisioningSvc := sensors.NewProvisioningService(provisioningStore, logger)
 	activationSvc := sensors.NewActivationService(db, provisioningStore, outboxStore, deviceSigner, logger)
 
