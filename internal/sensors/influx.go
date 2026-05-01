@@ -6,6 +6,7 @@ import (
 	"time"
 
 	influxdb3 "github.com/InfluxCommunity/influxdb3-go/v2/influxdb3"
+	"github.com/apache/arrow-go/v18/arrow"
 )
 
 type Reading struct {
@@ -125,8 +126,13 @@ func (c *influxDBClient) QueryLastReadings(ctx context.Context, deviceID string)
 	p := &ReadingPoint{Values: make(map[string]any)}
 	for iter2.Next() {
 		row := iter2.Value()
-		if t, ok := row["time"].(time.Time); ok {
-			p.Timestamp = t.UTC()
+		// MAX(time) OVER () returns arrow.Timestamp (nanoseconds), not time.Time.
+		// The client only maps the literal "time" column to time.Time automatically.
+		switch tv := row["time"].(type) {
+		case time.Time:
+			p.Timestamp = tv.UTC()
+		case arrow.Timestamp:
+			p.Timestamp = tv.ToTime(arrow.Nanosecond).UTC()
 		}
 		for k, v := range row {
 			if reservedColumns[k] {
