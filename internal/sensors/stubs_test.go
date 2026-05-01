@@ -152,6 +152,10 @@ func (s *stubReadingQuerier) QueryReadings(_ context.Context, _ sensors.ReadingQ
 	return s.points, s.err
 }
 
+func (s *stubReadingQuerier) QueryLastReadings(_ context.Context, _ string) (*sensors.ReadingPoint, error) {
+	return nil, nil
+}
+
 // ── Publisher ─────────────────────────────────────────────────────────────────
 
 type stubPublisher struct {

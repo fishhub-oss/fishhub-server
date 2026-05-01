@@ -23,7 +23,7 @@ Go HTTP backend for FishHub. Receives temperature readings from ESP32 devices, a
 2. Discuss the plan with the user before executing.
 3. Implement only after the user approves.
 4. Never commit directly to `main`. Always create a feature branch, commit there, and open a PR.
-5. After completing an issue, move the corresponding GitHub issue to the Done column on the FishHub PoC project (`org: fishhub-oss`, project ID 1).
+5. After completing an issue, move the corresponding GitHub issue to the Done column on the FishHub project (`org: fishhub-oss`, project ID 1).
 
 ## Git conventions
 

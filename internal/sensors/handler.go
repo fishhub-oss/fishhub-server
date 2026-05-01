@@ -326,23 +326,36 @@ type CommandPublisher interface {
 	Publish(ctx context.Context, topic string, payload []byte) error
 }
 
+type LastReadingResponse struct {
+	Timestamp string         `json:"timestamp"`
+	Values    map[string]any `json:"values"`
+}
+
 type PeripheralResponse struct {
-	ID          string           `json:"id"`
-	DeviceID    string           `json:"device_id"`
-	Name        string           `json:"name"`
-	Kind        string           `json:"kind"`
-	Pin         int              `json:"pin"`
-	Category    string           `json:"category"`
-	ControlMode *string          `json:"control_mode"`
-	Schedule    []ScheduleWindow `json:"schedule"`
-	CreatedAt   string           `json:"created_at"`
-	UpdatedAt   string           `json:"updated_at"`
+	ID          string               `json:"id"`
+	DeviceID    string               `json:"device_id"`
+	Name        string               `json:"name"`
+	Kind        string               `json:"kind"`
+	Pin         int                  `json:"pin"`
+	Category    string               `json:"category"`
+	ControlMode *string              `json:"control_mode"`
+	Schedule    []ScheduleWindow     `json:"schedule"`
+	LastReading *LastReadingResponse `json:"last_reading"`
+	CreatedAt   string               `json:"created_at"`
+	UpdatedAt   string               `json:"updated_at"`
 }
 
 func peripheralResponse(p Peripheral) PeripheralResponse {
 	schedule := p.Schedule
 	if schedule == nil {
 		schedule = []ScheduleWindow{}
+	}
+	var lastReading *LastReadingResponse
+	if p.LastReading != nil {
+		lastReading = &LastReadingResponse{
+			Timestamp: p.LastReading.Timestamp.UTC().Format(time.RFC3339),
+			Values:    p.LastReading.Values,
+		}
 	}
 	return PeripheralResponse{
 		ID:          p.ID,
@@ -353,6 +366,7 @@ func peripheralResponse(p Peripheral) PeripheralResponse {
 		Category:    p.Category,
 		ControlMode: p.ControlMode,
 		Schedule:    schedule,
+		LastReading: lastReading,
 		CreatedAt:   p.CreatedAt.UTC().Format(time.RFC3339),
 		UpdatedAt:   p.UpdatedAt.UTC().Format(time.RFC3339),
 	}

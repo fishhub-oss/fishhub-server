@@ -19,6 +19,7 @@ type PeripheralService struct {
 	db        *sql.DB
 	store     PeripheralStore
 	outbox    outbox.Store
+	querier   ReadingQuerier
 	publisher mqtt.Publisher
 	logger    *slog.Logger
 }
@@ -27,6 +28,7 @@ func NewPeripheralService(
 	db *sql.DB,
 	store PeripheralStore,
 	outboxStore outbox.Store,
+	querier ReadingQuerier,
 	publisher mqtt.Publisher,
 	logger *slog.Logger,
 ) *PeripheralService {
@@ -37,6 +39,7 @@ func NewPeripheralService(
 		db:        db,
 		store:     store,
 		outbox:    outboxStore,
+		querier:   querier,
 		publisher: publisher,
 		logger:    logger,
 	}
@@ -77,14 +80,48 @@ func (s *PeripheralService) Register(ctx context.Context, deviceID, userID, name
 	return p, nil
 }
 
-// List returns active peripherals for the device.
+// List returns active peripherals for the device, each populated with its last known reading.
 // Returns an empty slice if the device does not exist or is not owned by userID.
 func (s *PeripheralService) List(ctx context.Context, deviceID, userID string) ([]Peripheral, error) {
 	peripherals, err := s.store.ListPeripherals(ctx, deviceID, userID)
 	if err != nil {
 		s.logger.Error("list peripherals", "device_id", deviceID, "error", err)
+		return peripherals, err
 	}
-	return peripherals, err
+
+	if s.querier != nil && len(peripherals) > 0 {
+		last, err := s.querier.QueryLastReadings(ctx, deviceID)
+		if err != nil {
+			s.logger.Error("list peripherals: query last readings", "device_id", deviceID, "error", err)
+			// Non-fatal: return peripherals without last_reading rather than failing the request.
+		} else if last != nil {
+			for i := range peripherals {
+				ns := fmt.Sprintf("%s-%d", peripherals[i].Kind, peripherals[i].Pin)
+				filtered := filterByNamespace(last, ns)
+				if filtered != nil {
+					peripherals[i].LastReading = filtered
+				}
+			}
+		}
+	}
+
+	return peripherals, nil
+}
+
+// filterByNamespace returns a ReadingPoint containing only the values whose keys
+// start with the given namespace prefix (e.g. "ds18b20-4"), or nil if none match.
+func filterByNamespace(p *ReadingPoint, ns string) *ReadingPoint {
+	prefix := ns + "/"
+	filtered := &ReadingPoint{Timestamp: p.Timestamp, Values: make(map[string]any)}
+	for k, v := range p.Values {
+		if len(k) > len(prefix) && k[:len(prefix)] == prefix {
+			filtered.Values[k] = v
+		}
+	}
+	if len(filtered.Values) == 0 {
+		return nil
+	}
+	return filtered
 }
 
 // SetSchedule persists the schedule to DB and publishes it synchronously via MQTT.

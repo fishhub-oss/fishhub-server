@@ -512,7 +512,7 @@ func TestActivationStatusHandler(t *testing.T) {
 func newCommandHandler(t *testing.T, pStore *stubPeripheralStore, pub *stubPublisher) *sensors.CommandHandler {
 	t.Helper()
 	return &sensors.CommandHandler{
-		Service: sensors.NewPeripheralService(testutil.NewTestDB(t), pStore, &stubOutboxStore{}, pub, discardLogger),
+		Service: sensors.NewPeripheralService(testutil.NewTestDB(t), pStore, &stubOutboxStore{}, nil, pub, discardLogger),
 	}
 }
 

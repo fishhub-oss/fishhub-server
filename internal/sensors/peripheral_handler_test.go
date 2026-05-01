@@ -33,7 +33,7 @@ func newPeripheral(name string) sensors.Peripheral {
 func TestListPeripheralsHandler(t *testing.T) {
 	t.Run("returns 200 with peripheral list", func(t *testing.T) {
 		store := &stubPeripheralStore{listed: []sensors.Peripheral{newPeripheral("light")}}
-		svc := sensors.NewPeripheralService(nil, store, &stubOutboxStore{}, &stubPublisher{}, discardLogger)
+		svc := sensors.NewPeripheralService(nil, store, &stubOutboxStore{}, nil, &stubPublisher{}, discardLogger)
 		h := &sensors.ListPeripheralsHandler{Service: svc}
 
 		req := withChiParam(
@@ -57,7 +57,7 @@ func TestListPeripheralsHandler(t *testing.T) {
 
 	t.Run("unknown device returns 200 with empty list", func(t *testing.T) {
 		store := &stubPeripheralStore{listed: []sensors.Peripheral{}}
-		svc := sensors.NewPeripheralService(nil, store, &stubOutboxStore{}, &stubPublisher{}, discardLogger)
+		svc := sensors.NewPeripheralService(nil, store, &stubOutboxStore{}, nil, &stubPublisher{}, discardLogger)
 		h := &sensors.ListPeripheralsHandler{Service: svc}
 
 		req := withChiParam(
@@ -80,7 +80,7 @@ func TestListPeripheralsHandler(t *testing.T) {
 	})
 
 	t.Run("no auth returns 401", func(t *testing.T) {
-		svc := sensors.NewPeripheralService(nil, &stubPeripheralStore{}, &stubOutboxStore{}, &stubPublisher{}, discardLogger)
+		svc := sensors.NewPeripheralService(nil, &stubPeripheralStore{}, &stubOutboxStore{}, nil, &stubPublisher{}, discardLogger)
 		h := &sensors.ListPeripheralsHandler{Service: svc}
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
@@ -97,7 +97,7 @@ func TestSetPeripheralScheduleHandler(t *testing.T) {
 		p := newPeripheral("light")
 		p.Schedule = []sensors.ScheduleWindow{{From: "08:00", To: "18:00", Value: 1.0}}
 		store := &stubPeripheralStore{scheduled: p}
-		svc := sensors.NewPeripheralService(nil, store, &stubOutboxStore{}, &stubPublisher{}, discardLogger)
+		svc := sensors.NewPeripheralService(nil, store, &stubOutboxStore{}, nil, &stubPublisher{}, discardLogger)
 		h := &sensors.SetPeripheralScheduleHandler{Service: svc}
 
 		req := withChiParams(
@@ -121,7 +121,7 @@ func TestSetPeripheralScheduleHandler(t *testing.T) {
 
 	t.Run("peripheral not found returns 404", func(t *testing.T) {
 		store := &stubPeripheralStore{schedErr: sensors.ErrPeripheralNotFound}
-		svc := sensors.NewPeripheralService(nil, store, &stubOutboxStore{}, &stubPublisher{}, discardLogger)
+		svc := sensors.NewPeripheralService(nil, store, &stubOutboxStore{}, nil, &stubPublisher{}, discardLogger)
 		h := &sensors.SetPeripheralScheduleHandler{Service: svc}
 
 		req := withChiParams(
@@ -134,7 +134,7 @@ func TestSetPeripheralScheduleHandler(t *testing.T) {
 	})
 
 	t.Run("invalid body returns 400", func(t *testing.T) {
-		svc := sensors.NewPeripheralService(nil, &stubPeripheralStore{}, &stubOutboxStore{}, &stubPublisher{}, discardLogger)
+		svc := sensors.NewPeripheralService(nil, &stubPeripheralStore{}, &stubOutboxStore{}, nil, &stubPublisher{}, discardLogger)
 		h := &sensors.SetPeripheralScheduleHandler{Service: svc}
 
 		req := withChiParams(
@@ -151,7 +151,7 @@ func TestSetPeripheralScheduleHandler(t *testing.T) {
 
 func TestCreatePeripheralHandler(t *testing.T) {
 	t.Run("invalid body returns 400", func(t *testing.T) {
-		svc := sensors.NewPeripheralService(nil, &stubPeripheralStore{}, &stubOutboxStore{}, &stubPublisher{}, discardLogger)
+		svc := sensors.NewPeripheralService(nil, &stubPeripheralStore{}, &stubOutboxStore{}, nil, &stubPublisher{}, discardLogger)
 		h := &sensors.CreatePeripheralHandler{Service: svc}
 
 		req := withChiParam(
@@ -164,7 +164,7 @@ func TestCreatePeripheralHandler(t *testing.T) {
 	})
 
 	t.Run("missing name returns 400", func(t *testing.T) {
-		svc := sensors.NewPeripheralService(nil, &stubPeripheralStore{}, &stubOutboxStore{}, &stubPublisher{}, discardLogger)
+		svc := sensors.NewPeripheralService(nil, &stubPeripheralStore{}, &stubOutboxStore{}, nil, &stubPublisher{}, discardLogger)
 		h := &sensors.CreatePeripheralHandler{Service: svc}
 
 		req := withChiParam(
@@ -177,7 +177,7 @@ func TestCreatePeripheralHandler(t *testing.T) {
 	})
 
 	t.Run("no auth returns 401", func(t *testing.T) {
-		svc := sensors.NewPeripheralService(nil, &stubPeripheralStore{}, &stubOutboxStore{}, &stubPublisher{}, discardLogger)
+		svc := sensors.NewPeripheralService(nil, &stubPeripheralStore{}, &stubOutboxStore{}, nil, &stubPublisher{}, discardLogger)
 		h := &sensors.CreatePeripheralHandler{Service: svc}
 		req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{"name":"light","kind":"relay","pin":5}`))
 		rec := httptest.NewRecorder()
@@ -188,7 +188,7 @@ func TestCreatePeripheralHandler(t *testing.T) {
 	t.Run("already exists returns 409", func(t *testing.T) {
 		db := testutil.NewTestDB(t)
 		store := &stubPeripheralStore{createErr: sensors.ErrPeripheralAlreadyExists}
-		svc := sensors.NewPeripheralService(db, store, &stubOutboxStore{}, &stubPublisher{}, discardLogger)
+		svc := sensors.NewPeripheralService(db, store, &stubOutboxStore{}, nil, &stubPublisher{}, discardLogger)
 		h := &sensors.CreatePeripheralHandler{Service: svc}
 
 		req := withChiParam(
@@ -203,7 +203,7 @@ func TestCreatePeripheralHandler(t *testing.T) {
 	t.Run("device not found returns 404", func(t *testing.T) {
 		db := testutil.NewTestDB(t)
 		store := &stubPeripheralStore{createErr: sensors.ErrDeviceNotFound}
-		svc := sensors.NewPeripheralService(db, store, &stubOutboxStore{}, &stubPublisher{}, discardLogger)
+		svc := sensors.NewPeripheralService(db, store, &stubOutboxStore{}, nil, &stubPublisher{}, discardLogger)
 		h := &sensors.CreatePeripheralHandler{Service: svc}
 
 		req := withChiParam(
@@ -225,7 +225,7 @@ func TestSetControlModeHandler(t *testing.T) {
 		p.ControlMode = &mode
 		db := testutil.NewTestDB(t)
 		store := &stubPeripheralStore{controlModeP: p}
-		svc := sensors.NewPeripheralService(db, store, &stubOutboxStore{}, &stubPublisher{}, discardLogger)
+		svc := sensors.NewPeripheralService(db, store, &stubOutboxStore{}, nil, &stubPublisher{}, discardLogger)
 		h := &sensors.SetControlModeHandler{Service: svc}
 
 		req := withChiParams(
@@ -248,7 +248,7 @@ func TestSetControlModeHandler(t *testing.T) {
 	})
 
 	t.Run("invalid mode returns 400", func(t *testing.T) {
-		svc := sensors.NewPeripheralService(nil, &stubPeripheralStore{}, &stubOutboxStore{}, &stubPublisher{}, discardLogger)
+		svc := sensors.NewPeripheralService(nil, &stubPeripheralStore{}, &stubOutboxStore{}, nil, &stubPublisher{}, discardLogger)
 		h := &sensors.SetControlModeHandler{Service: svc}
 
 		req := withChiParams(
@@ -261,7 +261,7 @@ func TestSetControlModeHandler(t *testing.T) {
 	})
 
 	t.Run("missing mode returns 400", func(t *testing.T) {
-		svc := sensors.NewPeripheralService(nil, &stubPeripheralStore{}, &stubOutboxStore{}, &stubPublisher{}, discardLogger)
+		svc := sensors.NewPeripheralService(nil, &stubPeripheralStore{}, &stubOutboxStore{}, nil, &stubPublisher{}, discardLogger)
 		h := &sensors.SetControlModeHandler{Service: svc}
 
 		req := withChiParams(
@@ -276,7 +276,7 @@ func TestSetControlModeHandler(t *testing.T) {
 	t.Run("peripheral not found returns 404", func(t *testing.T) {
 		db := testutil.NewTestDB(t)
 		store := &stubPeripheralStore{controlModeErr: sensors.ErrPeripheralNotFound}
-		svc := sensors.NewPeripheralService(db, store, &stubOutboxStore{}, &stubPublisher{}, discardLogger)
+		svc := sensors.NewPeripheralService(db, store, &stubOutboxStore{}, nil, &stubPublisher{}, discardLogger)
 		h := &sensors.SetControlModeHandler{Service: svc}
 
 		req := withChiParams(
@@ -291,7 +291,7 @@ func TestSetControlModeHandler(t *testing.T) {
 	t.Run("sensor peripheral returns 422", func(t *testing.T) {
 		db := testutil.NewTestDB(t)
 		store := &stubPeripheralStore{controlModeErr: sensors.ErrNotAnActuator}
-		svc := sensors.NewPeripheralService(db, store, &stubOutboxStore{}, &stubPublisher{}, discardLogger)
+		svc := sensors.NewPeripheralService(db, store, &stubOutboxStore{}, nil, &stubPublisher{}, discardLogger)
 		h := &sensors.SetControlModeHandler{Service: svc}
 
 		req := withChiParams(
@@ -304,7 +304,7 @@ func TestSetControlModeHandler(t *testing.T) {
 	})
 
 	t.Run("no auth returns 401", func(t *testing.T) {
-		svc := sensors.NewPeripheralService(nil, &stubPeripheralStore{}, &stubOutboxStore{}, &stubPublisher{}, discardLogger)
+		svc := sensors.NewPeripheralService(nil, &stubPeripheralStore{}, &stubOutboxStore{}, nil, &stubPublisher{}, discardLogger)
 		h := &sensors.SetControlModeHandler{Service: svc}
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, httptest.NewRequest(http.MethodPatch, "/", strings.NewReader(`{"mode":"manual"}`)))
@@ -316,7 +316,7 @@ func TestSetControlModeHandler(t *testing.T) {
 
 func TestDeletePeripheralHandler(t *testing.T) {
 	t.Run("no auth returns 401", func(t *testing.T) {
-		svc := sensors.NewPeripheralService(nil, &stubPeripheralStore{}, &stubOutboxStore{}, &stubPublisher{}, discardLogger)
+		svc := sensors.NewPeripheralService(nil, &stubPeripheralStore{}, &stubOutboxStore{}, nil, &stubPublisher{}, discardLogger)
 		h := &sensors.DeletePeripheralHandler{Service: svc}
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, httptest.NewRequest(http.MethodDelete, "/", nil))
@@ -326,7 +326,7 @@ func TestDeletePeripheralHandler(t *testing.T) {
 	t.Run("peripheral not found returns 404", func(t *testing.T) {
 		db := testutil.NewTestDB(t)
 		store := &stubPeripheralStore{deleteErr: sensors.ErrPeripheralNotFound}
-		svc := sensors.NewPeripheralService(db, store, &stubOutboxStore{}, &stubPublisher{}, discardLogger)
+		svc := sensors.NewPeripheralService(db, store, &stubOutboxStore{}, nil, &stubPublisher{}, discardLogger)
 		h := &sensors.DeletePeripheralHandler{Service: svc}
 
 		req := withChiParams(

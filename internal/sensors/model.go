@@ -15,6 +15,7 @@ type Peripheral struct {
 	Category    string  // "sensor" | "actuator"
 	ControlMode *string // nil for sensors; "automatic"|"manual" for actuators
 	Schedule    []ScheduleWindow
+	LastReading *ReadingPoint
 	CreatedAt   time.Time
 	UpdatedAt   time.Time
 }
