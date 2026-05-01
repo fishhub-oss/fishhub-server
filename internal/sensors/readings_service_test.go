@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/fishhub-oss/fishhub-server/internal/senml"
 	"github.com/fishhub-oss/fishhub-server/internal/sensors"
 )
 
@@ -76,7 +77,7 @@ func TestReadingsService_Write_EmptyPayload(t *testing.T) {
 	svc := sensors.NewReadingsService(nil, nil, &stubReadingWriter{}, discardLogger)
 	device := sensors.DeviceInfo{DeviceID: "dev-1", UserID: "usr-1"}
 	err := svc.Write(context.Background(), device, []byte(`[{"bn":"dev-1","bt":1700000000}]`))
-	if !errors.Is(err, sensors.ErrEmptyPayload) {
+	if !errors.Is(err, senml.ErrEmptyPayload) {
 		t.Errorf("expected ErrEmptyPayload, got %v", err)
 	}
 }

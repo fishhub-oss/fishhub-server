@@ -1,16 +1,16 @@
-package sensors_test
+package senml_test
 
 import (
 	"errors"
 	"testing"
 
-	"github.com/fishhub-oss/fishhub-server/internal/sensors"
+	"github.com/fishhub-oss/fishhub-server/internal/senml"
 )
 
-func TestParseSenML(t *testing.T) {
+func TestParse(t *testing.T) {
 	t.Run("single float measurement", func(t *testing.T) {
 		body := `[{"bn":"fishhub/device/","bt":1745000000},{"n":"temperature","u":"Cel","v":25.3}]`
-		r, err := sensors.ParseSenML([]byte(body))
+		r, err := senml.Parse([]byte(body))
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -34,7 +34,7 @@ func TestParseSenML(t *testing.T) {
 
 	t.Run("multi-peripheral pack: float + bool", func(t *testing.T) {
 		body := `[{"bn":"fishhub/device/","bt":1745000000},{"n":"temperature","u":"Cel","v":25.3},{"n":"relay/state","vb":true}]`
-		r, err := sensors.ParseSenML([]byte(body))
+		r, err := senml.Parse([]byte(body))
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -55,7 +55,7 @@ func TestParseSenML(t *testing.T) {
 
 	t.Run("boolean-only pack", func(t *testing.T) {
 		body := `[{"bn":"fishhub/device/","bt":1745000000},{"n":"relay/state","vb":false}]`
-		r, err := sensors.ParseSenML([]byte(body))
+		r, err := senml.Parse([]byte(body))
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -70,7 +70,7 @@ func TestParseSenML(t *testing.T) {
 
 	t.Run("string value (vs) alongside float", func(t *testing.T) {
 		body := `[{"bn":"fishhub/device/","bt":1745000000},{"n":"light/source","vs":"schedule"},{"n":"temperature","v":25.3}]`
-		r, err := sensors.ParseSenML([]byte(body))
+		r, err := senml.Parse([]byte(body))
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -90,7 +90,7 @@ func TestParseSenML(t *testing.T) {
 
 	t.Run("records with no supported value type are skipped", func(t *testing.T) {
 		body := `[{"bn":"fishhub/device/","bt":1745000000},{"n":"empty"},{"n":"temperature","v":25.3}]`
-		r, err := sensors.ParseSenML([]byte(body))
+		r, err := senml.Parse([]byte(body))
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -103,42 +103,42 @@ func TestParseSenML(t *testing.T) {
 	})
 
 	t.Run("malformed JSON", func(t *testing.T) {
-		_, err := sensors.ParseSenML([]byte(`not json`))
+		_, err := senml.Parse([]byte(`not json`))
 		if err == nil {
 			t.Fatal("expected error")
 		}
 	})
 
 	t.Run("empty array", func(t *testing.T) {
-		_, err := sensors.ParseSenML([]byte(`[]`))
-		if !errors.Is(err, sensors.ErrEmptyPayload) {
+		_, err := senml.Parse([]byte(`[]`))
+		if !errors.Is(err, senml.ErrEmptyPayload) {
 			t.Errorf("expected ErrEmptyPayload, got %v", err)
 		}
 	})
 
 	t.Run("single-element array (only base record)", func(t *testing.T) {
-		_, err := sensors.ParseSenML([]byte(`[{"bn":"fishhub/device/","bt":1745000000}]`))
-		if !errors.Is(err, sensors.ErrEmptyPayload) {
+		_, err := senml.Parse([]byte(`[{"bn":"fishhub/device/","bt":1745000000}]`))
+		if !errors.Is(err, senml.ErrEmptyPayload) {
 			t.Errorf("expected ErrEmptyPayload, got %v", err)
 		}
 	})
 
 	t.Run("missing base time", func(t *testing.T) {
-		_, err := sensors.ParseSenML([]byte(`[{"bn":"fishhub/device/"},{"n":"temperature","v":25.3}]`))
-		if !errors.Is(err, sensors.ErrMissingBaseTime) {
+		_, err := senml.Parse([]byte(`[{"bn":"fishhub/device/"},{"n":"temperature","v":25.3}]`))
+		if !errors.Is(err, senml.ErrMissingBaseTime) {
 			t.Errorf("expected ErrMissingBaseTime, got %v", err)
 		}
 	})
 
 	t.Run("measurement record before base record", func(t *testing.T) {
-		_, err := sensors.ParseSenML([]byte(`[{"n":"temperature","v":25.3},{"bn":"fishhub/device/","bt":1745000000}]`))
-		if !errors.Is(err, sensors.ErrMissingBaseTime) {
+		_, err := senml.Parse([]byte(`[{"n":"temperature","v":25.3},{"bn":"fishhub/device/","bt":1745000000}]`))
+		if !errors.Is(err, senml.ErrMissingBaseTime) {
 			t.Errorf("expected ErrMissingBaseTime, got %v", err)
 		}
 	})
 
 	t.Run("string-only pack parses successfully", func(t *testing.T) {
-		r, err := sensors.ParseSenML([]byte(`[{"bn":"fishhub/device/","bt":1745000000},{"n":"light/source","vs":"heartbeat"}]`))
+		r, err := senml.Parse([]byte(`[{"bn":"fishhub/device/","bt":1745000000},{"n":"light/source","vs":"heartbeat"}]`))
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -151,8 +151,8 @@ func TestParseSenML(t *testing.T) {
 	})
 
 	t.Run("all measurement records have no supported value type", func(t *testing.T) {
-		_, err := sensors.ParseSenML([]byte(`[{"bn":"fishhub/device/","bt":1745000000},{"n":"empty"}]`))
-		if !errors.Is(err, sensors.ErrEmptyEntries) {
+		_, err := senml.Parse([]byte(`[{"bn":"fishhub/device/","bt":1745000000},{"n":"empty"}]`))
+		if !errors.Is(err, senml.ErrEmptyEntries) {
 			t.Errorf("expected ErrEmptyEntries, got %v", err)
 		}
 	})

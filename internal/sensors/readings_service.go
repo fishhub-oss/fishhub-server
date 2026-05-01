@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"log/slog"
 	"time"
+
+	"github.com/fishhub-oss/fishhub-server/internal/senml"
 )
 
 // ReadingsService orchestrates sensor reading operations.
@@ -44,7 +46,7 @@ func (s *ReadingsService) Query(ctx context.Context, userID string, q ReadingQue
 // Write parses a SenML payload and writes the reading to InfluxDB.
 // If writer is nil the call is a no-op (InfluxDB not configured).
 func (s *ReadingsService) Write(ctx context.Context, device DeviceInfo, body []byte) error {
-	reading, err := ParseSenML(body)
+	reading, err := senml.Parse(body)
 	if err != nil {
 		return err
 	}
