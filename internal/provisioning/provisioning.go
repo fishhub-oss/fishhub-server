@@ -1,0 +1,171 @@
+package provisioning
+
+import (
+	"context"
+	"crypto/rand"
+	"database/sql"
+	"errors"
+	"fmt"
+	"log/slog"
+)
+
+var (
+	ErrCodeNotFound  = errors.New("provisioning code not found")
+	ErrCodeAlreadyUsed = errors.New("provisioning code already used")
+)
+
+// Store manages provisioning codes.
+type Store interface {
+	// GetOrCreateCode returns the existing unused code for the user, or creates one.
+	GetOrCreateCode(ctx context.Context, userID string) (code string, err error)
+	// ClaimCode marks the code used, creates a new device row, and returns the device ID and user ID.
+	// Returns ErrCodeNotFound if the code is unknown, ErrCodeAlreadyUsed if already claimed.
+	ClaimCode(ctx context.Context, code string) (deviceID, userID string, err error)
+	// Activate stores MQTT credentials on the device row within the provided transaction.
+	Activate(ctx context.Context, tx *sql.Tx, deviceID, mqttUsername, mqttPassword string) error
+}
+
+// Service orchestrates device provisioning from the user side.
+type Service struct {
+	store  Store
+	logger *slog.Logger
+}
+
+func NewService(store Store, logger *slog.Logger) *Service {
+	if logger == nil {
+		logger = slog.Default()
+	}
+	return &Service{store: store, logger: logger}
+}
+
+// Provision returns an existing unused provisioning code or creates a new one.
+func (s *Service) Provision(ctx context.Context, userID string) (string, error) {
+	code, err := s.store.GetOrCreateCode(ctx, userID)
+	if err != nil {
+		s.logger.Error("provision: get or create code", "user_id", userID, "error", err)
+	}
+	return code, err
+}
+
+// postgresStore implements Store.
+type postgresStore struct {
+	db *sql.DB
+}
+
+func NewStore(db *sql.DB) Store {
+	return &postgresStore{db: db}
+}
+
+const provisioningCodeCharset = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+
+func (s *postgresStore) GetOrCreateCode(ctx context.Context, userID string) (string, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return "", fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	var code string
+	err = tx.QueryRowContext(ctx, `
+		SELECT code
+		FROM provisioning_codes
+		WHERE user_id = $1 AND used_at IS NULL
+		LIMIT 1
+		FOR UPDATE
+	`, userID).Scan(&code)
+
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return "", fmt.Errorf("lookup code: %w", err)
+	}
+
+	if err == nil {
+		if err := tx.Commit(); err != nil {
+			return "", fmt.Errorf("commit tx: %w", err)
+		}
+		return code, nil
+	}
+
+	code, err = generateCode()
+	if err != nil {
+		return "", err
+	}
+
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO provisioning_codes (code, user_id) VALUES ($1, $2)
+	`, code, userID); err != nil {
+		return "", fmt.Errorf("insert provisioning code: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return "", fmt.Errorf("commit tx: %w", err)
+	}
+	return code, nil
+}
+
+func (s *postgresStore) ClaimCode(ctx context.Context, code string) (string, string, error) {
+	var usedAt sql.NullTime
+	err := s.db.QueryRowContext(ctx, `
+		SELECT used_at FROM provisioning_codes WHERE code = $1
+	`, code).Scan(&usedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", "", ErrCodeNotFound
+	}
+	if err != nil {
+		return "", "", fmt.Errorf("lookup code: %w", err)
+	}
+	if usedAt.Valid {
+		return "", "", ErrCodeAlreadyUsed
+	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return "", "", fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	var userID string
+	if err := tx.QueryRowContext(ctx, `
+		SELECT user_id FROM provisioning_codes WHERE code = $1 AND used_at IS NULL FOR UPDATE
+	`, code).Scan(&userID); errors.Is(err, sql.ErrNoRows) {
+		return "", "", ErrCodeAlreadyUsed
+	} else if err != nil {
+		return "", "", fmt.Errorf("lock code: %w", err)
+	}
+
+	var deviceID string
+	if err := tx.QueryRowContext(ctx, `
+		INSERT INTO devices (user_id) VALUES ($1) RETURNING id
+	`, userID).Scan(&deviceID); err != nil {
+		return "", "", fmt.Errorf("insert device: %w", err)
+	}
+
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE provisioning_codes SET used_at = now(), device_id = $2 WHERE code = $1
+	`, code, deviceID); err != nil {
+		return "", "", fmt.Errorf("claim code: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return "", "", fmt.Errorf("commit tx: %w", err)
+	}
+	return deviceID, userID, nil
+}
+
+func (s *postgresStore) Activate(ctx context.Context, tx *sql.Tx, deviceID, mqttUsername, mqttPassword string) error {
+	_, err := tx.ExecContext(ctx, `
+		UPDATE devices SET mqtt_username = $2, mqtt_password = $3 WHERE id = $1
+	`, deviceID, mqttUsername, mqttPassword)
+	return err
+}
+
+func generateCode() (string, error) {
+	b := make([]byte, 6)
+	if _, err := rand.Read(b); err != nil {
+		return "", fmt.Errorf("generate code: %w", err)
+	}
+	code := make([]byte, 6)
+	for i, v := range b {
+		code[i] = provisioningCodeCharset[int(v)%len(provisioningCodeCharset)]
+	}
+	return string(code), nil
+}

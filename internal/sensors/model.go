@@ -1,11 +1,10 @@
 package sensors
 
 import (
-	"errors"
-
 	"github.com/fishhub-oss/fishhub-server/internal/device"
 	"github.com/fishhub-oss/fishhub-server/internal/measurement"
 	"github.com/fishhub-oss/fishhub-server/internal/peripheral"
+	"github.com/fishhub-oss/fishhub-server/internal/provisioning"
 )
 
 // Peripheral types aliased from internal/peripheral for backward compat.
@@ -22,8 +21,8 @@ type ReadingQuerier = measurement.Querier
 // Error sentinels.
 var ErrNotAnActuator           = peripheral.ErrNotAnActuator
 var ErrDeviceNotFound          = device.ErrNotFound
-var ErrCodeNotFound            = errors.New("provisioning code not found")
-var ErrCodeAlreadyUsed         = errors.New("provisioning code already used")
+var ErrCodeNotFound            = provisioning.ErrCodeNotFound
+var ErrCodeAlreadyUsed         = provisioning.ErrCodeAlreadyUsed
 var ErrInvalidCommand          = peripheral.ErrInvalidCommand
 var ErrInfluxWrite             = measurement.ErrInfluxWrite
 var ErrPeripheralNotFound      = peripheral.ErrNotFound
