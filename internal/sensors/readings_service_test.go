@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/fishhub-oss/fishhub-server/internal/senml"
 	"github.com/fishhub-oss/fishhub-server/internal/sensors"
 )
 
@@ -49,24 +50,21 @@ func senMLPayload() []byte {
 
 func TestReadingsService_Write_HappyPath(t *testing.T) {
 	svc := sensors.NewReadingsService(nil, nil, &stubReadingWriter{}, discardLogger)
-	device := sensors.DeviceInfo{DeviceID: "dev-1", UserID: "usr-1"}
-	if err := svc.Write(context.Background(), device, senMLPayload()); err != nil {
+	if err := svc.Write(context.Background(), "dev-1", "usr-1", senMLPayload()); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
 
 func TestReadingsService_Write_NilWriter(t *testing.T) {
 	svc := sensors.NewReadingsService(nil, nil, nil, discardLogger)
-	device := sensors.DeviceInfo{DeviceID: "dev-1", UserID: "usr-1"}
-	if err := svc.Write(context.Background(), device, senMLPayload()); err != nil {
+	if err := svc.Write(context.Background(), "dev-1", "usr-1", senMLPayload()); err != nil {
 		t.Fatalf("nil writer should be a no-op, got: %v", err)
 	}
 }
 
 func TestReadingsService_Write_ParseError(t *testing.T) {
 	svc := sensors.NewReadingsService(nil, nil, &stubReadingWriter{}, discardLogger)
-	device := sensors.DeviceInfo{DeviceID: "dev-1", UserID: "usr-1"}
-	err := svc.Write(context.Background(), device, []byte(`not json`))
+	err := svc.Write(context.Background(), "dev-1", "usr-1", []byte(`not json`))
 	if err == nil {
 		t.Fatal("expected parse error, got nil")
 	}
@@ -74,9 +72,8 @@ func TestReadingsService_Write_ParseError(t *testing.T) {
 
 func TestReadingsService_Write_EmptyPayload(t *testing.T) {
 	svc := sensors.NewReadingsService(nil, nil, &stubReadingWriter{}, discardLogger)
-	device := sensors.DeviceInfo{DeviceID: "dev-1", UserID: "usr-1"}
-	err := svc.Write(context.Background(), device, []byte(`[{"bn":"dev-1","bt":1700000000}]`))
-	if !errors.Is(err, sensors.ErrEmptyPayload) {
+	err := svc.Write(context.Background(), "dev-1", "usr-1", []byte(`[{"bn":"dev-1","bt":1700000000}]`))
+	if !errors.Is(err, senml.ErrEmptyPayload) {
 		t.Errorf("expected ErrEmptyPayload, got %v", err)
 	}
 }
@@ -84,8 +81,7 @@ func TestReadingsService_Write_EmptyPayload(t *testing.T) {
 func TestReadingsService_Write_WriterError(t *testing.T) {
 	writeErr := errors.New("influx write failed")
 	svc := sensors.NewReadingsService(nil, nil, &stubReadingWriter{err: writeErr}, discardLogger)
-	device := sensors.DeviceInfo{DeviceID: "dev-1", UserID: "usr-1"}
-	err := svc.Write(context.Background(), device, senMLPayload())
+	err := svc.Write(context.Background(), "dev-1", "usr-1", senMLPayload())
 	if !errors.Is(err, sensors.ErrInfluxWrite) {
 		t.Errorf("expected ErrInfluxWrite, got %v", err)
 	}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/fishhub-oss/fishhub-server/internal/device"
 	"github.com/fishhub-oss/fishhub-server/internal/sensors"
 )
 
@@ -15,10 +16,10 @@ func newReadingsMQTTHandler(store *stubDeviceStore, writer *stubReadingWriter) *
 }
 
 func TestReadingsMQTTHandler_Handle(t *testing.T) {
-	device := sensors.Device{ID: "dev-1", UserID: "user-1"}
+	dev := device.Device{ID: "dev-1", UserID: "user-1"}
 
 	t.Run("valid topic and payload writes reading", func(t *testing.T) {
-		store := &stubDeviceStore{findByIDDevice: device}
+		store := &stubDeviceStore{findByIDDevice: dev}
 		writer := &stubReadingWriter{}
 		h := newReadingsMQTTHandler(store, writer)
 
@@ -48,7 +49,7 @@ func TestReadingsMQTTHandler_Handle(t *testing.T) {
 	})
 
 	t.Run("malformed topic does not write", func(t *testing.T) {
-		store := &stubDeviceStore{findByIDDevice: device}
+		store := &stubDeviceStore{findByIDDevice: dev}
 		writer := &stubReadingWriter{}
 		h := newReadingsMQTTHandler(store, writer)
 
@@ -67,7 +68,7 @@ func TestReadingsMQTTHandler_Handle(t *testing.T) {
 	})
 
 	t.Run("malformed SenML payload does not panic", func(t *testing.T) {
-		store := &stubDeviceStore{findByIDDevice: device}
+		store := &stubDeviceStore{findByIDDevice: dev}
 		writer := &stubReadingWriter{}
 		h := newReadingsMQTTHandler(store, writer)
 

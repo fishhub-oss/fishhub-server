@@ -12,10 +12,10 @@ import (
 	"testing"
 
 	"github.com/fishhub-oss/fishhub-server/internal/auth"
+	"github.com/fishhub-oss/fishhub-server/internal/device"
 	"github.com/fishhub-oss/fishhub-server/internal/devicejwt"
 	"github.com/fishhub-oss/fishhub-server/internal/jwtutil"
 	"github.com/fishhub-oss/fishhub-server/internal/platform"
-	"github.com/fishhub-oss/fishhub-server/internal/sensors"
 )
 
 type stubAuthService struct {
@@ -134,7 +134,7 @@ func TestDeviceAuthenticator(t *testing.T) {
 	signer := newTestSigner(t)
 
 	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		info, ok := sensors.DeviceFromContext(r.Context())
+		info, ok := device.FromContext(r.Context())
 		if !ok {
 			http.Error(w, "no device in context", http.StatusInternalServerError)
 			return

@@ -40,7 +40,7 @@ func (h *ReadingsMQTTHandler) Handle(ctx context.Context, topic string, payload 
 		return
 	}
 
-	if err := h.service.Write(ctx, DeviceInfo{DeviceID: device.ID, UserID: device.UserID}, payload); err != nil {
+	if err := h.service.Write(ctx, device.ID, device.UserID, payload); err != nil {
 		h.logger.Error("mqtt readings: write failed", "device_id", deviceID, "error", err)
 	}
 }

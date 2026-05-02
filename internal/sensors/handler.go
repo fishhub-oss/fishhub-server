@@ -10,6 +10,7 @@ import (
 
 	"github.com/fishhub-oss/fishhub-server/internal/apierr"
 	"github.com/fishhub-oss/fishhub-server/internal/auth"
+	"github.com/fishhub-oss/fishhub-server/internal/device"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/render"
 )
@@ -285,14 +286,14 @@ type activationStatusResponse struct {
 }
 
 func (h *ActivationStatusHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	device, ok := DeviceFromContext(r.Context())
+	deviceInfo, ok := device.FromContext(r.Context())
 	if !ok {
 		apierr.Write(w, http.StatusUnauthorized, "unauthorized", "missing or invalid credentials")
 		return
 	}
 
 	deviceID := chi.URLParam(r, "id")
-	if deviceID != device.DeviceID {
+	if deviceID != deviceInfo.DeviceID {
 		apierr.Write(w, http.StatusForbidden, "forbidden", "access denied")
 		return
 	}
