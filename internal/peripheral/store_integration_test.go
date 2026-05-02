@@ -1,22 +1,22 @@
-package sensors_test
+package peripheral_test
 
 import (
 	"context"
 	"errors"
 	"testing"
 
+	"github.com/fishhub-oss/fishhub-server/internal/device"
+	"github.com/fishhub-oss/fishhub-server/internal/peripheral"
 	"github.com/fishhub-oss/fishhub-server/internal/platform"
-	"github.com/fishhub-oss/fishhub-server/internal/sensors"
 	"github.com/fishhub-oss/fishhub-server/internal/testutil"
 )
 
 func TestPeripheralStore_integration(t *testing.T) {
 	db := testutil.NewTestDB(t)
-	store := sensors.NewPeripheralStore(db)
+	store := peripheral.NewStore(db)
 	ctx := context.Background()
 	userID := platform.SeedUserID()
 
-	// insert a device owned by the seed user
 	var deviceID string
 	if err := db.QueryRowContext(ctx,
 		`INSERT INTO devices (user_id) VALUES ($1) RETURNING id`, userID,
@@ -24,7 +24,6 @@ func TestPeripheralStore_integration(t *testing.T) {
 		t.Fatalf("insert device: %v", err)
 	}
 
-	// Create shared peripherals up front so their IDs are available to all subtests.
 	var lightID, tempID string
 	{
 		tx, err := db.BeginTx(ctx, nil)
@@ -114,7 +113,7 @@ func TestPeripheralStore_integration(t *testing.T) {
 		}
 	})
 
-	t.Run("create duplicate name returns ErrPeripheralAlreadyExists", func(t *testing.T) {
+	t.Run("create duplicate name returns ErrAlreadyExists", func(t *testing.T) {
 		tx, err := db.BeginTx(ctx, nil)
 		if err != nil {
 			t.Fatal(err)
@@ -122,26 +121,25 @@ func TestPeripheralStore_integration(t *testing.T) {
 		defer tx.Rollback()
 
 		_, err = store.CreatePeripheral(ctx, tx, deviceID, userID, "light", "relay", "actuator", 6)
-		if !errors.Is(err, sensors.ErrPeripheralAlreadyExists) {
-			t.Errorf("expected ErrPeripheralAlreadyExists, got %v", err)
+		if !errors.Is(err, peripheral.ErrAlreadyExists) {
+			t.Errorf("expected ErrAlreadyExists, got %v", err)
 		}
 	})
 
-	t.Run("create with duplicate pin returns ErrPeripheralPinInUse", func(t *testing.T) {
+	t.Run("create with duplicate pin returns ErrPinInUse", func(t *testing.T) {
 		tx, err := db.BeginTx(ctx, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
 		defer tx.Rollback()
 
-		// pin 5 is already used by the "light" peripheral created above
 		_, err = store.CreatePeripheral(ctx, tx, deviceID, userID, "pump", "relay", "actuator", 5)
-		if !errors.Is(err, sensors.ErrPeripheralPinInUse) {
-			t.Errorf("expected ErrPeripheralPinInUse, got %v", err)
+		if !errors.Is(err, peripheral.ErrPinInUse) {
+			t.Errorf("expected ErrPinInUse, got %v", err)
 		}
 	})
 
-	t.Run("create with unknown device returns ErrDeviceNotFound", func(t *testing.T) {
+	t.Run("create with unknown device returns ErrNotFound (device)", func(t *testing.T) {
 		tx, err := db.BeginTx(ctx, nil)
 		if err != nil {
 			t.Fatal(err)
@@ -149,13 +147,13 @@ func TestPeripheralStore_integration(t *testing.T) {
 		defer tx.Rollback()
 
 		_, err = store.CreatePeripheral(ctx, tx, "00000000-0000-0000-0000-000000000099", userID, "pump", "relay", "actuator", 7)
-		if !errors.Is(err, sensors.ErrDeviceNotFound) {
-			t.Errorf("expected ErrDeviceNotFound, got %v", err)
+		if !errors.Is(err, device.ErrNotFound) {
+			t.Errorf("expected device.ErrNotFound, got %v", err)
 		}
 	})
 
 	t.Run("set peripheral schedule", func(t *testing.T) {
-		schedule := []sensors.ScheduleWindow{
+		schedule := []peripheral.ScheduleWindow{
 			{From: "08:00", To: "18:00", Value: 1.0},
 		}
 		p, err := store.SetPeripheralSchedule(ctx, deviceID, userID, lightID, schedule)
@@ -167,10 +165,10 @@ func TestPeripheralStore_integration(t *testing.T) {
 		}
 	})
 
-	t.Run("set schedule on unknown peripheral returns ErrPeripheralNotFound", func(t *testing.T) {
+	t.Run("set schedule on unknown peripheral returns ErrNotFound", func(t *testing.T) {
 		_, err := store.SetPeripheralSchedule(ctx, deviceID, userID, "00000000-0000-0000-0000-000000000000", nil)
-		if !errors.Is(err, sensors.ErrPeripheralNotFound) {
-			t.Errorf("expected ErrPeripheralNotFound, got %v", err)
+		if !errors.Is(err, peripheral.ErrNotFound) {
+			t.Errorf("expected ErrNotFound, got %v", err)
 		}
 	})
 
@@ -201,12 +199,12 @@ func TestPeripheralStore_integration(t *testing.T) {
 		defer tx.Rollback()
 
 		_, err = store.SetControlMode(ctx, tx, deviceID, userID, tempID, "manual")
-		if !errors.Is(err, sensors.ErrNotAnActuator) {
+		if !errors.Is(err, peripheral.ErrNotAnActuator) {
 			t.Errorf("expected ErrNotAnActuator, got %v", err)
 		}
 	})
 
-	t.Run("set control mode on unknown peripheral returns ErrPeripheralNotFound", func(t *testing.T) {
+	t.Run("set control mode on unknown peripheral returns ErrNotFound", func(t *testing.T) {
 		tx, err := db.BeginTx(ctx, nil)
 		if err != nil {
 			t.Fatal(err)
@@ -214,8 +212,8 @@ func TestPeripheralStore_integration(t *testing.T) {
 		defer tx.Rollback()
 
 		_, err = store.SetControlMode(ctx, tx, deviceID, userID, "00000000-0000-0000-0000-000000000000", "manual")
-		if !errors.Is(err, sensors.ErrPeripheralNotFound) {
-			t.Errorf("expected ErrPeripheralNotFound, got %v", err)
+		if !errors.Is(err, peripheral.ErrNotFound) {
+			t.Errorf("expected ErrNotFound, got %v", err)
 		}
 	})
 
@@ -253,7 +251,6 @@ func TestPeripheralStore_integration(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		// should no longer appear in list
 		peripherals, err := store.ListPeripherals(ctx, deviceID, userID)
 		if err != nil {
 			t.Fatalf("list after delete: %v", err)
@@ -265,7 +262,7 @@ func TestPeripheralStore_integration(t *testing.T) {
 		}
 	})
 
-	t.Run("delete non-existent peripheral returns ErrPeripheralNotFound", func(t *testing.T) {
+	t.Run("delete non-existent peripheral returns ErrNotFound", func(t *testing.T) {
 		tx, err := db.BeginTx(ctx, nil)
 		if err != nil {
 			t.Fatal(err)
@@ -273,8 +270,8 @@ func TestPeripheralStore_integration(t *testing.T) {
 		defer tx.Rollback()
 
 		_, err = store.DeletePeripheral(ctx, tx, deviceID, userID, "00000000-0000-0000-0000-000000000000")
-		if !errors.Is(err, sensors.ErrPeripheralNotFound) {
-			t.Errorf("expected ErrPeripheralNotFound, got %v", err)
+		if !errors.Is(err, peripheral.ErrNotFound) {
+			t.Errorf("expected ErrNotFound, got %v", err)
 		}
 	})
 

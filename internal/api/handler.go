@@ -1,7 +1,6 @@
-package sensors
+package api
 
 import (
-	"context"
 	"errors"
 	"io"
 	"net/http"
@@ -11,6 +10,9 @@ import (
 	"github.com/fishhub-oss/fishhub-server/internal/apierr"
 	"github.com/fishhub-oss/fishhub-server/internal/auth"
 	"github.com/fishhub-oss/fishhub-server/internal/device"
+	"github.com/fishhub-oss/fishhub-server/internal/measurement"
+	"github.com/fishhub-oss/fishhub-server/internal/peripheral"
+	"github.com/fishhub-oss/fishhub-server/internal/provisioning"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/render"
 )
@@ -23,7 +25,7 @@ type DeviceResponse struct {
 
 // DevicesHandler handles GET /api/devices (session auth).
 type DevicesHandler struct {
-	Service *DeviceService
+	Service *device.Service
 }
 
 func (h *DevicesHandler) List(w http.ResponseWriter, r *http.Request) {
@@ -52,7 +54,7 @@ func (h *DevicesHandler) List(w http.ResponseWriter, r *http.Request) {
 
 // ReadingsQueryHandler handles GET /api/devices/{id}/readings (session auth).
 type ReadingsQueryHandler struct {
-	Service *ReadingsService
+	Service *measurement.ReadingsService
 }
 
 type ReadingPointResponse struct {
@@ -106,7 +108,7 @@ func (h *ReadingsQueryHandler) List(w http.ResponseWriter, r *http.Request) {
 		measurements = strings.Split(v, ",")
 	}
 
-	points, err := h.Service.Query(r.Context(), claims.UserID, ReadingQuery{
+	points, err := h.Service.Query(r.Context(), claims.UserID, measurement.Query{
 		DeviceID:     deviceID,
 		From:         from,
 		To:           to,
@@ -114,7 +116,7 @@ func (h *ReadingsQueryHandler) List(w http.ResponseWriter, r *http.Request) {
 		Measurements: measurements,
 	})
 	if err != nil {
-		if errors.Is(err, ErrDeviceNotFound) {
+		if errors.Is(err, device.ErrNotFound) {
 			apierr.Write(w, http.StatusNotFound, "device_not_found", "device not found")
 			return
 		}
@@ -139,7 +141,7 @@ func (h *ReadingsQueryHandler) List(w http.ResponseWriter, r *http.Request) {
 
 // DeleteDeviceHandler handles DELETE /api/devices/{id} (session auth).
 type DeleteDeviceHandler struct {
-	Service *DeviceService
+	Service *device.Service
 }
 
 func (h *DeleteDeviceHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -151,7 +153,7 @@ func (h *DeleteDeviceHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 
 	deviceID := chi.URLParam(r, "id")
 	if err := h.Service.Delete(r.Context(), deviceID, claims.UserID); err != nil {
-		if errors.Is(err, ErrDeviceNotFound) {
+		if errors.Is(err, device.ErrNotFound) {
 			apierr.Write(w, http.StatusNotFound, "device_not_found", "device not found")
 			return
 		}
@@ -164,7 +166,7 @@ func (h *DeleteDeviceHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 
 // PatchDeviceHandler handles PATCH /api/devices/{id} (session auth).
 type PatchDeviceHandler struct {
-	Service *DeviceService
+	Service *device.Service
 }
 
 type patchDeviceRequest struct {
@@ -185,9 +187,9 @@ func (h *PatchDeviceHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	deviceID := chi.URLParam(r, "id")
-	device, err := h.Service.Patch(r.Context(), deviceID, claims.UserID, req.Name)
+	d, err := h.Service.Patch(r.Context(), deviceID, claims.UserID, req.Name)
 	if err != nil {
-		if errors.Is(err, ErrDeviceNotFound) {
+		if errors.Is(err, device.ErrNotFound) {
 			apierr.Write(w, http.StatusNotFound, "device_not_found", "device not found")
 			return
 		}
@@ -196,15 +198,15 @@ func (h *PatchDeviceHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	render.JSON(w, r, DeviceResponse{
-		ID:        device.ID,
-		Name:      device.Name,
-		CreatedAt: device.CreatedAt.UTC().Format(time.RFC3339),
+		ID:        d.ID,
+		Name:      d.Name,
+		CreatedAt: d.CreatedAt.UTC().Format(time.RFC3339),
 	})
 }
 
 // ProvisionHandler handles POST /api/devices/provision (session auth).
 type ProvisionHandler struct {
-	Service *ProvisioningService
+	Service *provisioning.Service
 }
 
 type provisionResponse struct {
@@ -230,7 +232,7 @@ func (h *ProvisionHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 // ActivateHandler handles POST /devices/activate (no auth — called by the device).
 type ActivateHandler struct {
-	Service *ActivationService
+	Service *provisioning.ActivationService
 }
 
 type activateRequest struct {
@@ -251,11 +253,11 @@ func (h *ActivateHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	result, err := h.Service.Activate(r.Context(), req.Code)
 	if err != nil {
-		if errors.Is(err, ErrCodeNotFound) {
+		if errors.Is(err, provisioning.ErrCodeNotFound) {
 			apierr.Write(w, http.StatusNotFound, "provisioning_code_not_found", "provisioning code not found")
 			return
 		}
-		if errors.Is(err, ErrCodeAlreadyUsed) {
+		if errors.Is(err, provisioning.ErrCodeAlreadyUsed) {
 			apierr.Write(w, http.StatusConflict, "provisioning_code_conflict", "provisioning code already used")
 			return
 		}
@@ -272,7 +274,7 @@ func (h *ActivateHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 // ActivationStatusHandler handles GET /devices/{id}/status (device JWT auth).
 type ActivationStatusHandler struct {
-	Store    DeviceStore
+	Store    device.Store
 	MQTTHost string
 	MQTTPort int
 }
@@ -300,7 +302,7 @@ func (h *ActivationStatusHandler) ServeHTTP(w http.ResponseWriter, r *http.Reque
 
 	status, err := h.Store.GetActivationStatus(r.Context(), deviceID)
 	if err != nil {
-		if errors.Is(err, ErrDeviceNotFound) {
+		if errors.Is(err, device.ErrNotFound) {
 			apierr.Write(w, http.StatusNotFound, "device_not_found", "device not found")
 			return
 		}
@@ -322,11 +324,6 @@ func (h *ActivationStatusHandler) ServeHTTP(w http.ResponseWriter, r *http.Reque
 	})
 }
 
-// CommandPublisher publishes a payload to an MQTT topic.
-type CommandPublisher interface {
-	Publish(ctx context.Context, topic string, payload []byte) error
-}
-
 type LastReadingResponse struct {
 	Timestamp string         `json:"timestamp"`
 	Values    map[string]any `json:"values"`
@@ -340,16 +337,16 @@ type PeripheralResponse struct {
 	Pin         int                  `json:"pin"`
 	Category    string               `json:"category"`
 	ControlMode *string              `json:"control_mode"`
-	Schedule    []ScheduleWindow     `json:"schedule"`
+	Schedule    []peripheral.ScheduleWindow `json:"schedule"`
 	LastReading *LastReadingResponse `json:"last_reading"`
 	CreatedAt   string               `json:"created_at"`
 	UpdatedAt   string               `json:"updated_at"`
 }
 
-func peripheralResponse(p Peripheral) PeripheralResponse {
+func peripheralResponse(p peripheral.Peripheral) PeripheralResponse {
 	schedule := p.Schedule
 	if schedule == nil {
-		schedule = []ScheduleWindow{}
+		schedule = []peripheral.ScheduleWindow{}
 	}
 	var lastReading *LastReadingResponse
 	if p.LastReading != nil {
@@ -375,14 +372,14 @@ func peripheralResponse(p Peripheral) PeripheralResponse {
 
 // CreatePeripheralHandler handles POST /api/devices/{id}/peripherals (session auth).
 type CreatePeripheralHandler struct {
-	Service *PeripheralService
+	Service *peripheral.Service
 }
 
 type createPeripheralRequest struct {
 	Name     string `json:"name"`
 	Kind     string `json:"kind"`
 	Pin      int    `json:"pin"`
-	Category string `json:"category"` // optional; defaults to "sensor"
+	Category string `json:"category"`
 }
 
 func (h *CreatePeripheralHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -412,15 +409,15 @@ func (h *CreatePeripheralHandler) ServeHTTP(w http.ResponseWriter, r *http.Reque
 	deviceID := chi.URLParam(r, "id")
 	p, err := h.Service.Register(r.Context(), deviceID, claims.UserID, req.Name, req.Kind, req.Category, req.Pin)
 	if err != nil {
-		if errors.Is(err, ErrDeviceNotFound) {
+		if errors.Is(err, device.ErrNotFound) {
 			apierr.Write(w, http.StatusNotFound, "device_not_found", "device not found")
 			return
 		}
-		if errors.Is(err, ErrPeripheralAlreadyExists) {
+		if errors.Is(err, peripheral.ErrAlreadyExists) {
 			apierr.Write(w, http.StatusConflict, "peripheral_name_conflict", "a peripheral with that name already exists")
 			return
 		}
-		if errors.Is(err, ErrPeripheralPinInUse) {
+		if errors.Is(err, peripheral.ErrPinInUse) {
 			apierr.Write(w, http.StatusConflict, "peripheral_pin_conflict", "pin already in use by another peripheral")
 			return
 		}
@@ -434,7 +431,7 @@ func (h *CreatePeripheralHandler) ServeHTTP(w http.ResponseWriter, r *http.Reque
 
 // ListPeripheralsHandler handles GET /api/devices/{id}/peripherals (session auth).
 type ListPeripheralsHandler struct {
-	Service *PeripheralService
+	Service *peripheral.Service
 }
 
 func (h *ListPeripheralsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -460,7 +457,7 @@ func (h *ListPeripheralsHandler) ServeHTTP(w http.ResponseWriter, r *http.Reques
 
 // SetPeripheralScheduleHandler handles PUT /api/devices/{id}/peripherals/{peripheralId}/schedule (session auth).
 type SetPeripheralScheduleHandler struct {
-	Service *PeripheralService
+	Service *peripheral.Service
 }
 
 func (h *SetPeripheralScheduleHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -470,7 +467,7 @@ func (h *SetPeripheralScheduleHandler) ServeHTTP(w http.ResponseWriter, r *http.
 		return
 	}
 
-	var schedule []ScheduleWindow
+	var schedule []peripheral.ScheduleWindow
 	if err := render.DecodeJSON(r.Body, &schedule); err != nil {
 		apierr.Write(w, http.StatusBadRequest, "invalid_request", "invalid request body")
 		return
@@ -480,7 +477,7 @@ func (h *SetPeripheralScheduleHandler) ServeHTTP(w http.ResponseWriter, r *http.
 	peripheralID := chi.URLParam(r, "peripheralId")
 	p, err := h.Service.SetSchedule(r.Context(), deviceID, claims.UserID, peripheralID, schedule)
 	if err != nil {
-		if errors.Is(err, ErrPeripheralNotFound) {
+		if errors.Is(err, peripheral.ErrNotFound) {
 			apierr.Write(w, http.StatusNotFound, "peripheral_not_found", "peripheral not found")
 			return
 		}
@@ -493,7 +490,7 @@ func (h *SetPeripheralScheduleHandler) ServeHTTP(w http.ResponseWriter, r *http.
 
 // DeletePeripheralHandler handles DELETE /api/devices/{id}/peripherals/{peripheralId} (session auth).
 type DeletePeripheralHandler struct {
-	Service *PeripheralService
+	Service *peripheral.Service
 }
 
 func (h *DeletePeripheralHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -506,7 +503,7 @@ func (h *DeletePeripheralHandler) ServeHTTP(w http.ResponseWriter, r *http.Reque
 	deviceID := chi.URLParam(r, "id")
 	peripheralID := chi.URLParam(r, "peripheralId")
 	if err := h.Service.Delete(r.Context(), deviceID, claims.UserID, peripheralID); err != nil {
-		if errors.Is(err, ErrPeripheralNotFound) {
+		if errors.Is(err, peripheral.ErrNotFound) {
 			apierr.Write(w, http.StatusNotFound, "peripheral_not_found", "peripheral not found")
 			return
 		}
@@ -519,7 +516,7 @@ func (h *DeletePeripheralHandler) ServeHTTP(w http.ResponseWriter, r *http.Reque
 
 // SetControlModeHandler handles PATCH /api/devices/{id}/peripherals/{peripheralId}/control-mode (session auth).
 type SetControlModeHandler struct {
-	Service *PeripheralService
+	Service *peripheral.Service
 }
 
 type setControlModeRequest struct {
@@ -547,11 +544,11 @@ func (h *SetControlModeHandler) ServeHTTP(w http.ResponseWriter, r *http.Request
 	peripheralID := chi.URLParam(r, "peripheralId")
 	p, err := h.Service.SetControlMode(r.Context(), deviceID, claims.UserID, peripheralID, req.Mode)
 	if err != nil {
-		if errors.Is(err, ErrPeripheralNotFound) {
+		if errors.Is(err, peripheral.ErrNotFound) {
 			apierr.Write(w, http.StatusNotFound, "peripheral_not_found", "peripheral not found")
 			return
 		}
-		if errors.Is(err, ErrNotAnActuator) {
+		if errors.Is(err, peripheral.ErrNotAnActuator) {
 			apierr.Write(w, http.StatusUnprocessableEntity, "not_an_actuator", "control mode is only supported for actuator peripherals")
 			return
 		}
@@ -564,7 +561,7 @@ func (h *SetControlModeHandler) ServeHTTP(w http.ResponseWriter, r *http.Request
 
 // CommandHandler handles POST /api/devices/{id}/peripherals/{peripheralId}/commands (session auth).
 type CommandHandler struct {
-	Service *PeripheralService
+	Service *peripheral.Service
 }
 
 func (h *CommandHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -584,12 +581,12 @@ func (h *CommandHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.Service.SendCommand(r.Context(), deviceID, claims.UserID, peripheralName, body); err != nil {
-		if errors.Is(err, ErrPeripheralNotFound) {
+		if errors.Is(err, peripheral.ErrNotFound) {
 			apierr.Write(w, http.StatusNotFound, "peripheral_not_found", "peripheral not found")
 			return
 		}
-		if errors.Is(err, ErrInvalidCommand) {
-			apierr.Write(w, http.StatusBadRequest, "invalid_request", ErrInvalidCommand.Error())
+		if errors.Is(err, peripheral.ErrInvalidCommand) {
+			apierr.Write(w, http.StatusBadRequest, "invalid_request", peripheral.ErrInvalidCommand.Error())
 			return
 		}
 		apierr.Write(w, http.StatusInternalServerError, "internal_error", "internal server error")

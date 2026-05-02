@@ -1,4 +1,4 @@
-package sensors_test
+package api_test
 
 import (
 	"context"
@@ -6,14 +6,19 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"io"
+	"log/slog"
 	"net/http/httptest"
 	"testing"
 	"time"
 
 	"github.com/fishhub-oss/fishhub-server/internal/device"
+	"github.com/fishhub-oss/fishhub-server/internal/measurement"
 	"github.com/fishhub-oss/fishhub-server/internal/outbox"
-	"github.com/fishhub-oss/fishhub-server/internal/sensors"
+	"github.com/fishhub-oss/fishhub-server/internal/peripheral"
 )
+
+var discardLogger = slog.New(slog.NewTextHandler(io.Discard, nil))
 
 func assertErrorCode(t *testing.T, rec *httptest.ResponseRecorder, wantStatus int, wantCode string) {
 	t.Helper()
@@ -132,11 +137,11 @@ func (s *stubSigner) Issuer() string                    { return "" }
 
 type stubReadingWriter struct {
 	called  bool
-	reading sensors.Reading
+	reading measurement.Reading
 	err     error
 }
 
-func (s *stubReadingWriter) WriteReading(_ context.Context, r sensors.Reading) error {
+func (s *stubReadingWriter) WriteReading(_ context.Context, r measurement.Reading) error {
 	s.called = true
 	s.reading = r
 	return s.err
@@ -145,15 +150,15 @@ func (s *stubReadingWriter) WriteReading(_ context.Context, r sensors.Reading) e
 // ── ReadingQuerier ────────────────────────────────────────────────────────────
 
 type stubReadingQuerier struct {
-	points []sensors.ReadingPoint
+	points []measurement.Point
 	err    error
 }
 
-func (s *stubReadingQuerier) QueryReadings(_ context.Context, _ sensors.ReadingQuery) ([]sensors.ReadingPoint, error) {
+func (s *stubReadingQuerier) QueryReadings(_ context.Context, _ measurement.Query) ([]measurement.Point, error) {
 	return s.points, s.err
 }
 
-func (s *stubReadingQuerier) QueryLastReadings(_ context.Context, _ string) (*sensors.ReadingPoint, error) {
+func (s *stubReadingQuerier) QueryLastReadings(_ context.Context, _ string) (*measurement.Point, error) {
 	return nil, nil
 }
 
@@ -195,34 +200,45 @@ func (s *stubActivationStatusStore) GetActivationStatus(_ context.Context, _ str
 // ── PeripheralStore ───────────────────────────────────────────────────────────
 
 type stubPeripheralStore struct {
-	created          sensors.Peripheral
-	createErr        error
-	listed           []sensors.Peripheral
-	listErr          error
-	scheduled        sensors.Peripheral
-	schedErr         error
-	controlModeP     sensors.Peripheral
-	controlModeErr   error
-	deleteErr        error
+	created        peripheral.Peripheral
+	createErr      error
+	listed         []peripheral.Peripheral
+	listErr        error
+	scheduled      peripheral.Peripheral
+	schedErr       error
+	controlModeP   peripheral.Peripheral
+	controlModeErr error
+	deleteErr      error
 }
 
-func (s *stubPeripheralStore) CreatePeripheral(_ context.Context, _ *sql.Tx, _, _, _, _, _ string, _ int) (sensors.Peripheral, error) {
+func (s *stubPeripheralStore) CreatePeripheral(_ context.Context, _ *sql.Tx, _, _, _, _, _ string, _ int) (peripheral.Peripheral, error) {
 	return s.created, s.createErr
 }
-func (s *stubPeripheralStore) ListPeripherals(_ context.Context, _, _ string) ([]sensors.Peripheral, error) {
+func (s *stubPeripheralStore) ListPeripherals(_ context.Context, _, _ string) ([]peripheral.Peripheral, error) {
 	return s.listed, s.listErr
 }
-func (s *stubPeripheralStore) GetPeripheral(_ context.Context, _, _, _ string) (sensors.Peripheral, error) {
+func (s *stubPeripheralStore) GetPeripheral(_ context.Context, _, _, _ string) (peripheral.Peripheral, error) {
 	return s.created, s.createErr
 }
-func (s *stubPeripheralStore) SetPeripheralSchedule(_ context.Context, _, _, _ string, _ []sensors.ScheduleWindow) (sensors.Peripheral, error) {
+func (s *stubPeripheralStore) SetPeripheralSchedule(_ context.Context, _, _, _ string, _ []peripheral.ScheduleWindow) (peripheral.Peripheral, error) {
 	return s.scheduled, s.schedErr
 }
-func (s *stubPeripheralStore) SetControlMode(_ context.Context, _ *sql.Tx, _, _, _, _ string) (sensors.Peripheral, error) {
+func (s *stubPeripheralStore) SetControlMode(_ context.Context, _ *sql.Tx, _, _, _, _ string) (peripheral.Peripheral, error) {
 	return s.controlModeP, s.controlModeErr
 }
-func (s *stubPeripheralStore) DeletePeripheral(_ context.Context, _ *sql.Tx, _, _, _ string) (sensors.Peripheral, error) {
+func (s *stubPeripheralStore) DeletePeripheral(_ context.Context, _ *sql.Tx, _, _, _ string) (peripheral.Peripheral, error) {
 	return s.created, s.deleteErr
+}
+
+// ── deviceFinderBridge ────────────────────────────────────────────────────────
+
+type stubDeviceFinder struct {
+	device device.Device
+	err    error
+}
+
+func (s *stubDeviceFinder) FindByIDAndUserID(_ context.Context, _, _ string) error {
+	return s.err
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────

@@ -1,4 +1,4 @@
-package sensors_test
+package provisioning_test
 
 import (
 	"context"
@@ -6,14 +6,15 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/fishhub-oss/fishhub-server/internal/device"
 	"github.com/fishhub-oss/fishhub-server/internal/platform"
-	"github.com/fishhub-oss/fishhub-server/internal/sensors"
+	"github.com/fishhub-oss/fishhub-server/internal/provisioning"
 	"github.com/fishhub-oss/fishhub-server/internal/testutil"
 )
 
 func TestGetOrCreateCode_integration(t *testing.T) {
 	db := testutil.NewTestDB(t)
-	store := sensors.NewProvisioningStore(db)
+	store := provisioning.NewStore(db)
 	ctx := context.Background()
 	userID := platform.SeedUserID()
 
@@ -53,7 +54,7 @@ func TestGetOrCreateCode_integration(t *testing.T) {
 
 func TestClaimCode_integration(t *testing.T) {
 	db := testutil.NewTestDB(t)
-	store := sensors.NewProvisioningStore(db)
+	store := provisioning.NewStore(db)
 	ctx := context.Background()
 
 	insertUser := func(t *testing.T, suffix string) string {
@@ -100,14 +101,14 @@ func TestClaimCode_integration(t *testing.T) {
 		}
 
 		_, _, err = store.ClaimCode(ctx, code)
-		if !errors.Is(err, sensors.ErrCodeAlreadyUsed) {
+		if !errors.Is(err, provisioning.ErrCodeAlreadyUsed) {
 			t.Errorf("expected ErrCodeAlreadyUsed, got %v", err)
 		}
 	})
 
 	t.Run("unknown code returns ErrCodeNotFound", func(t *testing.T) {
 		_, _, err := store.ClaimCode(ctx, "XXXXXX")
-		if !errors.Is(err, sensors.ErrCodeNotFound) {
+		if !errors.Is(err, provisioning.ErrCodeNotFound) {
 			t.Errorf("expected ErrCodeNotFound, got %v", err)
 		}
 	})
@@ -115,8 +116,8 @@ func TestClaimCode_integration(t *testing.T) {
 
 func TestActivate_integration(t *testing.T) {
 	db := testutil.NewTestDB(t)
-	store := sensors.NewProvisioningStore(db)
-	deviceStore := sensors.NewDeviceStore(db)
+	store := provisioning.NewStore(db)
+	deviceStore := device.NewStore(db)
 	ctx := context.Background()
 	userID := platform.SeedUserID()
 
@@ -176,7 +177,6 @@ func TestActivate_integration(t *testing.T) {
 			t.Fatalf("setup claim: %v", err)
 		}
 
-		// after claim, user can get a fresh code
 		code2, err := store.GetOrCreateCode(ctx, uid)
 		if err != nil {
 			t.Fatalf("second provision: %v", err)

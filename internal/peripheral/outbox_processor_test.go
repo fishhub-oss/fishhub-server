@@ -1,19 +1,56 @@
-package sensors_test
+package peripheral_test
 
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"io"
+	"log/slog"
 	"testing"
 
 	"github.com/fishhub-oss/fishhub-server/internal/outbox"
-	"github.com/fishhub-oss/fishhub-server/internal/sensors"
+	"github.com/fishhub-oss/fishhub-server/internal/peripheral"
 )
+
+var discardLogger = slog.New(slog.NewTextHandler(io.Discard, nil))
+
+var errSentinel = errors.New("store error")
+
+type stubPublisher struct {
+	publishedTopic   string
+	publishedPayload []byte
+	called           bool
+	err              error
+}
+
+func (s *stubPublisher) Publish(_ context.Context, topic string, payload []byte) error {
+	s.publishedTopic = topic
+	s.publishedPayload = payload
+	s.called = true
+	return s.err
+}
+
+func (s *stubPublisher) PublishRetained(_ context.Context, topic string, payload []byte) error {
+	s.publishedTopic = topic
+	s.publishedPayload = payload
+	s.called = true
+	return s.err
+}
+
+// peripheralPushPayload mirrors the unexported type for test assertions.
+type peripheralPushPayload struct {
+	DeviceID string `json:"device_id"`
+	Name     string `json:"name"`
+	Op       string `json:"op"`
+	Kind     string `json:"kind,omitempty"`
+	Pin      int    `json:"pin,omitempty"`
+}
 
 func TestPeripheralPushProcessor_create(t *testing.T) {
 	pub := &stubPublisher{}
-	proc := sensors.NewPeripheralPushProcessor(pub, discardLogger)
+	proc := peripheral.NewPeripheralPushProcessor(pub, discardLogger)
 
-	payload, _ := json.Marshal(sensors.PeripheralPushPayload{
+	payload, _ := json.Marshal(peripheralPushPayload{
 		DeviceID: "dev-1",
 		Name:     "light",
 		Op:       "create",
@@ -31,7 +68,7 @@ func TestPeripheralPushProcessor_create(t *testing.T) {
 	if pub.publishedTopic != wantTopic {
 		t.Errorf("expected topic %q, got %q", wantTopic, pub.publishedTopic)
 	}
-	var msg sensors.PeripheralPushPayload
+	var msg peripheralPushPayload
 	if err := json.Unmarshal(pub.publishedPayload, &msg); err != nil {
 		t.Fatalf("unmarshal published payload: %v", err)
 	}
@@ -42,9 +79,9 @@ func TestPeripheralPushProcessor_create(t *testing.T) {
 
 func TestPeripheralPushProcessor_delete(t *testing.T) {
 	pub := &stubPublisher{}
-	proc := sensors.NewPeripheralPushProcessor(pub, discardLogger)
+	proc := peripheral.NewPeripheralPushProcessor(pub, discardLogger)
 
-	payload, _ := json.Marshal(sensors.PeripheralPushPayload{
+	payload, _ := json.Marshal(peripheralPushPayload{
 		DeviceID: "dev-1",
 		Name:     "light",
 		Op:       "delete",
@@ -53,7 +90,7 @@ func TestPeripheralPushProcessor_delete(t *testing.T) {
 	if err := proc.Process(context.Background(), outbox.Event{Payload: payload}); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	var msg sensors.PeripheralPushPayload
+	var msg peripheralPushPayload
 	if err := json.Unmarshal(pub.publishedPayload, &msg); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
@@ -64,9 +101,9 @@ func TestPeripheralPushProcessor_delete(t *testing.T) {
 
 func TestPeripheralPushProcessor_publishError(t *testing.T) {
 	pub := &stubPublisher{err: errSentinel}
-	proc := sensors.NewPeripheralPushProcessor(pub, discardLogger)
+	proc := peripheral.NewPeripheralPushProcessor(pub, discardLogger)
 
-	payload, _ := json.Marshal(sensors.PeripheralPushPayload{DeviceID: "d", Name: "n", Op: "create"})
+	payload, _ := json.Marshal(peripheralPushPayload{DeviceID: "d", Name: "n", Op: "create"})
 	err := proc.Process(context.Background(), outbox.Event{Payload: payload})
 	if err == nil {
 		t.Fatal("expected error, got nil")
@@ -74,8 +111,8 @@ func TestPeripheralPushProcessor_publishError(t *testing.T) {
 }
 
 func TestPeripheralPushProcessor_eventType(t *testing.T) {
-	proc := sensors.NewPeripheralPushProcessor(&stubPublisher{}, discardLogger)
-	if proc.EventType() != sensors.EventTypePeripheralPush {
+	proc := peripheral.NewPeripheralPushProcessor(&stubPublisher{}, discardLogger)
+	if proc.EventType() != "peripheral.push" {
 		t.Errorf("unexpected event type: %q", proc.EventType())
 	}
 }

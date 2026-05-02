@@ -1,18 +1,19 @@
-package sensors_test
+package measurement_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/fishhub-oss/fishhub-server/internal/device"
-	"github.com/fishhub-oss/fishhub-server/internal/sensors"
+	"github.com/fishhub-oss/fishhub-server/internal/measurement"
 )
 
 const validReadingPayload = `[{"bn":"fishhub/device/","bt":1713000000},{"n":"temperature","u":"Cel","v":23.4}]`
 
-func newReadingsMQTTHandler(store *stubDeviceStore, writer *stubReadingWriter) *sensors.ReadingsMQTTHandler {
-	svc := sensors.NewReadingsService(store, nil, writer, discardLogger)
-	return sensors.NewReadingsMQTTHandler(store, svc, discardLogger)
+func newReadingsMQTTHandler(store *stubDeviceStore, writer *stubReadingWriter) *measurement.ReadingsMQTTHandler {
+	svc := measurement.NewReadingsService(&stubDeviceFinder{}, nil, writer, discardLogger)
+	return measurement.NewReadingsMQTTHandler(store, svc, discardLogger)
 }
 
 func TestReadingsMQTTHandler_Handle(t *testing.T) {
@@ -37,7 +38,7 @@ func TestReadingsMQTTHandler_Handle(t *testing.T) {
 	})
 
 	t.Run("device not found does not write", func(t *testing.T) {
-		store := &stubDeviceStore{findByIDErr: sensors.ErrDeviceNotFound}
+		store := &stubDeviceStore{findByIDErr: device.ErrNotFound}
 		writer := &stubReadingWriter{}
 		h := newReadingsMQTTHandler(store, writer)
 
@@ -80,7 +81,7 @@ func TestReadingsMQTTHandler_Handle(t *testing.T) {
 	})
 
 	t.Run("store error does not panic", func(t *testing.T) {
-		store := &stubDeviceStore{findByIDErr: errSentinel}
+		store := &stubDeviceStore{findByIDErr: errors.New("db down")}
 		writer := &stubReadingWriter{}
 		h := newReadingsMQTTHandler(store, writer)
 
