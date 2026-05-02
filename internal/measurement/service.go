@@ -2,15 +2,12 @@ package measurement
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
 	"time"
 
 	"github.com/fishhub-oss/fishhub-server/internal/senml"
 )
-
-var ErrInfluxWrite = errors.New("failed to persist reading")
 
 // DeviceFinder is the minimal interface ReadingsService needs to verify ownership.
 // Implementations should return a sentinel error that callers can check with errors.Is.
