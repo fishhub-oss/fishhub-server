@@ -1,39 +1,30 @@
 package sensors
 
 import (
-	"errors"
-	"time"
-
 	"github.com/fishhub-oss/fishhub-server/internal/device"
+	"github.com/fishhub-oss/fishhub-server/internal/measurement"
+	"github.com/fishhub-oss/fishhub-server/internal/peripheral"
+	"github.com/fishhub-oss/fishhub-server/internal/provisioning"
 )
 
-type Peripheral struct {
-	ID          string
-	DeviceID    string
-	Name        string
-	Kind        string
-	Pin         int
-	Category    string  // "sensor" | "actuator"
-	ControlMode *string // nil for sensors; "automatic"|"manual" for actuators
-	Schedule    []ScheduleWindow
-	LastReading *ReadingPoint
-	CreatedAt   time.Time
-	UpdatedAt   time.Time
-}
+// Peripheral types aliased from internal/peripheral for backward compat.
+type Peripheral = peripheral.Peripheral
+type ScheduleWindow = peripheral.ScheduleWindow
 
-type ScheduleWindow struct {
-	From  string  `json:"from"`
-	To    string  `json:"to"`
-	Value float64 `json:"value"`
-	Days  []int   `json:"days,omitempty"`
-}
+// Reading types aliased from internal/measurement for backward compat.
+type ReadingPoint = measurement.Point
+type Reading = measurement.Reading
+type ReadingQuery = measurement.Query
+type ReadingWriter = measurement.Writer
+type ReadingQuerier = measurement.Querier
 
-var ErrNotAnActuator           = errors.New("peripheral is not an actuator")
+// Error sentinels.
+var ErrNotAnActuator           = peripheral.ErrNotAnActuator
 var ErrDeviceNotFound          = device.ErrNotFound
-var ErrCodeNotFound            = errors.New("provisioning code not found")
-var ErrCodeAlreadyUsed         = errors.New("provisioning code already used")
-var ErrInvalidCommand          = errors.New("action must be 'set' or 'schedule'")
-var ErrInfluxWrite             = errors.New("failed to persist reading")
-var ErrPeripheralNotFound      = errors.New("peripheral not found")
-var ErrPeripheralAlreadyExists = errors.New("peripheral already exists")
-var ErrPeripheralPinInUse      = errors.New("peripheral pin already in use")
+var ErrCodeNotFound            = provisioning.ErrCodeNotFound
+var ErrCodeAlreadyUsed         = provisioning.ErrCodeAlreadyUsed
+var ErrInvalidCommand          = peripheral.ErrInvalidCommand
+var ErrInfluxWrite             = measurement.ErrInfluxWrite
+var ErrPeripheralNotFound      = peripheral.ErrNotFound
+var ErrPeripheralAlreadyExists = peripheral.ErrAlreadyExists
+var ErrPeripheralPinInUse      = peripheral.ErrPinInUse
