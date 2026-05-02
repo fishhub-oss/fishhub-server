@@ -9,8 +9,8 @@ import (
 
 	"github.com/fishhub-oss/fishhub-server/internal/apierr"
 	"github.com/fishhub-oss/fishhub-server/internal/auth"
+	"github.com/fishhub-oss/fishhub-server/internal/device"
 	"github.com/fishhub-oss/fishhub-server/internal/devicejwt"
-	"github.com/fishhub-oss/fishhub-server/internal/sensors"
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/go-chi/render"
 	"github.com/golang-jwt/jwt/v5"
@@ -87,7 +87,7 @@ func DeviceAuthenticator(signer devicejwt.Signer) func(http.Handler) http.Handle
 				return
 			}
 
-			ctx := context.WithValue(r.Context(), sensors.DeviceContextKey, sensors.DeviceInfo{
+			ctx := context.WithValue(r.Context(), device.ContextKey, device.Info{
 				DeviceID: deviceID,
 				UserID:   userID,
 			})

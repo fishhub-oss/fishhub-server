@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/fishhub-oss/fishhub-server/internal/device"
 	"github.com/fishhub-oss/fishhub-server/internal/outbox"
 	"github.com/fishhub-oss/fishhub-server/internal/sensors"
 )
@@ -33,35 +34,35 @@ func assertErrorCode(t *testing.T, rec *httptest.ResponseRecorder, wantStatus in
 // ── DeviceStore ───────────────────────────────────────────────────────────────
 
 type stubDeviceStore struct {
-	device         sensors.Device
+	device         device.Device
 	findErr        error
-	findByIDDevice sensors.Device
+	findByIDDevice device.Device
 	findByIDErr    error
-	listDevices    []sensors.Device
+	listDevices    []device.Device
 	listErr        error
-	patchDevice    sensors.Device
+	patchDevice    device.Device
 	patchErr       error
 	deleteMQTTUser string
 	deleteErr      error
 }
 
-func (s *stubDeviceStore) ListByUserID(_ context.Context, _ string) ([]sensors.Device, error) {
+func (s *stubDeviceStore) ListByUserID(_ context.Context, _ string) ([]device.Device, error) {
 	return s.listDevices, s.listErr
 }
-func (s *stubDeviceStore) FindByID(_ context.Context, _ string) (sensors.Device, error) {
+func (s *stubDeviceStore) FindByID(_ context.Context, _ string) (device.Device, error) {
 	return s.findByIDDevice, s.findByIDErr
 }
-func (s *stubDeviceStore) FindByIDAndUserID(_ context.Context, _, _ string) (sensors.Device, error) {
+func (s *stubDeviceStore) FindByIDAndUserID(_ context.Context, _, _ string) (device.Device, error) {
 	return s.device, s.findErr
 }
-func (s *stubDeviceStore) PatchDevice(_ context.Context, _, _, _ string) (sensors.Device, error) {
+func (s *stubDeviceStore) PatchDevice(_ context.Context, _, _, _ string) (device.Device, error) {
 	return s.patchDevice, s.patchErr
 }
 func (s *stubDeviceStore) DeleteDevice(_ context.Context, _, _ string) (string, error) {
 	return s.deleteMQTTUser, s.deleteErr
 }
-func (s *stubDeviceStore) GetActivationStatus(_ context.Context, _ string) (sensors.ActivationStatus, error) {
-	return sensors.ActivationStatus{}, nil
+func (s *stubDeviceStore) GetActivationStatus(_ context.Context, _ string) (device.ActivationStatus, error) {
+	return device.ActivationStatus{}, nil
 }
 
 // ── ProvisioningStore ─────────────────────────────────────────────────────────
@@ -183,11 +184,11 @@ func (s *stubPublisher) PublishRetained(_ context.Context, topic string, payload
 
 type stubActivationStatusStore struct {
 	stubDeviceStore
-	status sensors.ActivationStatus
+	status device.ActivationStatus
 	err    error
 }
 
-func (s *stubActivationStatusStore) GetActivationStatus(_ context.Context, _ string) (sensors.ActivationStatus, error) {
+func (s *stubActivationStatusStore) GetActivationStatus(_ context.Context, _ string) (device.ActivationStatus, error) {
 	return s.status, s.err
 }
 
@@ -226,8 +227,8 @@ func (s *stubPeripheralStore) DeletePeripheral(_ context.Context, _ *sql.Tx, _, 
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-func newDevice(id string) sensors.Device {
-	return sensors.Device{ID: id, Name: "Tank", CreatedAt: time.Now()}
+func newDevice(id string) device.Device {
+	return device.Device{ID: id, Name: "Tank", CreatedAt: time.Now()}
 }
 
 var errSentinel = errors.New("store error")

@@ -1,77 +1,16 @@
 package sensors
 
 import (
-	"context"
-	"database/sql"
-	"time"
+	"github.com/fishhub-oss/fishhub-server/internal/device"
+	"github.com/fishhub-oss/fishhub-server/internal/peripheral"
+	"github.com/fishhub-oss/fishhub-server/internal/provisioning"
 )
 
-type Device struct {
-	ID        string
-	UserID    string
-	Name      string
-	CreatedAt time.Time
-}
+// DeviceStore is an alias for device.Store kept for backward compatibility within this package.
+type DeviceStore = device.Store
 
-// ActivationStatus holds the device's MQTT readiness state.
-type ActivationStatus struct {
-	Ready        bool
-	MQTTUsername string
-	MQTTPassword string
-	MQTTHost     string
-	MQTTPort     int
-}
+// PeripheralStore is an alias for peripheral.Store kept for backward compatibility within this package.
+type PeripheralStore = peripheral.Store
 
-type DeviceStore interface {
-	ListByUserID(ctx context.Context, userID string) ([]Device, error)
-	// FindByID looks up a device by its ID regardless of owner.
-	// Returns ErrDeviceNotFound if the device does not exist or is soft-deleted.
-	FindByID(ctx context.Context, deviceID string) (Device, error)
-	FindByIDAndUserID(ctx context.Context, deviceID, userID string) (Device, error)
-	// PatchDevice updates the name of the device owned by userID.
-	// Returns ErrDeviceNotFound if the device does not exist or is not owned by the user.
-	PatchDevice(ctx context.Context, deviceID, userID, name string) (Device, error)
-	// DeleteDevice soft-deletes the device and returns its mqtt_username for cleanup.
-	// Returns ErrDeviceNotFound if the device does not exist or is not owned by the user.
-	DeleteDevice(ctx context.Context, deviceID, userID string) (mqttUsername string, err error)
-	// GetActivationStatus returns whether the device's MQTT credentials are ready.
-	// Ready = credentials present in DB AND no pending/processing outbox event for the device.
-	// Returns ErrDeviceNotFound if the device does not exist.
-	GetActivationStatus(ctx context.Context, deviceID string) (ActivationStatus, error)
-}
-
-type PeripheralStore interface {
-	// CreatePeripheral inserts a new peripheral for the device owned by userID.
-	// Returns ErrDeviceNotFound if the device does not exist or is not owned by userID.
-	// Returns ErrPeripheralAlreadyExists if an active peripheral with the same name exists.
-	// Returns ErrPeripheralPinInUse if an active peripheral with the same pin exists.
-	// category must be "sensor" or "actuator"; actuators get control_mode defaulted to "automatic".
-	CreatePeripheral(ctx context.Context, tx *sql.Tx, deviceID, userID, name, kind, category string, pin int) (Peripheral, error)
-	// ListPeripherals returns active (non-deleted) peripherals for the device owned by userID.
-	// Returns an empty slice if the device does not exist or is not owned by userID.
-	ListPeripherals(ctx context.Context, deviceID, userID string) ([]Peripheral, error)
-	// GetPeripheral returns a single active peripheral by ID, scoped to the device and user.
-	// Returns ErrPeripheralNotFound if it does not exist or is not reachable by userID.
-	GetPeripheral(ctx context.Context, deviceID, userID, peripheralID string) (Peripheral, error)
-	// SetPeripheralSchedule persists the schedule and returns the updated peripheral.
-	// Returns ErrPeripheralNotFound if the peripheral does not exist or is not reachable by userID.
-	SetPeripheralSchedule(ctx context.Context, deviceID, userID, peripheralID string, schedule []ScheduleWindow) (Peripheral, error)
-	// SetControlMode updates control_mode for an actuator peripheral within the provided transaction.
-	// Returns ErrPeripheralNotFound if the peripheral does not exist or is not reachable by userID.
-	// Returns ErrNotAnActuator if the peripheral's category is not "actuator".
-	SetControlMode(ctx context.Context, tx *sql.Tx, deviceID, userID, peripheralID, mode string) (Peripheral, error)
-	// DeletePeripheral soft-deletes the peripheral (sets deleted_at) and returns it.
-	// Returns ErrPeripheralNotFound if the peripheral does not exist or is not reachable by userID.
-	DeletePeripheral(ctx context.Context, tx *sql.Tx, deviceID, userID, peripheralID string) (Peripheral, error)
-}
-
-type ProvisioningStore interface {
-	// GetOrCreateCode returns the existing unused code for the user, or creates one.
-	GetOrCreateCode(ctx context.Context, userID string) (code string, err error)
-	// ClaimCode marks the code used, creates a new device row, and returns the device ID and user ID.
-	// Returns ErrCodeNotFound if the code is unknown, ErrCodeAlreadyUsed if already claimed.
-	ClaimCode(ctx context.Context, code string) (deviceID, userID string, err error)
-	// Activate stores MQTT credentials on the device row within the provided transaction.
-	// The caller owns the transaction boundary.
-	Activate(ctx context.Context, tx *sql.Tx, deviceID, mqttUsername, mqttPassword string) error
-}
+// ProvisioningStore is an alias for provisioning.Store kept for backward compatibility within this package.
+type ProvisioningStore = provisioning.Store
