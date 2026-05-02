@@ -13,8 +13,6 @@ import (
 	"github.com/fishhub-oss/fishhub-server/internal/mqtt"
 )
 
-var ErrInvalidCommand = errors.New("action must be 'set' or 'schedule'")
-
 // Service orchestrates multi-step device operations.
 type Service struct {
 	store     Store

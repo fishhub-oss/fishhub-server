@@ -6,8 +6,6 @@ import (
 	"errors"
 )
 
-var ErrNotFound = errors.New("device not found")
-
 type Store interface {
 	ListByUserID(ctx context.Context, userID string) ([]Device, error)
 	// FindByID looks up a device by its ID regardless of owner.
