@@ -86,13 +86,6 @@ func TestListPeripheralsHandler(t *testing.T) {
 		}
 	})
 
-	t.Run("no auth returns 401", func(t *testing.T) {
-		svc := peripheral.NewService(nil, &stubPeripheralStore{}, &stubOutboxStore{}, nil, &stubPublisher{}, discardLogger)
-		h := &api.ListPeripheralsHandler{Service: svc}
-		rec := httptest.NewRecorder()
-		h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
-		assertErrorCode(t, rec, http.StatusUnauthorized, "unauthorized")
-	})
 }
 
 // ── SetPeripheralScheduleHandler ─────────────────────────────────────────────
@@ -181,15 +174,6 @@ func TestCreatePeripheralHandler(t *testing.T) {
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, req)
 		assertErrorCode(t, rec, http.StatusBadRequest, "invalid_request")
-	})
-
-	t.Run("no auth returns 401", func(t *testing.T) {
-		svc := peripheral.NewService(nil, &stubPeripheralStore{}, &stubOutboxStore{}, nil, &stubPublisher{}, discardLogger)
-		h := &api.CreatePeripheralHandler{Service: svc}
-		req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{"name":"light","kind":"relay","pin":5}`))
-		rec := httptest.NewRecorder()
-		h.ServeHTTP(rec, req)
-		assertErrorCode(t, rec, http.StatusUnauthorized, "unauthorized")
 	})
 
 	t.Run("already exists returns 409", func(t *testing.T) {
@@ -305,26 +289,11 @@ func TestSetControlModeHandler(t *testing.T) {
 		assertErrorCode(t, rec, http.StatusUnprocessableEntity, "not_an_actuator")
 	})
 
-	t.Run("no auth returns 401", func(t *testing.T) {
-		svc := peripheral.NewService(nil, &stubPeripheralStore{}, &stubOutboxStore{}, nil, &stubPublisher{}, discardLogger)
-		h := &api.SetControlModeHandler{Service: svc}
-		rec := httptest.NewRecorder()
-		h.ServeHTTP(rec, httptest.NewRequest(http.MethodPatch, "/", strings.NewReader(`{"mode":"manual"}`)))
-		assertErrorCode(t, rec, http.StatusUnauthorized, "unauthorized")
-	})
 }
 
 // ── DeletePeripheralHandler ───────────────────────────────────────────────────
 
 func TestDeletePeripheralHandler(t *testing.T) {
-	t.Run("no auth returns 401", func(t *testing.T) {
-		svc := peripheral.NewService(nil, &stubPeripheralStore{}, &stubOutboxStore{}, nil, &stubPublisher{}, discardLogger)
-		h := &api.DeletePeripheralHandler{Service: svc}
-		rec := httptest.NewRecorder()
-		h.ServeHTTP(rec, httptest.NewRequest(http.MethodDelete, "/", nil))
-		assertErrorCode(t, rec, http.StatusUnauthorized, "unauthorized")
-	})
-
 	t.Run("peripheral not found returns 404", func(t *testing.T) {
 		store := &stubPeripheralStore{deleteErr: peripheral.ErrNotFound}
 		svc := newPeripheralService(t, store, &stubPublisher{})

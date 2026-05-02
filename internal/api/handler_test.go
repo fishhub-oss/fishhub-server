@@ -194,13 +194,6 @@ func TestDevicesHandler_List(t *testing.T) {
 		}
 	})
 
-	t.Run("missing claims returns 401", func(t *testing.T) {
-		h := &api.DevicesHandler{Service: newSvc(&stubDeviceStore{})}
-		rec := httptest.NewRecorder()
-		h.List(rec, httptest.NewRequest(http.MethodGet, "/api/devices", nil))
-		assertErrorCode(t, rec, http.StatusUnauthorized, "unauthorized")
-	})
-
 	t.Run("store error returns 500", func(t *testing.T) {
 		h := &api.DevicesHandler{Service: newSvc(&stubDeviceStore{listErr: errors.New("db down")})}
 		req := withClaims(httptest.NewRequest(http.MethodGet, "/api/devices", nil), "usr-1")
@@ -267,14 +260,6 @@ func TestPatchDeviceHandler(t *testing.T) {
 		assertErrorCode(t, rec, http.StatusInternalServerError, "internal_error")
 	})
 
-	t.Run("missing claims returns 401", func(t *testing.T) {
-		h := &api.PatchDeviceHandler{Service: newPatchSvc(&stubDeviceStore{})}
-		req := httptest.NewRequest(http.MethodPatch, "/api/devices/dev-1", strings.NewReader(`{"name":"Tank A"}`))
-		req = withChiParam(req, "id", "dev-1")
-		rec := httptest.NewRecorder()
-		h.ServeHTTP(rec, req)
-		assertErrorCode(t, rec, http.StatusUnauthorized, "unauthorized")
-	})
 }
 
 // ── ProvisionHandler ──────────────────────────────────────────────────────────
@@ -304,14 +289,6 @@ func TestProvisionHandler(t *testing.T) {
 		if _, ok := body["device_id"]; ok {
 			t.Error("device_id should not be present in provision response")
 		}
-	})
-
-	t.Run("missing claims returns 401", func(t *testing.T) {
-		h := &api.ProvisionHandler{Service: newProvSvc(&stubProvisioningStore{})}
-		req := httptest.NewRequest(http.MethodPost, "/api/devices/provision", nil)
-		rec := httptest.NewRecorder()
-		h.ServeHTTP(rec, req)
-		assertErrorCode(t, rec, http.StatusUnauthorized, "unauthorized")
 	})
 
 	t.Run("store error returns 500", func(t *testing.T) {
@@ -578,9 +555,7 @@ func newDeleteHandler(store *stubDeviceStore, mq *stubHiveMQClient) *api.DeleteD
 func TestDeleteDeviceHandler(t *testing.T) {
 	makeReq := func(deviceID, userID string) *http.Request {
 		req := httptest.NewRequest(http.MethodDelete, "/api/devices/"+deviceID, nil)
-		if userID != "" {
-			req = withClaims(req, userID)
-		}
+		req = withClaims(req, userID)
 		req = withChiParam(req, "id", deviceID)
 		return req
 	}
@@ -626,10 +601,4 @@ func TestDeleteDeviceHandler(t *testing.T) {
 		assertErrorCode(t, rec, http.StatusInternalServerError, "internal_error")
 	})
 
-	t.Run("401 when no claims", func(t *testing.T) {
-		h := newDeleteHandler(&stubDeviceStore{}, &stubHiveMQClient{})
-		rec := httptest.NewRecorder()
-		h.ServeHTTP(rec, makeReq("dev-uuid", ""))
-		assertErrorCode(t, rec, http.StatusUnauthorized, "unauthorized")
-	})
 }

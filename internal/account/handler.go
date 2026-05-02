@@ -22,11 +22,7 @@ type meResponse struct {
 }
 
 func (h *MeHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	claims, ok := auth.ClaimsFromContext(r.Context())
-	if !ok {
-		apierr.Write(w, http.StatusUnauthorized, "unauthorized", "missing or invalid credentials")
-		return
-	}
+	claims := auth.MustClaimsFromContext(r.Context())
 
 	account, err := h.Service.Me(r.Context(), claims.UserID)
 	if err != nil {

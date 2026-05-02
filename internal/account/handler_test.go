@@ -75,14 +75,6 @@ func TestMeHandler(t *testing.T) {
 		}
 	})
 
-	t.Run("returns 401 when no claims in context", func(t *testing.T) {
-		h := &account.MeHandler{Service: &account.AccountService{Store: &stubAccountStore{account: validAccount}}}
-		req := httptest.NewRequest(http.MethodGet, "/api/me", nil)
-		w := httptest.NewRecorder()
-		h.ServeHTTP(w, req)
-		assertErrorCode(t, w, http.StatusUnauthorized, "unauthorized")
-	})
-
 	t.Run("returns 404 when account not found", func(t *testing.T) {
 		h := &account.MeHandler{Service: &account.AccountService{Store: &stubAccountStore{err: account.ErrAccountNotFound}}}
 		w := httptest.NewRecorder()

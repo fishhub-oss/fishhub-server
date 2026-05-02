@@ -29,11 +29,7 @@ type DevicesHandler struct {
 }
 
 func (h *DevicesHandler) List(w http.ResponseWriter, r *http.Request) {
-	claims, ok := auth.ClaimsFromContext(r.Context())
-	if !ok {
-		apierr.Write(w, http.StatusUnauthorized, "unauthorized", "missing or invalid credentials")
-		return
-	}
+	claims := auth.MustClaimsFromContext(r.Context())
 
 	devices, err := h.Service.List(r.Context(), claims.UserID)
 	if err != nil {
@@ -70,11 +66,7 @@ type ReadingsQueryResponse struct {
 }
 
 func (h *ReadingsQueryHandler) List(w http.ResponseWriter, r *http.Request) {
-	claims, ok := auth.ClaimsFromContext(r.Context())
-	if !ok {
-		apierr.Write(w, http.StatusUnauthorized, "unauthorized", "missing or invalid credentials")
-		return
-	}
+	claims := auth.MustClaimsFromContext(r.Context())
 
 	deviceID := chi.URLParam(r, "id")
 
@@ -145,11 +137,7 @@ type DeleteDeviceHandler struct {
 }
 
 func (h *DeleteDeviceHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	claims, ok := auth.ClaimsFromContext(r.Context())
-	if !ok {
-		apierr.Write(w, http.StatusUnauthorized, "unauthorized", "missing or invalid credentials")
-		return
-	}
+	claims := auth.MustClaimsFromContext(r.Context())
 
 	deviceID := chi.URLParam(r, "id")
 	if err := h.Service.Delete(r.Context(), deviceID, claims.UserID); err != nil {
@@ -174,11 +162,7 @@ type patchDeviceRequest struct {
 }
 
 func (h *PatchDeviceHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	claims, ok := auth.ClaimsFromContext(r.Context())
-	if !ok {
-		apierr.Write(w, http.StatusUnauthorized, "unauthorized", "missing or invalid credentials")
-		return
-	}
+	claims := auth.MustClaimsFromContext(r.Context())
 
 	var req patchDeviceRequest
 	if err := render.DecodeJSON(r.Body, &req); err != nil || req.Name == "" {
@@ -214,11 +198,7 @@ type provisionResponse struct {
 }
 
 func (h *ProvisionHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	claims, ok := auth.ClaimsFromContext(r.Context())
-	if !ok {
-		apierr.Write(w, http.StatusUnauthorized, "unauthorized", "missing or invalid credentials")
-		return
-	}
+	claims := auth.MustClaimsFromContext(r.Context())
 
 	code, err := h.Service.Provision(r.Context(), claims.UserID)
 	if err != nil {
@@ -383,11 +363,7 @@ type createPeripheralRequest struct {
 }
 
 func (h *CreatePeripheralHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	claims, ok := auth.ClaimsFromContext(r.Context())
-	if !ok {
-		apierr.Write(w, http.StatusUnauthorized, "unauthorized", "missing or invalid credentials")
-		return
-	}
+	claims := auth.MustClaimsFromContext(r.Context())
 
 	var req createPeripheralRequest
 	if err := render.DecodeJSON(r.Body, &req); err != nil {
@@ -435,11 +411,7 @@ type ListPeripheralsHandler struct {
 }
 
 func (h *ListPeripheralsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	claims, ok := auth.ClaimsFromContext(r.Context())
-	if !ok {
-		apierr.Write(w, http.StatusUnauthorized, "unauthorized", "missing or invalid credentials")
-		return
-	}
+	claims := auth.MustClaimsFromContext(r.Context())
 
 	deviceID := chi.URLParam(r, "id")
 	peripherals, err := h.Service.List(r.Context(), deviceID, claims.UserID)
@@ -461,11 +433,7 @@ type SetPeripheralScheduleHandler struct {
 }
 
 func (h *SetPeripheralScheduleHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	claims, ok := auth.ClaimsFromContext(r.Context())
-	if !ok {
-		apierr.Write(w, http.StatusUnauthorized, "unauthorized", "missing or invalid credentials")
-		return
-	}
+	claims := auth.MustClaimsFromContext(r.Context())
 
 	var schedule []peripheral.ScheduleWindow
 	if err := render.DecodeJSON(r.Body, &schedule); err != nil {
@@ -494,11 +462,7 @@ type DeletePeripheralHandler struct {
 }
 
 func (h *DeletePeripheralHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	claims, ok := auth.ClaimsFromContext(r.Context())
-	if !ok {
-		apierr.Write(w, http.StatusUnauthorized, "unauthorized", "missing or invalid credentials")
-		return
-	}
+	claims := auth.MustClaimsFromContext(r.Context())
 
 	deviceID := chi.URLParam(r, "id")
 	peripheralID := chi.URLParam(r, "peripheralId")
@@ -524,11 +488,7 @@ type setControlModeRequest struct {
 }
 
 func (h *SetControlModeHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	claims, ok := auth.ClaimsFromContext(r.Context())
-	if !ok {
-		apierr.Write(w, http.StatusUnauthorized, "unauthorized", "missing or invalid credentials")
-		return
-	}
+	claims := auth.MustClaimsFromContext(r.Context())
 
 	var req setControlModeRequest
 	if err := render.DecodeJSON(r.Body, &req); err != nil {
@@ -565,11 +525,7 @@ type CommandHandler struct {
 }
 
 func (h *CommandHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	claims, ok := auth.ClaimsFromContext(r.Context())
-	if !ok {
-		apierr.Write(w, http.StatusUnauthorized, "unauthorized", "missing or invalid credentials")
-		return
-	}
+	claims := auth.MustClaimsFromContext(r.Context())
 
 	deviceID := chi.URLParam(r, "id")
 	peripheralName := chi.URLParam(r, "peripheralId")
