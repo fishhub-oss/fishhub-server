@@ -1,4 +1,4 @@
-package sensors_test
+package measurement_test
 
 import (
 	"context"
@@ -11,7 +11,7 @@ import (
 	"time"
 
 	influxdb3 "github.com/InfluxCommunity/influxdb3-go/v2/influxdb3"
-	"github.com/fishhub-oss/fishhub-server/internal/sensors"
+	"github.com/fishhub-oss/fishhub-server/internal/measurement"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"
 )
@@ -104,13 +104,13 @@ func TestWriteReading_Integration(t *testing.T) {
 	host := startInfluxDB(t)
 	createDatabase(t, host)
 
-	writer, err := sensors.NewInfluxClient(host, testToken, testDatabase)
+	writer, err := measurement.NewInfluxClient(host, testToken, testDatabase)
 	if err != nil {
 		t.Fatalf("new writer: %v", err)
 	}
 
 	ts := time.Unix(1713000000, 0).UTC()
-	err = writer.WriteReading(context.Background(), sensors.Reading{
+	err = writer.WriteReading(context.Background(), measurement.Reading{
 		DeviceID:  "test-device",
 		UserID:    "test-user",
 		Timestamp: ts,
@@ -162,13 +162,13 @@ func TestWriteAndQueryStringField_Integration(t *testing.T) {
 	host := startInfluxDB(t)
 	createDatabase(t, host)
 
-	client, err := sensors.NewInfluxClient(host, testToken, testDatabase)
+	client, err := measurement.NewInfluxClient(host, testToken, testDatabase)
 	if err != nil {
 		t.Fatalf("new client: %v", err)
 	}
 
 	ts := time.Unix(1713000001, 0).UTC()
-	err = client.WriteReading(context.Background(), sensors.Reading{
+	err = client.WriteReading(context.Background(), measurement.Reading{
 		DeviceID:  "string-test-device",
 		UserID:    "test-user",
 		Timestamp: ts,
@@ -181,7 +181,7 @@ func TestWriteAndQueryStringField_Integration(t *testing.T) {
 		t.Fatalf("write reading: %v", err)
 	}
 
-	points, err := client.QueryReadings(context.Background(), sensors.ReadingQuery{
+	points, err := client.QueryReadings(context.Background(), measurement.Query{
 		DeviceID: "string-test-device",
 		From:     ts.Add(-time.Minute),
 		To:       ts.Add(time.Minute),
@@ -204,13 +204,13 @@ func TestQueryReadings_Integration(t *testing.T) {
 	host := startInfluxDB(t)
 	createDatabase(t, host)
 
-	client, err := sensors.NewInfluxClient(host, testToken, testDatabase)
+	client, err := measurement.NewInfluxClient(host, testToken, testDatabase)
 	if err != nil {
 		t.Fatalf("new client: %v", err)
 	}
 
 	ts := time.Unix(1713000000, 0).UTC()
-	err = client.WriteReading(context.Background(), sensors.Reading{
+	err = client.WriteReading(context.Background(), measurement.Reading{
 		DeviceID:  "query-test-device",
 		UserID:    "test-user",
 		Timestamp: ts,
@@ -222,7 +222,7 @@ func TestQueryReadings_Integration(t *testing.T) {
 		t.Fatalf("write reading: %v", err)
 	}
 
-	points, err := client.QueryReadings(context.Background(), sensors.ReadingQuery{
+	points, err := client.QueryReadings(context.Background(), measurement.Query{
 		DeviceID: "query-test-device",
 		From:     ts.Add(-time.Minute),
 		To:       ts.Add(time.Minute),

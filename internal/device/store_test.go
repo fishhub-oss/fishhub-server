@@ -1,33 +1,37 @@
-package sensors_test
+package device_test
 
 import (
 	"context"
 	"errors"
+	"io"
+	"log/slog"
 	"testing"
 
+	"github.com/fishhub-oss/fishhub-server/internal/device"
 	"github.com/fishhub-oss/fishhub-server/internal/platform"
-	"github.com/fishhub-oss/fishhub-server/internal/sensors"
+	"github.com/fishhub-oss/fishhub-server/internal/provisioning"
 	"github.com/fishhub-oss/fishhub-server/internal/testutil"
 	_ "github.com/lib/pq"
 )
 
+var discardLogger = slog.New(slog.NewTextHandler(io.Discard, nil))
+
 func TestListByUserID_integration(t *testing.T) {
 	db := testutil.NewTestDB(t)
-	store := sensors.NewDeviceStore(db)
-	provisioning := sensors.NewProvisioningStore(db)
+	store := device.NewStore(db)
+	provStore := provisioning.NewStore(db)
 	ctx := context.Background()
 	userID := platform.SeedUserID()
 
 	t.Run("returns devices for the user ordered by created_at DESC", func(t *testing.T) {
-		code, err := provisioning.GetOrCreateCode(ctx, userID)
+		code, err := provStore.GetOrCreateCode(ctx, userID)
 		if err != nil {
 			t.Fatalf("setup code: %v", err)
 		}
-		d1, _, err := provisioning.ClaimCode(ctx, code)
+		d1, _, err := provStore.ClaimCode(ctx, code)
 		if err != nil {
 			t.Fatalf("setup claim: %v", err)
 		}
-		// create a second device via direct insert so we have two distinct ones
 		var d2 string
 		if err := db.QueryRowContext(ctx, `INSERT INTO devices (user_id) VALUES ($1) RETURNING id`, userID).Scan(&d2); err != nil {
 			t.Fatalf("setup device 2: %v", err)
@@ -73,11 +77,10 @@ func TestListByUserID_integration(t *testing.T) {
 
 func TestGetActivationStatus_integration(t *testing.T) {
 	db := testutil.NewTestDB(t)
-	store := sensors.NewDeviceStore(db)
+	store := device.NewStore(db)
 	ctx := context.Background()
 	userID := platform.SeedUserID()
 
-	// helper: insert a device with mqtt credentials and optional outbox event
 	setupDevice := func(t *testing.T, withCreds bool, withPendingOutbox bool) string {
 		t.Helper()
 		var deviceID string
@@ -122,7 +125,6 @@ func TestGetActivationStatus_integration(t *testing.T) {
 		if status.MQTTPassword != "pass1" {
 			t.Errorf("expected mqtt_password=pass1, got %q", status.MQTTPassword)
 		}
-		// mqtt_host is injected at the handler layer from server config, not stored in DB
 	})
 
 	t.Run("not ready when credentials present but outbox pending", func(t *testing.T) {
@@ -149,15 +151,15 @@ func TestGetActivationStatus_integration(t *testing.T) {
 
 	t.Run("not found for unknown device id", func(t *testing.T) {
 		_, err := store.GetActivationStatus(ctx, "00000000-0000-0000-0000-000000000000")
-		if !errors.Is(err, sensors.ErrDeviceNotFound) {
-			t.Errorf("expected ErrDeviceNotFound, got %v", err)
+		if !errors.Is(err, device.ErrNotFound) {
+			t.Errorf("expected device.ErrNotFound, got %v", err)
 		}
 	})
 }
 
 func TestFindByID_integration(t *testing.T) {
 	db := testutil.NewTestDB(t)
-	store := sensors.NewDeviceStore(db)
+	store := device.NewStore(db)
 	ctx := context.Background()
 	userID := platform.SeedUserID()
 
@@ -181,10 +183,10 @@ func TestFindByID_integration(t *testing.T) {
 		}
 	})
 
-	t.Run("unknown id returns ErrDeviceNotFound", func(t *testing.T) {
+	t.Run("unknown id returns ErrNotFound", func(t *testing.T) {
 		_, err := store.FindByID(ctx, "00000000-0000-0000-0000-000000000000")
-		if !errors.Is(err, sensors.ErrDeviceNotFound) {
-			t.Errorf("expected ErrDeviceNotFound, got %v", err)
+		if !errors.Is(err, device.ErrNotFound) {
+			t.Errorf("expected device.ErrNotFound, got %v", err)
 		}
 	})
 }

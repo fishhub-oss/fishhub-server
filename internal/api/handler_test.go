@@ -1,4 +1,4 @@
-package sensors_test
+package api_test
 
 import (
 	"context"
@@ -10,9 +10,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/fishhub-oss/fishhub-server/internal/api"
 	"github.com/fishhub-oss/fishhub-server/internal/auth"
 	"github.com/fishhub-oss/fishhub-server/internal/device"
-	"github.com/fishhub-oss/fishhub-server/internal/sensors"
+	"github.com/fishhub-oss/fishhub-server/internal/measurement"
+	"github.com/fishhub-oss/fishhub-server/internal/peripheral"
+	"github.com/fishhub-oss/fishhub-server/internal/provisioning"
 	"github.com/fishhub-oss/fishhub-server/internal/testutil"
 	"github.com/go-chi/chi/v5"
 )
@@ -41,19 +44,19 @@ func withChiParams(r *http.Request, params map[string]string) *http.Request {
 	return r.WithContext(context.WithValue(r.Context(), chi.RouteCtxKey, rctx))
 }
 
-func newReadingsService(writer *stubReadingWriter, querier *stubReadingQuerier, store *stubDeviceStore) *sensors.ReadingsService {
-	var w sensors.ReadingWriter
+func newReadingsService(writer *stubReadingWriter, querier *stubReadingQuerier, finder *stubDeviceFinder) *measurement.ReadingsService {
+	var w measurement.Writer
 	if writer != nil {
 		w = writer
 	}
-	return sensors.NewReadingsService(store, querier, w, discardLogger)
+	return measurement.NewReadingsService(finder, querier, w, discardLogger)
 }
 
 // ── ReadingsQueryHandler ──────────────────────────────────────────────────────
 
 func TestReadingsQueryHandler_List(t *testing.T) {
 	ts := time.Date(2026, 4, 20, 12, 0, 0, 0, time.UTC)
-	points := []sensors.ReadingPoint{{Timestamp: ts, Values: map[string]any{"temperature": 25.4}}}
+	points := []measurement.Point{{Timestamp: ts, Values: map[string]any{"temperature": 25.4}}}
 
 	makeReq := func(deviceID, query string) *http.Request {
 		req := httptest.NewRequest(http.MethodGet, "/api/devices/"+deviceID+"/readings"+query, nil)
@@ -63,15 +66,15 @@ func TestReadingsQueryHandler_List(t *testing.T) {
 	}
 
 	t.Run("valid request returns 200 with readings", func(t *testing.T) {
-		h := &sensors.ReadingsQueryHandler{
-			Service: newReadingsService(nil, &stubReadingQuerier{points: points}, &stubDeviceStore{device: newDevice("dev-1")}),
+		h := &api.ReadingsQueryHandler{
+			Service: newReadingsService(nil, &stubReadingQuerier{points: points}, &stubDeviceFinder{}),
 		}
 		rec := httptest.NewRecorder()
 		h.List(rec, makeReq("dev-1", "?from=2026-04-20T00:00:00Z&to=2026-04-21T00:00:00Z"))
 		if rec.Code != http.StatusOK {
 			t.Fatalf("expected 200, got %d", rec.Code)
 		}
-		var body sensors.ReadingsQueryResponse
+		var body api.ReadingsQueryResponse
 		if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
 			t.Fatalf("decode: %v", err)
 		}
@@ -87,8 +90,8 @@ func TestReadingsQueryHandler_List(t *testing.T) {
 	})
 
 	t.Run("device not owned by user returns 404", func(t *testing.T) {
-		h := &sensors.ReadingsQueryHandler{
-			Service: newReadingsService(nil, &stubReadingQuerier{}, &stubDeviceStore{findErr: sensors.ErrDeviceNotFound}),
+		h := &api.ReadingsQueryHandler{
+			Service: newReadingsService(nil, &stubReadingQuerier{}, &stubDeviceFinder{err: device.ErrNotFound}),
 		}
 		rec := httptest.NewRecorder()
 		h.List(rec, makeReq("dev-other", ""))
@@ -96,8 +99,8 @@ func TestReadingsQueryHandler_List(t *testing.T) {
 	})
 
 	t.Run("invalid from param returns 400", func(t *testing.T) {
-		h := &sensors.ReadingsQueryHandler{
-			Service: newReadingsService(nil, &stubReadingQuerier{}, &stubDeviceStore{device: newDevice("dev-1")}),
+		h := &api.ReadingsQueryHandler{
+			Service: newReadingsService(nil, &stubReadingQuerier{}, &stubDeviceFinder{}),
 		}
 		rec := httptest.NewRecorder()
 		h.List(rec, makeReq("dev-1", "?from=not-a-date"))
@@ -105,15 +108,15 @@ func TestReadingsQueryHandler_List(t *testing.T) {
 	})
 
 	t.Run("empty readings returns 200 with empty array", func(t *testing.T) {
-		h := &sensors.ReadingsQueryHandler{
-			Service: newReadingsService(nil, &stubReadingQuerier{points: []sensors.ReadingPoint{}}, &stubDeviceStore{device: newDevice("dev-1")}),
+		h := &api.ReadingsQueryHandler{
+			Service: newReadingsService(nil, &stubReadingQuerier{points: []measurement.Point{}}, &stubDeviceFinder{}),
 		}
 		rec := httptest.NewRecorder()
 		h.List(rec, makeReq("dev-1", ""))
 		if rec.Code != http.StatusOK {
 			t.Fatalf("expected 200, got %d", rec.Code)
 		}
-		var body sensors.ReadingsQueryResponse
+		var body api.ReadingsQueryResponse
 		if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
 			t.Fatalf("decode: %v", err)
 		}
@@ -123,19 +126,19 @@ func TestReadingsQueryHandler_List(t *testing.T) {
 	})
 
 	t.Run("string values are included in response", func(t *testing.T) {
-		stringPoints := []sensors.ReadingPoint{{
+		stringPoints := []measurement.Point{{
 			Timestamp: ts,
 			Values:    map[string]any{"light/source": "schedule", "temperature": 25.4},
 		}}
-		h := &sensors.ReadingsQueryHandler{
-			Service: newReadingsService(nil, &stubReadingQuerier{points: stringPoints}, &stubDeviceStore{device: newDevice("dev-1")}),
+		h := &api.ReadingsQueryHandler{
+			Service: newReadingsService(nil, &stubReadingQuerier{points: stringPoints}, &stubDeviceFinder{}),
 		}
 		rec := httptest.NewRecorder()
 		h.List(rec, makeReq("dev-1", ""))
 		if rec.Code != http.StatusOK {
 			t.Fatalf("expected 200, got %d", rec.Code)
 		}
-		var body sensors.ReadingsQueryResponse
+		var body api.ReadingsQueryResponse
 		if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
 			t.Fatalf("decode: %v", err)
 		}
@@ -148,15 +151,15 @@ func TestReadingsQueryHandler_List(t *testing.T) {
 	})
 
 	t.Run("default params applied when omitted", func(t *testing.T) {
-		h := &sensors.ReadingsQueryHandler{
-			Service: newReadingsService(nil, &stubReadingQuerier{points: points}, &stubDeviceStore{device: newDevice("dev-1")}),
+		h := &api.ReadingsQueryHandler{
+			Service: newReadingsService(nil, &stubReadingQuerier{points: points}, &stubDeviceFinder{}),
 		}
 		rec := httptest.NewRecorder()
 		h.List(rec, makeReq("dev-1", ""))
 		if rec.Code != http.StatusOK {
 			t.Fatalf("expected 200, got %d", rec.Code)
 		}
-		var body sensors.ReadingsQueryResponse
+		var body api.ReadingsQueryResponse
 		if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
 			t.Fatalf("decode: %v", err)
 		}
@@ -169,20 +172,20 @@ func TestReadingsQueryHandler_List(t *testing.T) {
 // ── DevicesHandler ────────────────────────────────────────────────────────────
 
 func TestDevicesHandler_List(t *testing.T) {
-	newSvc := func(store *stubDeviceStore) *sensors.DeviceService {
-		return sensors.NewDeviceService(store, &stubHiveMQClient{}, &stubPublisher{}, discardLogger)
+	newSvc := func(store *stubDeviceStore) *device.Service {
+		return device.NewService(store, &stubHiveMQClient{}, &stubPublisher{}, discardLogger)
 	}
 
 	t.Run("returns devices for user", func(t *testing.T) {
 		devices := []device.Device{newDevice("dev-1"), newDevice("dev-2")}
-		h := &sensors.DevicesHandler{Service: newSvc(&stubDeviceStore{listDevices: devices})}
+		h := &api.DevicesHandler{Service: newSvc(&stubDeviceStore{listDevices: devices})}
 		req := withClaims(httptest.NewRequest(http.MethodGet, "/api/devices", nil), "usr-1")
 		rec := httptest.NewRecorder()
 		h.List(rec, req)
 		if rec.Code != http.StatusOK {
 			t.Fatalf("expected 200, got %d", rec.Code)
 		}
-		var body []sensors.DeviceResponse
+		var body []api.DeviceResponse
 		if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
 			t.Fatalf("decode: %v", err)
 		}
@@ -192,14 +195,14 @@ func TestDevicesHandler_List(t *testing.T) {
 	})
 
 	t.Run("missing claims returns 401", func(t *testing.T) {
-		h := &sensors.DevicesHandler{Service: newSvc(&stubDeviceStore{})}
+		h := &api.DevicesHandler{Service: newSvc(&stubDeviceStore{})}
 		rec := httptest.NewRecorder()
 		h.List(rec, httptest.NewRequest(http.MethodGet, "/api/devices", nil))
 		assertErrorCode(t, rec, http.StatusUnauthorized, "unauthorized")
 	})
 
 	t.Run("store error returns 500", func(t *testing.T) {
-		h := &sensors.DevicesHandler{Service: newSvc(&stubDeviceStore{listErr: errors.New("db down")})}
+		h := &api.DevicesHandler{Service: newSvc(&stubDeviceStore{listErr: errors.New("db down")})}
 		req := withClaims(httptest.NewRequest(http.MethodGet, "/api/devices", nil), "usr-1")
 		rec := httptest.NewRecorder()
 		h.List(rec, req)
@@ -219,19 +222,19 @@ func TestPatchDeviceHandler(t *testing.T) {
 		return req
 	}
 
-	newPatchSvc := func(store *stubDeviceStore) *sensors.DeviceService {
-		return sensors.NewDeviceService(store, &stubHiveMQClient{}, &stubPublisher{}, discardLogger)
+	newPatchSvc := func(store *stubDeviceStore) *device.Service {
+		return device.NewService(store, &stubHiveMQClient{}, &stubPublisher{}, discardLogger)
 	}
 
 	t.Run("valid name returns 200 with updated device", func(t *testing.T) {
 		updated := device.Device{ID: "dev-1", Name: "Tank A", CreatedAt: ts}
-		h := &sensors.PatchDeviceHandler{Service: newPatchSvc(&stubDeviceStore{patchDevice: updated})}
+		h := &api.PatchDeviceHandler{Service: newPatchSvc(&stubDeviceStore{patchDevice: updated})}
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, makeReq("dev-1", `{"name":"Tank A"}`))
 		if rec.Code != http.StatusOK {
 			t.Fatalf("expected 200, got %d", rec.Code)
 		}
-		var body sensors.DeviceResponse
+		var body api.DeviceResponse
 		if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
 			t.Fatalf("decode: %v", err)
 		}
@@ -244,28 +247,28 @@ func TestPatchDeviceHandler(t *testing.T) {
 	})
 
 	t.Run("empty name returns 400", func(t *testing.T) {
-		h := &sensors.PatchDeviceHandler{Service: newPatchSvc(&stubDeviceStore{})}
+		h := &api.PatchDeviceHandler{Service: newPatchSvc(&stubDeviceStore{})}
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, makeReq("dev-1", `{"name":""}`))
 		assertErrorCode(t, rec, http.StatusBadRequest, "invalid_request")
 	})
 
 	t.Run("device not found returns 404", func(t *testing.T) {
-		h := &sensors.PatchDeviceHandler{Service: newPatchSvc(&stubDeviceStore{patchErr: sensors.ErrDeviceNotFound})}
+		h := &api.PatchDeviceHandler{Service: newPatchSvc(&stubDeviceStore{patchErr: device.ErrNotFound})}
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, makeReq("dev-x", `{"name":"Tank A"}`))
 		assertErrorCode(t, rec, http.StatusNotFound, "device_not_found")
 	})
 
 	t.Run("store error returns 500", func(t *testing.T) {
-		h := &sensors.PatchDeviceHandler{Service: newPatchSvc(&stubDeviceStore{patchErr: errors.New("db down")})}
+		h := &api.PatchDeviceHandler{Service: newPatchSvc(&stubDeviceStore{patchErr: errors.New("db down")})}
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, makeReq("dev-1", `{"name":"Tank A"}`))
 		assertErrorCode(t, rec, http.StatusInternalServerError, "internal_error")
 	})
 
 	t.Run("missing claims returns 401", func(t *testing.T) {
-		h := &sensors.PatchDeviceHandler{Service: newPatchSvc(&stubDeviceStore{})}
+		h := &api.PatchDeviceHandler{Service: newPatchSvc(&stubDeviceStore{})}
 		req := httptest.NewRequest(http.MethodPatch, "/api/devices/dev-1", strings.NewReader(`{"name":"Tank A"}`))
 		req = withChiParam(req, "id", "dev-1")
 		rec := httptest.NewRecorder()
@@ -277,12 +280,12 @@ func TestPatchDeviceHandler(t *testing.T) {
 // ── ProvisionHandler ──────────────────────────────────────────────────────────
 
 func TestProvisionHandler(t *testing.T) {
-	newProvSvc := func(store *stubProvisioningStore) *sensors.ProvisioningService {
-		return sensors.NewProvisioningService(store, discardLogger)
+	newProvSvc := func(store *stubProvisioningStore) *provisioning.Service {
+		return provisioning.NewService(store, discardLogger)
 	}
 
 	t.Run("returns 201 with code", func(t *testing.T) {
-		h := &sensors.ProvisionHandler{
+		h := &api.ProvisionHandler{
 			Service: newProvSvc(&stubProvisioningStore{code: "ABC123"}),
 		}
 		req := withClaims(httptest.NewRequest(http.MethodPost, "/api/devices/provision", nil), "user-uuid")
@@ -304,7 +307,7 @@ func TestProvisionHandler(t *testing.T) {
 	})
 
 	t.Run("missing claims returns 401", func(t *testing.T) {
-		h := &sensors.ProvisionHandler{Service: newProvSvc(&stubProvisioningStore{})}
+		h := &api.ProvisionHandler{Service: newProvSvc(&stubProvisioningStore{})}
 		req := httptest.NewRequest(http.MethodPost, "/api/devices/provision", nil)
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, req)
@@ -312,7 +315,7 @@ func TestProvisionHandler(t *testing.T) {
 	})
 
 	t.Run("store error returns 500", func(t *testing.T) {
-		h := &sensors.ProvisionHandler{
+		h := &api.ProvisionHandler{
 			Service: newProvSvc(&stubProvisioningStore{getErr: errors.New("db down")}),
 		}
 		req := withClaims(httptest.NewRequest(http.MethodPost, "/api/devices/provision", nil), "user-uuid")
@@ -324,11 +327,11 @@ func TestProvisionHandler(t *testing.T) {
 
 // ── ActivateHandler ───────────────────────────────────────────────────────────
 
-func newActivateHandler(t *testing.T, store *stubProvisioningStore, signer *stubSigner) *sensors.ActivateHandler {
+func newActivateHandler(t *testing.T, store *stubProvisioningStore, signer *stubSigner) *api.ActivateHandler {
 	t.Helper()
 	db := testutil.NewTestDB(t)
-	return &sensors.ActivateHandler{
-		Service: sensors.NewActivationService(db, store, &stubOutboxStore{}, signer, discardLogger),
+	return &api.ActivateHandler{
+		Service: provisioning.NewActivationService(db, store, &stubOutboxStore{}, signer, discardLogger),
 	}
 }
 
@@ -382,7 +385,7 @@ func TestActivateHandler(t *testing.T) {
 
 	t.Run("unknown code returns 404", func(t *testing.T) {
 		h := newActivateHandler(t,
-			&stubProvisioningStore{claimErr: sensors.ErrCodeNotFound},
+			&stubProvisioningStore{claimErr: provisioning.ErrCodeNotFound},
 			&stubSigner{},
 		)
 		req := httptest.NewRequest(http.MethodPost, "/devices/activate", strings.NewReader(validBody))
@@ -393,7 +396,7 @@ func TestActivateHandler(t *testing.T) {
 
 	t.Run("already used code returns 409", func(t *testing.T) {
 		h := newActivateHandler(t,
-			&stubProvisioningStore{claimErr: sensors.ErrCodeAlreadyUsed},
+			&stubProvisioningStore{claimErr: provisioning.ErrCodeAlreadyUsed},
 			&stubSigner{},
 		)
 		req := httptest.NewRequest(http.MethodPost, "/devices/activate", strings.NewReader(validBody))
@@ -425,7 +428,7 @@ func TestActivationStatusHandler(t *testing.T) {
 	}
 
 	t.Run("provisioning returns 200 with status=provisioning", func(t *testing.T) {
-		h := &sensors.ActivationStatusHandler{
+		h := &api.ActivationStatusHandler{
 			Store:    &stubDeviceStore{},
 			MQTTHost: "mqtt.example.com",
 			MQTTPort: 8883,
@@ -448,7 +451,7 @@ func TestActivationStatusHandler(t *testing.T) {
 	})
 
 	t.Run("ready returns 200 with credentials", func(t *testing.T) {
-		h := &sensors.ActivationStatusHandler{
+		h := &api.ActivationStatusHandler{
 			Store: &stubActivationStatusStore{
 				status: device.ActivationStatus{
 					Ready:        true,
@@ -480,8 +483,8 @@ func TestActivationStatusHandler(t *testing.T) {
 	})
 
 	t.Run("device not found returns 404", func(t *testing.T) {
-		h := &sensors.ActivationStatusHandler{
-			Store: &stubActivationStatusStore{err: sensors.ErrDeviceNotFound},
+		h := &api.ActivationStatusHandler{
+			Store: &stubActivationStatusStore{err: device.ErrNotFound},
 		}
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, makeReq("dev-x", device.Info{DeviceID: "dev-x", UserID: "usr-1"}))
@@ -489,7 +492,7 @@ func TestActivationStatusHandler(t *testing.T) {
 	})
 
 	t.Run("device ID mismatch returns 403", func(t *testing.T) {
-		h := &sensors.ActivationStatusHandler{Store: &stubDeviceStore{}}
+		h := &api.ActivationStatusHandler{Store: &stubDeviceStore{}}
 		rec := httptest.NewRecorder()
 		req := httptest.NewRequest(http.MethodGet, "/devices/dev-2/status", nil)
 		req = withDevice(req, device.Info{DeviceID: "dev-1", UserID: "usr-1"})
@@ -499,7 +502,7 @@ func TestActivationStatusHandler(t *testing.T) {
 	})
 
 	t.Run("no device in context returns 401", func(t *testing.T) {
-		h := &sensors.ActivationStatusHandler{Store: &stubDeviceStore{}}
+		h := &api.ActivationStatusHandler{Store: &stubDeviceStore{}}
 		req := httptest.NewRequest(http.MethodGet, "/devices/dev-1/status", nil)
 		req = withChiParam(req, "id", "dev-1")
 		rec := httptest.NewRecorder()
@@ -510,17 +513,17 @@ func TestActivationStatusHandler(t *testing.T) {
 
 // ── CommandHandler ────────────────────────────────────────────────────────────
 
-func newCommandHandler(t *testing.T, pStore *stubPeripheralStore, pub *stubPublisher) *sensors.CommandHandler {
+func newCommandHandler(t *testing.T, pStore *stubPeripheralStore, pub *stubPublisher) *api.CommandHandler {
 	t.Helper()
-	return &sensors.CommandHandler{
-		Service: sensors.NewPeripheralService(testutil.NewTestDB(t), pStore, &stubOutboxStore{}, nil, pub, discardLogger),
+	return &api.CommandHandler{
+		Service: newPeripheralService(t, pStore, pub),
 	}
 }
 
 func TestCommandHandler(t *testing.T) {
 	const body = `{"action":"set","id":"cmd-1","value":1}`
 
-	relay := sensors.Peripheral{ID: "p-1", DeviceID: "dev-1", Kind: "relay", Pin: 5, Category: "actuator"}
+	relay := peripheral.Peripheral{ID: "p-1", DeviceID: "dev-1", Kind: "relay", Pin: 5, Category: "actuator"}
 
 	makeReq := func(body, userID string) *http.Request {
 		r := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
@@ -543,7 +546,7 @@ func TestCommandHandler(t *testing.T) {
 	})
 
 	t.Run("404 when peripheral not found", func(t *testing.T) {
-		h := newCommandHandler(t, &stubPeripheralStore{createErr: sensors.ErrPeripheralNotFound}, &stubPublisher{})
+		h := newCommandHandler(t, &stubPeripheralStore{createErr: peripheral.ErrNotFound}, &stubPublisher{})
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, makeReq(body, "user-1"))
 		assertErrorCode(t, rec, http.StatusNotFound, "peripheral_not_found")
@@ -566,9 +569,9 @@ func TestCommandHandler(t *testing.T) {
 
 // ── DeleteDeviceHandler ───────────────────────────────────────────────────────
 
-func newDeleteHandler(store *stubDeviceStore, mq *stubHiveMQClient) *sensors.DeleteDeviceHandler {
-	return &sensors.DeleteDeviceHandler{
-		Service: sensors.NewDeviceService(store, mq, &stubPublisher{}, discardLogger),
+func newDeleteHandler(store *stubDeviceStore, mq *stubHiveMQClient) *api.DeleteDeviceHandler {
+	return &api.DeleteDeviceHandler{
+		Service: device.NewService(store, mq, &stubPublisher{}, discardLogger),
 	}
 }
 
@@ -610,7 +613,7 @@ func TestDeleteDeviceHandler(t *testing.T) {
 	})
 
 	t.Run("404 when device not found", func(t *testing.T) {
-		h := newDeleteHandler(&stubDeviceStore{deleteErr: sensors.ErrDeviceNotFound}, &stubHiveMQClient{})
+		h := newDeleteHandler(&stubDeviceStore{deleteErr: device.ErrNotFound}, &stubHiveMQClient{})
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, makeReq("dev-x", "user-uuid"))
 		assertErrorCode(t, rec, http.StatusNotFound, "device_not_found")

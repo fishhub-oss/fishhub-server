@@ -13,17 +13,34 @@ import (
 	"time"
 
 	"github.com/fishhub-oss/fishhub-server/internal/account"
+	"github.com/fishhub-oss/fishhub-server/internal/api"
 	"github.com/fishhub-oss/fishhub-server/internal/auth"
+	"github.com/fishhub-oss/fishhub-server/internal/device"
 	"github.com/fishhub-oss/fishhub-server/internal/devicejwt"
 	"github.com/fishhub-oss/fishhub-server/internal/hivemq"
 	"github.com/fishhub-oss/fishhub-server/internal/jwtutil"
+	"github.com/fishhub-oss/fishhub-server/internal/measurement"
 	"github.com/fishhub-oss/fishhub-server/internal/mqtt"
 	"github.com/fishhub-oss/fishhub-server/internal/outbox"
+	"github.com/fishhub-oss/fishhub-server/internal/peripheral"
 	"github.com/fishhub-oss/fishhub-server/internal/platform"
-	"github.com/fishhub-oss/fishhub-server/internal/sensors"
+	"github.com/fishhub-oss/fishhub-server/internal/provisioning"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/cors"
 )
+
+// deviceFinderBridge adapts device.Store to measurement.DeviceFinder.
+// device.Store.FindByIDAndUserID returns (device.Device, error) while
+// measurement.DeviceFinder expects only error.
+type deviceFinderBridge struct{ store device.Store }
+
+func (b deviceFinderBridge) FindByIDAndUserID(ctx context.Context, deviceID, userID string) error {
+	_, err := b.store.FindByIDAndUserID(ctx, deviceID, userID)
+	if err != nil {
+		return device.ErrNotFound
+	}
+	return nil
+}
 
 type config struct {
 	Port             string
@@ -123,9 +140,9 @@ func main() {
 	}
 
 	// ── InfluxDB ──────────────────────────────────────────────────────────────
-	var influxClient sensors.InfluxClient
+	var influxClient measurement.Client
 	if cfg.InfluxHost != "" && cfg.InfluxToken != "" && cfg.InfluxDatabase != "" {
-		c, err := sensors.NewInfluxClient(cfg.InfluxHost, cfg.InfluxToken, cfg.InfluxDatabase)
+		c, err := measurement.NewInfluxClient(cfg.InfluxHost, cfg.InfluxToken, cfg.InfluxDatabase)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "influx init: %v\n", err)
 			os.Exit(1)
@@ -217,18 +234,18 @@ func main() {
 	}
 
 	// ── Stores & services ─────────────────────────────────────────────────────
-	deviceStore := sensors.NewDeviceStore(db)
-	peripheralStore := sensors.NewPeripheralStore(db)
-	provisioningStore := sensors.NewProvisioningStore(db)
+	deviceStore := device.NewStore(db)
+	peripheralStore := peripheral.NewStore(db)
+	provisioningStore := provisioning.NewStore(db)
 	outboxStore := outbox.NewPostgresStore(db)
-	readingsSvc := sensors.NewReadingsService(deviceStore, influxClient, influxClient, logger)
-	deviceSvc := sensors.NewDeviceService(deviceStore, hivemqClient, mqttPublisher, logger)
-	peripheralSvc := sensors.NewPeripheralService(db, peripheralStore, outboxStore, influxClient, mqttPublisher, logger)
-	provisioningSvc := sensors.NewProvisioningService(provisioningStore, logger)
-	activationSvc := sensors.NewActivationService(db, provisioningStore, outboxStore, deviceSigner, logger)
+	readingsSvc := measurement.NewReadingsService(deviceFinderBridge{deviceStore}, influxClient, influxClient, logger)
+	deviceSvc := device.NewService(deviceStore, hivemqClient, mqttPublisher, logger)
+	peripheralSvc := peripheral.NewService(db, peripheralStore, outboxStore, influxClient, mqttPublisher, logger)
+	provisioningSvc := provisioning.NewService(provisioningStore, logger)
+	activationSvc := provisioning.NewActivationService(db, provisioningStore, outboxStore, deviceSigner, logger)
 
 	// ── MQTT readings subscription ────────────────────────────────────────────
-	readingsMQTTHandler := sensors.NewReadingsMQTTHandler(deviceStore, readingsSvc, logger)
+	readingsMQTTHandler := measurement.NewReadingsMQTTHandler(deviceStore, readingsSvc, logger)
 	if err := mqttSubscriber.Subscribe(ctx, "fishhub/+/readings", readingsMQTTHandler.Handle); err != nil {
 		logger.Error("mqtt readings subscription failed", "error", err)
 	}
@@ -237,8 +254,8 @@ func main() {
 	outboxRunner := outbox.NewRunner(
 		outboxStore,
 		[]outbox.EventProcessor{
-			sensors.NewHiveMQProvisionProcessor(hivemqClient, logger),
-			sensors.NewPeripheralPushProcessor(mqttPublisher, logger),
+			provisioning.NewHiveMQProvisionProcessor(hivemqClient, logger),
+			peripheral.NewPeripheralPushProcessor(mqttPublisher, logger),
 		},
 		10*time.Second,
 		5,
@@ -261,11 +278,11 @@ func main() {
 	r.Post("/auth/verify", auth.NewVerifyHandler(authSvc, logger).ServeHTTP)
 	r.Post("/auth/refresh", auth.NewRefreshHandler(authSvc, logger).ServeHTTP)
 	r.Post("/auth/logout", auth.NewLogoutHandler(authSvc).ServeHTTP)
-	r.Post("/devices/activate", (&sensors.ActivateHandler{Service: activationSvc}).ServeHTTP)
+	r.Post("/devices/activate", (&api.ActivateHandler{Service: activationSvc}).ServeHTTP)
 
 	r.Group(func(r chi.Router) {
 		r.Use(platform.DeviceAuthenticator(deviceSigner))
-		r.Get("/devices/{id}/status", (&sensors.ActivationStatusHandler{
+		r.Get("/devices/{id}/status", (&api.ActivationStatusHandler{
 			Store:    deviceStore,
 			MQTTHost: cfg.HiveMQHost,
 			MQTTPort: cfg.HiveMQPort,
@@ -275,17 +292,17 @@ func main() {
 	r.Group(func(r chi.Router) {
 		r.Use(platform.SessionAuthenticator(authSvc))
 		r.Get("/api/me", (&account.MeHandler{Service: &account.AccountService{Store: accountStore}}).ServeHTTP)
-		r.Post("/api/devices/provision", (&sensors.ProvisionHandler{Service: provisioningSvc}).ServeHTTP)
-		r.Get("/api/devices", (&sensors.DevicesHandler{Service: deviceSvc}).List)
-		r.Patch("/api/devices/{id}", (&sensors.PatchDeviceHandler{Service: deviceSvc}).ServeHTTP)
-		r.Delete("/api/devices/{id}", (&sensors.DeleteDeviceHandler{Service: deviceSvc}).ServeHTTP)
-		r.Get("/api/devices/{id}/readings", (&sensors.ReadingsQueryHandler{Service: readingsSvc}).List)
-		r.Post("/api/devices/{id}/peripherals", (&sensors.CreatePeripheralHandler{Service: peripheralSvc}).ServeHTTP)
-		r.Get("/api/devices/{id}/peripherals", (&sensors.ListPeripheralsHandler{Service: peripheralSvc}).ServeHTTP)
-		r.Put("/api/devices/{id}/peripherals/{peripheralId}/schedule", (&sensors.SetPeripheralScheduleHandler{Service: peripheralSvc}).ServeHTTP)
-		r.Delete("/api/devices/{id}/peripherals/{peripheralId}", (&sensors.DeletePeripheralHandler{Service: peripheralSvc}).ServeHTTP)
-		r.Patch("/api/devices/{id}/peripherals/{peripheralId}/control-mode", (&sensors.SetControlModeHandler{Service: peripheralSvc}).ServeHTTP)
-		r.Post("/api/devices/{id}/peripherals/{peripheralId}/commands", (&sensors.CommandHandler{Service: peripheralSvc}).ServeHTTP)
+		r.Post("/api/devices/provision", (&api.ProvisionHandler{Service: provisioningSvc}).ServeHTTP)
+		r.Get("/api/devices", (&api.DevicesHandler{Service: deviceSvc}).List)
+		r.Patch("/api/devices/{id}", (&api.PatchDeviceHandler{Service: deviceSvc}).ServeHTTP)
+		r.Delete("/api/devices/{id}", (&api.DeleteDeviceHandler{Service: deviceSvc}).ServeHTTP)
+		r.Get("/api/devices/{id}/readings", (&api.ReadingsQueryHandler{Service: readingsSvc}).List)
+		r.Post("/api/devices/{id}/peripherals", (&api.CreatePeripheralHandler{Service: peripheralSvc}).ServeHTTP)
+		r.Get("/api/devices/{id}/peripherals", (&api.ListPeripheralsHandler{Service: peripheralSvc}).ServeHTTP)
+		r.Put("/api/devices/{id}/peripherals/{peripheralId}/schedule", (&api.SetPeripheralScheduleHandler{Service: peripheralSvc}).ServeHTTP)
+		r.Delete("/api/devices/{id}/peripherals/{peripheralId}", (&api.DeletePeripheralHandler{Service: peripheralSvc}).ServeHTTP)
+		r.Patch("/api/devices/{id}/peripherals/{peripheralId}/control-mode", (&api.SetControlModeHandler{Service: peripheralSvc}).ServeHTTP)
+		r.Post("/api/devices/{id}/peripherals/{peripheralId}/commands", (&api.CommandHandler{Service: peripheralSvc}).ServeHTTP)
 	})
 
 	fmt.Printf("listening on :%s\n", cfg.Port)

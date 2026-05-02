@@ -1,15 +1,15 @@
-package sensors_test
+package provisioning_test
 
 import (
 	"context"
 	"errors"
 	"testing"
 
-	"github.com/fishhub-oss/fishhub-server/internal/sensors"
+	"github.com/fishhub-oss/fishhub-server/internal/provisioning"
 )
 
 func TestProvisioningService_Provision_HappyPath(t *testing.T) {
-	svc := sensors.NewProvisioningService(&stubProvisioningStore{code: "ABC123"}, discardLogger)
+	svc := provisioning.NewService(&stubProvisioningStore{code: "ABC123"}, discardLogger)
 	code, err := svc.Provision(context.Background(), "usr-1")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -21,7 +21,7 @@ func TestProvisioningService_Provision_HappyPath(t *testing.T) {
 
 func TestProvisioningService_Provision_StoreError(t *testing.T) {
 	storeErr := errors.New("db down")
-	svc := sensors.NewProvisioningService(&stubProvisioningStore{getErr: storeErr}, discardLogger)
+	svc := provisioning.NewService(&stubProvisioningStore{getErr: storeErr}, discardLogger)
 	_, err := svc.Provision(context.Background(), "usr-1")
 	if !errors.Is(err, storeErr) {
 		t.Errorf("expected wrapped storeErr, got %v", err)

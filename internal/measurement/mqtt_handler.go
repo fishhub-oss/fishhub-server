@@ -1,21 +1,23 @@
-package sensors
+package measurement
 
 import (
 	"context"
 	"errors"
 	"log/slog"
 	"strings"
+
+	"github.com/fishhub-oss/fishhub-server/internal/device"
 )
 
 // ReadingsMQTTHandler handles incoming readings published by devices to
 // fishhub/+/readings. It reuses the same pipeline as the HTTP handler.
 type ReadingsMQTTHandler struct {
-	store   DeviceStore
+	store   device.Store
 	service *ReadingsService
 	logger  *slog.Logger
 }
 
-func NewReadingsMQTTHandler(store DeviceStore, service *ReadingsService, logger *slog.Logger) *ReadingsMQTTHandler {
+func NewReadingsMQTTHandler(store device.Store, service *ReadingsService, logger *slog.Logger) *ReadingsMQTTHandler {
 	if logger == nil {
 		logger = slog.Default()
 	}
@@ -30,9 +32,9 @@ func (h *ReadingsMQTTHandler) Handle(ctx context.Context, topic string, payload 
 		return
 	}
 
-	device, err := h.store.FindByID(ctx, deviceID)
+	d, err := h.store.FindByID(ctx, deviceID)
 	if err != nil {
-		if errors.Is(err, ErrDeviceNotFound) {
+		if errors.Is(err, device.ErrNotFound) {
 			h.logger.Warn("mqtt readings: device not found", "device_id", deviceID)
 		} else {
 			h.logger.Error("mqtt readings: store lookup", "device_id", deviceID, "error", err)
@@ -40,7 +42,7 @@ func (h *ReadingsMQTTHandler) Handle(ctx context.Context, topic string, payload 
 		return
 	}
 
-	if err := h.service.Write(ctx, device.ID, device.UserID, payload); err != nil {
+	if err := h.service.Write(ctx, d.ID, d.UserID, payload); err != nil {
 		h.logger.Error("mqtt readings: write failed", "device_id", deviceID, "error", err)
 	}
 }

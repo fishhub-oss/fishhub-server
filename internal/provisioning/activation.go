@@ -1,4 +1,4 @@
-package sensors
+package provisioning
 
 import (
 	"context"
@@ -24,7 +24,7 @@ type ActivationResult struct {
 // + enqueue HiveMQ provisioning atomically → sign JWT.
 type ActivationService struct {
 	db          *sql.DB
-	store       ProvisioningStore
+	store       Store
 	outboxStore outbox.Store
 	signer      devicejwt.Signer
 	logger      *slog.Logger
@@ -32,7 +32,7 @@ type ActivationService struct {
 
 func NewActivationService(
 	db *sql.DB,
-	store ProvisioningStore,
+	store Store,
 	outboxStore outbox.Store,
 	signer devicejwt.Signer,
 	logger *slog.Logger,
