@@ -1,7 +1,6 @@
 package peripheral
 
 import (
-	"errors"
 	"time"
 
 	"github.com/fishhub-oss/fishhub-server/internal/measurement"
@@ -27,11 +26,3 @@ type ScheduleWindow struct {
 	Value float64 `json:"value"`
 	Days  []int   `json:"days,omitempty"`
 }
-
-var (
-	ErrNotAnActuator  = errors.New("peripheral is not an actuator")
-	ErrNotFound       = errors.New("peripheral not found")
-	ErrAlreadyExists  = errors.New("peripheral already exists")
-	ErrPinInUse       = errors.New("peripheral pin already in use")
-	ErrInvalidCommand = errors.New("action must be 'set' or 'schedule'")
-)
