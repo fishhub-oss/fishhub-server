@@ -47,15 +47,27 @@ Health check. No authentication required.
 
 ## POST /auth/verify
 
-Verifies a Google OIDC ID token and issues a session JWT + refresh token. Called by the web frontend after the OAuth callback.
+Verifies an OAuth credential and issues a session JWT + refresh token. Called by the web frontend after the OAuth callback.
 
-**Request body**
+The request body differs by provider:
+
+**Google (OIDC)**
 ```json
 {
   "provider": "google",
   "id_token": "<google-id-token>"
 }
 ```
+
+**GitHub (OAuth 2.0)**
+```json
+{
+  "provider": "github",
+  "code": "<github-oauth-authorization-code>"
+}
+```
+
+For `google`, supply `id_token` (the OIDC ID token from the Google OAuth callback). For `github`, supply `code` (the OAuth authorization code from the GitHub callback); the server exchanges it for an access token and fetches the user profile from the GitHub API.
 
 **Response `200`**
 ```json
@@ -65,9 +77,9 @@ Verifies a Google OIDC ID token and issues a session JWT + refresh token. Called
 }
 ```
 
-**Response `400`** — missing fields
+**Response `400`** — missing or invalid fields
 
-**Response `401`** — invalid ID token
+**Response `401`** — invalid credential (bad ID token or failed GitHub code exchange)
 
 **Response `422`** — unsupported provider
 

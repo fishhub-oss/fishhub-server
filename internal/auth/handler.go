@@ -24,7 +24,8 @@ func NewVerifyHandler(service AuthService, logger *slog.Logger) *VerifyHandler {
 
 type verifyRequest struct {
 	Provider string `json:"provider"`
-	IDToken  string `json:"id_token"`
+	IDToken  string `json:"id_token"` // OIDC providers (google)
+	Code     string `json:"code"`     // OAuth-only providers (github)
 }
 
 func (h *VerifyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -33,12 +34,28 @@ func (h *VerifyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		apierr.Write(w, http.StatusBadRequest, "invalid_request", "invalid request body")
 		return
 	}
-	if req.Provider == "" || req.IDToken == "" {
-		apierr.Write(w, http.StatusBadRequest, "invalid_request", "provider and id_token are required")
+	if req.Provider == "" {
+		apierr.Write(w, http.StatusBadRequest, "invalid_request", "provider is required")
 		return
 	}
 
-	user, err := h.service.VerifyAndUpsert(r.Context(), req.Provider, req.IDToken)
+	var credential string
+	switch req.Provider {
+	case "github":
+		if req.Code == "" {
+			apierr.Write(w, http.StatusBadRequest, "invalid_request", "code is required for github provider")
+			return
+		}
+		credential = req.Code
+	default:
+		if req.IDToken == "" {
+			apierr.Write(w, http.StatusBadRequest, "invalid_request", "id_token is required")
+			return
+		}
+		credential = req.IDToken
+	}
+
+	user, err := h.service.VerifyAndUpsert(r.Context(), req.Provider, credential)
 	if err != nil {
 		if errors.Is(err, ErrUnsupportedProvider) {
 			apierr.Write(w, http.StatusUnprocessableEntity, "invalid_request", "unsupported provider")

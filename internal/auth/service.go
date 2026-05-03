@@ -21,12 +21,15 @@ var ErrInvalidIDToken      = errors.New("invalid id token")
 const refreshTokenTTL = 30 * 24 * time.Hour
 
 type OIDCConfig struct {
-	Providers    map[string]string
-	Store        UserStore
-	RefreshStore RefreshTokenStore
-	EventHandler UserEventHandler
-	Signer       jwtutil.Signer
-	JWTTTL       time.Duration
+	Providers        map[string]string
+	Store            UserStore
+	RefreshStore     RefreshTokenStore
+	EventHandler     UserEventHandler
+	Signer           jwtutil.Signer
+	JWTTTL           time.Duration
+	GitHubClientID   string
+	GitHubClientSecret string
+	GitHubExchanger  GitHubExchanger
 }
 
 type AuthService interface {
@@ -39,12 +42,15 @@ type AuthService interface {
 }
 
 type oidcService struct {
-	verifiers    map[string]*gooidc.IDTokenVerifier
-	store        UserStore
-	refreshStore RefreshTokenStore
-	eventHandler UserEventHandler
-	signer       jwtutil.Signer
-	jwtTTL       time.Duration
+	verifiers          map[string]*gooidc.IDTokenVerifier
+	store              UserStore
+	refreshStore       RefreshTokenStore
+	eventHandler       UserEventHandler
+	signer             jwtutil.Signer
+	jwtTTL             time.Duration
+	githubClientID     string
+	githubClientSecret string
+	githubExchanger    GitHubExchanger
 }
 
 func NewOIDCService(ctx context.Context, cfg OIDCConfig) (AuthService, error) {
@@ -63,13 +69,20 @@ func NewOIDCService(ctx context.Context, cfg OIDCConfig) (AuthService, error) {
 		}
 		verifiers[name] = provider.Verifier(&gooidc.Config{ClientID: clientID})
 	}
+	ghExchanger := cfg.GitHubExchanger
+	if ghExchanger == nil {
+		ghExchanger = NewGitHubHTTPExchanger()
+	}
 	return &oidcService{
-		verifiers:    verifiers,
-		store:        cfg.Store,
-		refreshStore: cfg.RefreshStore,
-		eventHandler: cfg.EventHandler,
-		signer:       cfg.Signer,
-		jwtTTL:       cfg.JWTTTL,
+		verifiers:          verifiers,
+		store:              cfg.Store,
+		refreshStore:       cfg.RefreshStore,
+		eventHandler:       cfg.EventHandler,
+		signer:             cfg.Signer,
+		jwtTTL:             cfg.JWTTTL,
+		githubClientID:     cfg.GitHubClientID,
+		githubClientSecret: cfg.GitHubClientSecret,
+		githubExchanger:    ghExchanger,
 	}, nil
 }
 
@@ -82,7 +95,14 @@ func issuerFor(provider string) (string, error) {
 	}
 }
 
-func (s *oidcService) VerifyAndUpsert(ctx context.Context, provider, rawIDToken string) (User, error) {
+func (s *oidcService) VerifyAndUpsert(ctx context.Context, provider, credential string) (User, error) {
+	if provider == "github" {
+		return s.verifyGitHub(ctx, credential)
+	}
+	return s.verifyOIDC(ctx, provider, credential)
+}
+
+func (s *oidcService) verifyOIDC(ctx context.Context, provider, rawIDToken string) (User, error) {
 	verifier, ok := s.verifiers[provider]
 	if !ok {
 		return User{}, fmt.Errorf("%w: %s", ErrUnsupportedProvider, provider)
@@ -102,17 +122,34 @@ func (s *oidcService) VerifyAndUpsert(ctx context.Context, provider, rawIDToken 
 		return User{}, fmt.Errorf("extract claims: %w", err)
 	}
 
-	user, err := s.store.Upsert(ctx, claims.Email, provider, claims.Sub)
+	return s.upsertAndNotify(ctx, provider, claims.Email, claims.Name, claims.Sub)
+}
+
+func (s *oidcService) verifyGitHub(ctx context.Context, code string) (User, error) {
+	if s.githubClientID == "" || s.githubClientSecret == "" {
+		return User{}, fmt.Errorf("%w: github", ErrUnsupportedProvider)
+	}
+
+	email, name, sub, err := s.githubExchanger.Exchange(ctx, code, s.githubClientID, s.githubClientSecret)
+	if err != nil {
+		return User{}, err
+	}
+
+	return s.upsertAndNotify(ctx, "github", email, name, sub)
+}
+
+func (s *oidcService) upsertAndNotify(ctx context.Context, provider, email, name, sub string) (User, error) {
+	user, err := s.store.Upsert(ctx, email, provider, sub)
 	if err != nil {
 		return User{}, err
 	}
 
 	if s.eventHandler != nil {
-		name := claims.Name
-		if name == "" {
-			name = claims.Email
+		displayName := name
+		if displayName == "" {
+			displayName = email
 		}
-		if err := s.eventHandler.OnUserVerified(ctx, user.ID, user.Email, name); err != nil {
+		if err := s.eventHandler.OnUserVerified(ctx, user.ID, user.Email, displayName); err != nil {
 			return User{}, fmt.Errorf("user event handler: %w", err)
 		}
 	}
