@@ -128,6 +128,7 @@ Cookie: session=<session-jwt>
   "user_id":    "<user-uuid>",
   "email":      "user@example.com",
   "name":       "Alice",
+  "timezone":   "UTC",
   "created_at": "2024-04-13T12:00:00Z"
 }
 ```
@@ -135,6 +136,39 @@ Cookie: session=<session-jwt>
 **Response `401`** — not authenticated
 
 **Response `404`** — account not found (user exists but no account row yet)
+
+---
+
+## PATCH /api/me
+
+Updates the timezone for the signed-in user. On success, enqueues a retained MQTT config push to `fishhub/<device_id>/config` for every device owned by the user.
+
+**Headers** (one of):
+```
+Authorization: Bearer <session-jwt>
+Cookie: session=<session-jwt>
+```
+
+**Request body**
+```json
+{
+  "timezone": "America/Sao_Paulo"
+}
+```
+
+| Field | Description |
+|---|---|
+| `timezone` | IANA timezone name (e.g. `"UTC"`, `"America/New_York"`, `"Europe/Lisbon"`). Must be a valid name recognised by Go's `time.LoadLocation`. |
+
+**Response `200`** — updated account profile (same shape as `GET /api/me`)
+
+**Response `400`** — missing or empty `timezone`, or unrecognised IANA zone name
+
+**Response `401`** — not authenticated
+
+**Response `404`** — account not found
+
+**Response `500`** — DB or outbox failure
 
 ---
 
