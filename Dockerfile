@@ -9,5 +9,6 @@ RUN go build -o /app/fishhub-server .
 FROM alpine:3.21
 
 COPY --from=builder /app/fishhub-server /app/fishhub-server
+COPY --from=builder /src/db/migrations /app/db/migrations
 
 CMD ["/app/fishhub-server"]
