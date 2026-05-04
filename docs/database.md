@@ -92,6 +92,25 @@ INDEX outbox_events_claimable ON (event_type, created_at)
 
 Stores pending side-effects that must be processed asynchronously. Currently used for HiveMQ device provisioning: after `POST /devices/activate`, an event of type `hivemq.provision` is inserted here. The outbox runner polls this table, calls the HiveMQ REST API, and writes `mqtt_username` / `mqtt_password` back to the `devices` row on success. Events that fail `maxAttempts` times (default: 5) are moved to status `'dead'`.
 
+### `triggers`
+```
+triggers
+├── id                   UUID  PK  default gen_random_uuid()
+├── device_id            UUID  FK → devices.id  NOT NULL
+├── name                 TEXT  NOT NULL
+├── enabled              BOOL  NOT NULL  default true
+├── condition            JSONB NOT NULL
+├── target_peripheral_id UUID  FK → peripherals.id  NOT NULL
+├── action               JSONB NOT NULL
+├── cooldown_s           INT   NOT NULL  default 60
+├── deleted_at           TIMESTAMPTZ  (nullable)
+└── created_at           TIMESTAMPTZ  NOT NULL  default now()
+
+INDEX triggers_device_id_idx ON (device_id) WHERE deleted_at IS NULL
+```
+
+Each trigger belongs to one device and targets one peripheral. `condition` is an opaque JSONB expression tree — the server stores and forwards it without interpreting it; evaluation happens on the firmware. `action` is a JSONB object with shape `{"action":"set","value":<number>}` or `{"action":"set_mode","mode":"automatic"|"manual"}`. Soft-deleted triggers (`deleted_at IS NOT NULL`) are excluded from all list/get queries.
+
 ## Relationships
 
 ```
@@ -99,7 +118,10 @@ users ──< devices
       └──< provisioning_codes
       └──< refresh_tokens
       └──  accounts  (1:1 via user_id UNIQUE)
-outbox_events  (standalone — no FK; device referenced via payload)
+devices ──< peripherals
+        └──< triggers
+triggers ──> peripherals  (target_peripheral_id)
+outbox_events  (standalone — no FK; device/trigger referenced via payload)
 ```
 
 ## Migrations
@@ -129,6 +151,11 @@ They run automatically on server startup via `platform.Migrate()`. Current migra
 | 012 | Make `provisioning_codes.device_id` nullable; add `user_id` column |
 | 013 | Drop `status` column from `devices` |
 | 014 | Create `outbox_events` table |
+| 015 | Create `peripherals` table |
+| 016 | Add unique index on peripheral pin per device |
+| 017 | Add `category` and `control_mode` columns to `peripherals` |
+| 018 | Add `timezone` column to `accounts` |
+| 019 | Create `triggers` table |
 
 To add a migration, create the next numbered `.up.sql` / `.down.sql` pair in `db/migrations/`. Migrations run on the next server startup.
 
