@@ -29,6 +29,7 @@ All error responses return JSON with a consistent structure:
 | 409 | `peripheral_name_conflict` | Active peripheral with the same name already exists |
 | 409 | `peripheral_pin_conflict` | Active peripheral with the same pin already exists |
 | 409 | `provisioning_code_conflict` | Provisioning code has already been used |
+| 404 | `trigger_not_found` | Trigger does not exist or belongs to a different device |
 | 422 | `invalid_request` | Unsupported OIDC provider |
 | 500 | `internal_error` | Unexpected server error |
 
@@ -459,3 +460,178 @@ Cookie: session=<session-jwt>
 **Response `404`** — device not found or not owned by the authenticated user
 
 **Response `500`** — MQTT publish failure
+
+---
+
+## POST /api/devices/{id}/triggers
+
+Creates a new trigger for the device.
+
+**Headers** (one of):
+```
+Authorization: Bearer <session-jwt>
+Cookie: session=<session-jwt>
+```
+
+**Request body**
+```json
+{
+  "name": "Heater on cold",
+  "condition": {
+    "op": "lt",
+    "left":  { "op": "value",   "measurement": "ds18b20-4/temperature" },
+    "right": { "op": "literal", "value": 19.0 }
+  },
+  "target_peripheral_id": "<peripheral-uuid>",
+  "action": { "action": "set", "value": 1.0 },
+  "cooldown_s": 60
+}
+```
+
+| Field | Required | Description |
+|---|---|---|
+| `name` | yes | Human-readable label |
+| `condition` | yes | JSON expression tree (see firmware `docs/peripherals.md` for the full operator reference) |
+| `target_peripheral_id` | yes | UUID of the peripheral to actuate — must be an `actuator` peripheral owned by the same device |
+| `action` | yes | `{"action":"set","value":<number>}` or `{"action":"set_mode","mode":"automatic"\|"manual"}` |
+| `cooldown_s` | no | Minimum seconds between firings (default: `60`, must be `>= 0`) |
+
+**Validation:**
+- `action.action` must be `"set"` or `"set_mode"`.
+- `target_peripheral_id` must refer to a peripheral with `category = "actuator"` belonging to the same device.
+
+**Response `201`**
+```json
+{
+  "id":                   "<uuid>",
+  "name":                 "Heater on cold",
+  "enabled":              true,
+  "condition":            { ... },
+  "target_peripheral_id": "<peripheral-uuid>",
+  "action":               { "action": "set", "value": 1.0 },
+  "cooldown_s":           60,
+  "created_at":           "2024-04-13T12:00:00Z"
+}
+```
+
+**Response `400`** — missing required field, invalid `action.action`, `cooldown_s < 0`, or invalid `target_peripheral_id` (not an actuator or not owned by the device)
+
+**Response `401`** — not authenticated
+
+**Response `404`** — device not found or not owned by the authenticated user
+
+**Response `500`** — DB or outbox failure
+
+---
+
+## GET /api/devices/{id}/triggers
+
+Returns all non-deleted triggers for the device.
+
+**Headers** (one of):
+```
+Authorization: Bearer <session-jwt>
+Cookie: session=<session-jwt>
+```
+
+**Response `200`**
+```json
+[
+  {
+    "id":                   "<uuid>",
+    "name":                 "Heater on cold",
+    "enabled":              true,
+    "condition":            { ... },
+    "target_peripheral_id": "<peripheral-uuid>",
+    "action":               { "action": "set", "value": 1.0 },
+    "cooldown_s":           60,
+    "created_at":           "2024-04-13T12:00:00Z"
+  }
+]
+```
+
+Returns `[]` if the device has no triggers.
+
+**Response `401`** — not authenticated
+
+**Response `500`** — DB failure
+
+---
+
+## GET /api/devices/{id}/triggers/{tid}
+
+Returns a single trigger.
+
+**Headers** (one of):
+```
+Authorization: Bearer <session-jwt>
+Cookie: session=<session-jwt>
+```
+
+**Response `200`** — trigger object (same shape as create response)
+
+**Response `401`** — not authenticated
+
+**Response `404`** — `trigger_not_found` — trigger does not exist or belongs to a different device
+
+**Response `500`** — DB failure
+
+---
+
+## PATCH /api/devices/{id}/triggers/{tid}
+
+Partially updates a trigger. All fields are optional — only supplied fields are changed. Omitting a field (or sending `null`) leaves it unchanged.
+
+**Headers** (one of):
+```
+Authorization: Bearer <session-jwt>
+Cookie: session=<session-jwt>
+```
+
+**Request body** (all fields optional)
+```json
+{
+  "name":       "Heater on cold (updated)",
+  "enabled":    false,
+  "condition":  { ... },
+  "action":     { "action": "set", "value": 1.0 },
+  "cooldown_s": 120
+}
+```
+
+**Validation (same as create, applied only to provided fields):**
+- `name` must not be an empty string if provided.
+- `action.action` must be `"set"` or `"set_mode"` if `action` is provided.
+- `cooldown_s` must be `>= 0` if provided.
+
+On success, publishes an updated `upsert` MQTT message to `fishhub/{device_id}/triggers/{trigger_id}` via the outbox.
+
+**Response `200`** — updated trigger object (same shape as create response)
+
+**Response `400`** — validation failure
+
+**Response `401`** — not authenticated
+
+**Response `404`** — `trigger_not_found`
+
+**Response `500`** — DB or outbox failure
+
+---
+
+## DELETE /api/devices/{id}/triggers/{tid}
+
+Soft-deletes a trigger (sets `deleted_at`). Publishes a `{"op":"delete","id":"..."}` MQTT message to `fishhub/{device_id}/triggers/{trigger_id}` via the outbox, then publishes an empty payload to clear the retained message on the broker.
+
+**Headers** (one of):
+```
+Authorization: Bearer <session-jwt>
+Cookie: session=<session-jwt>
+```
+
+**Response `204`** — deleted
+
+**Response `401`** — not authenticated
+
+**Response `404`** — `trigger_not_found`
+
+**Response `500`** — DB or outbox failure
