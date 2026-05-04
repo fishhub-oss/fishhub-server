@@ -42,6 +42,32 @@ func (b deviceFinderBridge) FindByIDAndUserID(ctx context.Context, deviceID, use
 	return nil
 }
 
+// accountTimezoneReaderBridge adapts account.AccountStore to provisioning.TimezoneReader.
+type accountTimezoneReaderBridge struct{ store account.AccountStore }
+
+func (b accountTimezoneReaderBridge) GetTimezone(ctx context.Context, userID string) (string, error) {
+	a, err := b.store.FindByUserID(ctx, userID)
+	if err != nil {
+		return "UTC", err
+	}
+	return a.Timezone, nil
+}
+
+// deviceIDListerBridge adapts device.Store to account.DeviceLister.
+type deviceIDListerBridge struct{ store device.Store }
+
+func (b deviceIDListerBridge) ListIDsByUserID(ctx context.Context, userID string) ([]string, error) {
+	devices, err := b.store.ListByUserID(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	ids := make([]string, len(devices))
+	for i, d := range devices {
+		ids[i] = d.ID
+	}
+	return ids, nil
+}
+
 type config struct {
 	Port               string
 	LogFormat          string
@@ -256,7 +282,8 @@ func main() {
 	deviceSvc := device.NewService(deviceStore, hivemqClient, mqttPublisher, logger)
 	peripheralSvc := peripheral.NewService(db, peripheralStore, outboxStore, influxClient, mqttPublisher, logger)
 	provisioningSvc := provisioning.NewService(provisioningStore, logger)
-	activationSvc := provisioning.NewActivationService(db, provisioningStore, outboxStore, deviceSigner, logger)
+	activationSvc := provisioning.NewActivationService(db, provisioningStore, outboxStore, deviceSigner,
+		accountTimezoneReaderBridge{accountStore}, logger)
 
 	// ── MQTT readings subscription ────────────────────────────────────────────
 	readingsMQTTHandler := measurement.NewReadingsMQTTHandler(deviceStore, readingsSvc, logger)
@@ -270,6 +297,7 @@ func main() {
 		[]outbox.EventProcessor{
 			provisioning.NewHiveMQProvisionProcessor(hivemqClient, logger),
 			peripheral.NewPeripheralPushProcessor(mqttPublisher, logger),
+			account.NewConfigPushProcessor(mqttPublisher, logger),
 		},
 		10*time.Second,
 		5,
@@ -305,7 +333,14 @@ func main() {
 
 	r.Group(func(r chi.Router) {
 		r.Use(platform.SessionAuthenticator(authSvc))
-		r.Get("/api/me", (&account.MeHandler{Service: &account.AccountService{Store: accountStore}}).ServeHTTP)
+		accountSvc := &account.AccountService{
+			Store:       accountStore,
+			DB:          db,
+			OutboxStore: outboxStore,
+			Devices:     deviceIDListerBridge{deviceStore},
+		}
+		r.Get("/api/me", (&account.MeHandler{Service: accountSvc}).ServeHTTP)
+		r.Patch("/api/me", (&account.PatchMeHandler{Service: accountSvc}).ServeHTTP)
 		r.Post("/api/devices/provision", (&api.ProvisionHandler{Service: provisioningSvc}).ServeHTTP)
 		r.Get("/api/devices", (&api.DevicesHandler{Service: deviceSvc}).List)
 		r.Patch("/api/devices/{id}", (&api.PatchDeviceHandler{Service: deviceSvc}).ServeHTTP)

@@ -14,6 +14,17 @@ import (
 const EventTypeHiveMQProvision = "hivemq.provision_device"
 const hiveMQProvisionClaimTimeoutSeconds = 30
 
+// eventTypeDeviceConfigPush and its payload are defined here for use by
+// ActivationService. The account package defines its own copy of these for
+// the PATCH /api/me trigger — both use the same event type string.
+const eventTypeDeviceConfigPush = "device.config_push"
+const configPushClaimTimeoutSeconds = 30
+
+type deviceConfigPushPayload struct {
+	DeviceID string `json:"device_id"`
+	Timezone string `json:"timezone"`
+}
+
 type HiveMQProvisionPayload struct {
 	DeviceID string `json:"device_id"`
 	Username string `json:"username"`

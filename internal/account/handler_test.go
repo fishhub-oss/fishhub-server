@@ -2,6 +2,7 @@ package account_test
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -39,6 +40,10 @@ func (s *stubAccountStore) Upsert(_ context.Context, _, _, _ string) (account.Ac
 }
 
 func (s *stubAccountStore) FindByUserID(_ context.Context, _ string) (account.Account, error) {
+	return s.account, s.err
+}
+
+func (s *stubAccountStore) UpdateTimezone(_ context.Context, _ *sql.Tx, _, _ string) (account.Account, error) {
 	return s.account, s.err
 }
 

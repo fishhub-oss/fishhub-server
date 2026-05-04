@@ -24,8 +24,8 @@ func (s *postgresStore) Upsert(ctx context.Context, userID, email, name string) 
 		    SET email = EXCLUDED.email,
 		        name  = EXCLUDED.name,
 		        updated_at = now()
-		RETURNING id, user_id, email, name, created_at, updated_at
-	`, userID, email, name).Scan(&a.ID, &a.UserID, &a.Email, &a.Name, &a.CreatedAt, &a.UpdatedAt)
+		RETURNING id, user_id, email, name, timezone, created_at, updated_at
+	`, userID, email, name).Scan(&a.ID, &a.UserID, &a.Email, &a.Name, &a.Timezone, &a.CreatedAt, &a.UpdatedAt)
 	if err != nil {
 		return Account{}, fmt.Errorf("upsert account: %w", err)
 	}
@@ -35,15 +35,32 @@ func (s *postgresStore) Upsert(ctx context.Context, userID, email, name string) 
 func (s *postgresStore) FindByUserID(ctx context.Context, userID string) (Account, error) {
 	var a Account
 	err := s.db.QueryRowContext(ctx, `
-		SELECT id, user_id, email, name, created_at, updated_at
+		SELECT id, user_id, email, name, timezone, created_at, updated_at
 		FROM accounts
 		WHERE user_id = $1
-	`, userID).Scan(&a.ID, &a.UserID, &a.Email, &a.Name, &a.CreatedAt, &a.UpdatedAt)
+	`, userID).Scan(&a.ID, &a.UserID, &a.Email, &a.Name, &a.Timezone, &a.CreatedAt, &a.UpdatedAt)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return Account{}, ErrAccountNotFound
 		}
 		return Account{}, fmt.Errorf("find account by user id: %w", err)
+	}
+	return a, nil
+}
+
+func (s *postgresStore) UpdateTimezone(ctx context.Context, tx *sql.Tx, userID, timezone string) (Account, error) {
+	var a Account
+	err := tx.QueryRowContext(ctx, `
+		UPDATE accounts
+		SET timezone = $2, updated_at = now()
+		WHERE user_id = $1
+		RETURNING id, user_id, email, name, timezone, created_at, updated_at
+	`, userID, timezone).Scan(&a.ID, &a.UserID, &a.Email, &a.Name, &a.Timezone, &a.CreatedAt, &a.UpdatedAt)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return Account{}, ErrAccountNotFound
+		}
+		return Account{}, fmt.Errorf("update timezone: %w", err)
 	}
 	return a, nil
 }

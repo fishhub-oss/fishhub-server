@@ -304,11 +304,17 @@ func TestProvisionHandler(t *testing.T) {
 
 // ── ActivateHandler ───────────────────────────────────────────────────────────
 
+type stubTimezoneReader struct{}
+
+func (s *stubTimezoneReader) GetTimezone(_ context.Context, _ string) (string, error) {
+	return "UTC", nil
+}
+
 func newActivateHandler(t *testing.T, store *stubProvisioningStore, signer *stubSigner) *api.ActivateHandler {
 	t.Helper()
 	db := testutil.NewTestDB(t)
 	return &api.ActivateHandler{
-		Service: provisioning.NewActivationService(db, store, &stubOutboxStore{}, signer, discardLogger),
+		Service: provisioning.NewActivationService(db, store, &stubOutboxStore{}, signer, &stubTimezoneReader{}, discardLogger),
 	}
 }
 

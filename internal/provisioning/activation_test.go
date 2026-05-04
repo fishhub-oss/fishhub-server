@@ -67,10 +67,16 @@ func (s *stubSigner) PublicKey() *rsa.PublicKey         { return nil }
 func (s *stubSigner) KID() string                       { return "" }
 func (s *stubSigner) Issuer() string                    { return "" }
 
+type stubTimezoneReader struct{}
+
+func (s *stubTimezoneReader) GetTimezone(_ context.Context, _ string) (string, error) {
+	return "UTC", nil
+}
+
 func newActivationSvc(t *testing.T, store provisioning.Store, outboxStore outbox.Store, signer *stubSigner) *provisioning.ActivationService {
 	t.Helper()
 	db := testutil.NewTestDB(t)
-	return provisioning.NewActivationService(db, store, outboxStore, signer, discardLogger)
+	return provisioning.NewActivationService(db, store, outboxStore, signer, &stubTimezoneReader{}, discardLogger)
 }
 
 func TestActivationService_HappyPath(t *testing.T) {
@@ -86,7 +92,7 @@ func TestActivationService_HappyPath(t *testing.T) {
 		t.Fatalf("setup: get code: %v", err)
 	}
 
-	svc := provisioning.NewActivationService(db, provStore, outboxStore, &stubSigner{token: "jwt-tok"}, discardLogger)
+	svc := provisioning.NewActivationService(db, provStore, outboxStore, &stubSigner{token: "jwt-tok"}, &stubTimezoneReader{}, discardLogger)
 
 	result, err := svc.Activate(ctx, code)
 	if err != nil {
@@ -151,7 +157,7 @@ func TestActivationService_SignerError(t *testing.T) {
 	}
 
 	signErr := errors.New("signing key not configured")
-	svc := provisioning.NewActivationService(db, provStore, outboxStore, &stubSigner{err: signErr}, discardLogger)
+	svc := provisioning.NewActivationService(db, provStore, outboxStore, &stubSigner{err: signErr}, &stubTimezoneReader{}, discardLogger)
 
 	_, err = svc.Activate(ctx, code)
 	if !errors.Is(err, signErr) {

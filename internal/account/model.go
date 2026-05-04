@@ -7,6 +7,7 @@ type Account struct {
 	UserID    string
 	Email     string
 	Name      string
+	Timezone  string
 	CreatedAt time.Time
 	UpdatedAt time.Time
 }
