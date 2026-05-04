@@ -23,8 +23,9 @@ func NewVerifyHandler(service AuthService, logger *slog.Logger) *VerifyHandler {
 }
 
 type verifyRequest struct {
-	Provider string `json:"provider"`
-	IDToken  string `json:"id_token"`
+	Provider    string `json:"provider"`
+	IDToken     string `json:"id_token"`     // OIDC providers (google)
+	AccessToken string `json:"access_token"` // OAuth-only providers (github)
 }
 
 func (h *VerifyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -33,12 +34,28 @@ func (h *VerifyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		apierr.Write(w, http.StatusBadRequest, "invalid_request", "invalid request body")
 		return
 	}
-	if req.Provider == "" || req.IDToken == "" {
-		apierr.Write(w, http.StatusBadRequest, "invalid_request", "provider and id_token are required")
+	if req.Provider == "" {
+		apierr.Write(w, http.StatusBadRequest, "invalid_request", "provider is required")
 		return
 	}
 
-	user, err := h.service.VerifyAndUpsert(r.Context(), req.Provider, req.IDToken)
+	var credential string
+	switch req.Provider {
+	case "github":
+		if req.AccessToken == "" {
+			apierr.Write(w, http.StatusBadRequest, "invalid_request", "access_token is required for github provider")
+			return
+		}
+		credential = req.AccessToken
+	default:
+		if req.IDToken == "" {
+			apierr.Write(w, http.StatusBadRequest, "invalid_request", "id_token is required")
+			return
+		}
+		credential = req.IDToken
+	}
+
+	user, err := h.service.VerifyAndUpsert(r.Context(), req.Provider, credential)
 	if err != nil {
 		if errors.Is(err, ErrUnsupportedProvider) {
 			apierr.Write(w, http.StatusUnprocessableEntity, "invalid_request", "unsupported provider")
@@ -46,6 +63,10 @@ func (h *VerifyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		if errors.Is(err, ErrInvalidIDToken) {
 			apierr.Write(w, http.StatusUnauthorized, "unauthorized", "invalid id token")
+			return
+		}
+		if errors.Is(err, ErrProviderConflict) {
+			apierr.Write(w, http.StatusConflict, "provider_conflict", "an account with this email already exists under a different sign-in method")
 			return
 		}
 		h.logger.Error("auth verify", "error", err)

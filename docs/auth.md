@@ -134,4 +134,15 @@ The web frontend's `apiFetch` wrapper automatically retries on `401` by calling 
 
 ### Providers
 
-Currently only `"google"` is supported. The OIDC issuer is `https://accounts.google.com`. Configured via `GOOGLE_CLIENT_ID` in the environment.
+| Provider | Protocol | Env vars required | Credential in `/auth/verify` |
+|---|---|---|---|
+| `google` | OIDC (ID token) | `GOOGLE_CLIENT_ID` | `id_token` — Google ID token from the OAuth callback |
+| `github` | OAuth 2.0 (no OIDC) | `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET` | `code` — GitHub OAuth authorization code |
+
+#### Google
+
+OIDC issuer: `https://accounts.google.com`. The Next.js callback exchanges the authorization code for an ID token and forwards it to `POST /auth/verify` as `id_token`.
+
+#### GitHub
+
+GitHub does not issue OIDC ID tokens. The Next.js callback receives an authorization code from GitHub and forwards it to `POST /auth/verify` as `code`. The fishhub-server exchanges the code for an access token using `GITHUB_CLIENT_ID` + `GITHUB_CLIENT_SECRET`, then calls `GET https://api.github.com/user` to retrieve the user profile. If the user's email is not public, the server falls back to `GET https://api.github.com/user/emails` and picks the primary verified email.

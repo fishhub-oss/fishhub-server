@@ -76,19 +76,19 @@ type config struct {
 	JWTTTLHours      int
 	GoogleClientID   string
 	InfluxHost       string
-	InfluxToken      string
-	InfluxDatabase   string
-	DeviceJWTPEMKey  string
-	DeviceJWTKID     string
-	IDPHost          string
-	HiveMQBaseURL    string
-	HiveMQAPIToken   string
-	HiveMQRoleID     string
-	HiveMQHost       string
-	HiveMQPort       int
-	HiveMQServerUser string
-	HiveMQServerPass string
-	CORSOrigins      []string
+	InfluxToken        string
+	InfluxDatabase     string
+	DeviceJWTPEMKey    string
+	DeviceJWTKID       string
+	IDPHost            string
+	HiveMQBaseURL      string
+	HiveMQAPIToken     string
+	HiveMQRoleID       string
+	HiveMQHost         string
+	HiveMQPort         int
+	HiveMQServerUser   string
+	HiveMQServerPass   string
+	CORSOrigins        []string
 }
 
 func loadConfig() config {
@@ -110,13 +110,13 @@ func loadConfig() config {
 	}
 
 	return config{
-		Port:             port,
-		LogFormat:        os.Getenv("LOG_FORMAT"),
-		SessionJWTPEMKey: strings.ReplaceAll(os.Getenv("SESSION_JWT_PRIVATE_KEY"), `\n`, "\n"),
-		SessionJWTKID:    os.Getenv("SESSION_JWT_KID"),
-		JWTTTLHours:      jwtTTLHours,
-		GoogleClientID:   os.Getenv("GOOGLE_CLIENT_ID"),
-		InfluxHost:       os.Getenv("INFLUXDB3_HOST"),
+		Port:               port,
+		LogFormat:          os.Getenv("LOG_FORMAT"),
+		SessionJWTPEMKey:   strings.ReplaceAll(os.Getenv("SESSION_JWT_PRIVATE_KEY"), `\n`, "\n"),
+		SessionJWTKID:      os.Getenv("SESSION_JWT_KID"),
+		JWTTTLHours:        jwtTTLHours,
+		GoogleClientID:     os.Getenv("GOOGLE_CLIENT_ID"),
+		InfluxHost:         os.Getenv("INFLUXDB3_HOST"),
 		InfluxToken:      os.Getenv("INFLUXDB3_TOKEN"),
 		InfluxDatabase:   os.Getenv("INFLUXDB3_DATABASE"),
 		DeviceJWTPEMKey:  strings.ReplaceAll(os.Getenv("DEVICE_JWT_PRIVATE_KEY"), `\n`, "\n"),
@@ -199,13 +199,15 @@ func main() {
 	}
 
 	accountStore := account.NewPostgresStore(db)
+
 	authSvc, err := auth.NewOIDCService(ctx, auth.OIDCConfig{
-		Providers:    map[string]string{"google": cfg.GoogleClientID},
-		Store:        auth.NewPostgresStore(db),
-		RefreshStore: auth.NewPostgresRefreshTokenStore(db),
-		EventHandler: &account.AccountEventHandler{Store: accountStore},
-		Signer:       sessionSigner,
-		JWTTTL:       jwtTTL,
+		Providers:         map[string]string{"google": cfg.GoogleClientID},
+		Store:             auth.NewPostgresStore(db),
+		RefreshStore:      auth.NewPostgresRefreshTokenStore(db),
+		EventHandler:      &account.AccountEventHandler{Store: accountStore},
+		Signer:            sessionSigner,
+		JWTTTL:            jwtTTL,
+		GitHubUserFetcher: auth.NewGitHubHTTPFetcher(),
 	})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "auth init: %v\n", err)

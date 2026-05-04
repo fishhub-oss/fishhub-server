@@ -84,6 +84,17 @@ func TestPostgresStore_Integration(t *testing.T) {
 			t.Errorf("expected ErrUserNotFound, got %v", err)
 		}
 	})
+
+	t.Run("Upsert returns ErrEmailTaken when same email exists under different provider", func(t *testing.T) {
+		_, err := store.Upsert(ctx, "conflict@example.com", "google", "google-sub-conflict")
+		if err != nil {
+			t.Fatalf("initial upsert: %v", err)
+		}
+		_, err = store.Upsert(ctx, "conflict@example.com", "github", "github-sub-conflict")
+		if err != auth.ErrEmailTaken {
+			t.Errorf("expected ErrEmailTaken, got %v", err)
+		}
+	})
 }
 
 func TestPostgresRefreshTokenStore_Integration(t *testing.T) {

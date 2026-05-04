@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"time"
+
+	"github.com/lib/pq"
 )
 
 type postgresStore struct {
@@ -26,6 +28,10 @@ func (s *postgresStore) Upsert(ctx context.Context, email, provider, providerSub
 		RETURNING id, email, provider, provider_sub, created_at
 	`, email, provider, providerSub).Scan(&u.ID, &u.Email, &u.Provider, &u.ProviderSub, &u.CreatedAt)
 	if err != nil {
+		var pqErr *pq.Error
+		if errors.As(err, &pqErr) && pqErr.Code == "23505" && pqErr.Constraint == "users_email_key" {
+			return User{}, ErrEmailTaken
+		}
 		return User{}, fmt.Errorf("upsert user: %w", err)
 	}
 	return u, nil

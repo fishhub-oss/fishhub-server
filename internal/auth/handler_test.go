@@ -108,7 +108,7 @@ func TestVerifyHandler(t *testing.T) {
 
 	t.Run("unsupported provider returns 422", func(t *testing.T) {
 		h := auth.NewVerifyHandler(&stubAuthService{upsertErr: auth.ErrUnsupportedProvider}, nil)
-		body, _ := json.Marshal(map[string]string{"provider": "github", "id_token": "tok"})
+		body, _ := json.Marshal(map[string]string{"provider": "facebook", "id_token": "tok"})
 		req := httptest.NewRequest(http.MethodPost, "/auth/verify", bytes.NewReader(body))
 		w := httptest.NewRecorder()
 		h.ServeHTTP(w, req)
