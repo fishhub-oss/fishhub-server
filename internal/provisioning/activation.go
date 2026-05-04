@@ -12,6 +12,11 @@ import (
 	"github.com/fishhub-oss/fishhub-server/internal/outbox"
 )
 
+// TimezoneReader looks up a user's timezone. Implemented by a bridge in main.go.
+type TimezoneReader interface {
+	GetTimezone(ctx context.Context, userID string) (string, error)
+}
+
 // ActivationResult holds what the device receives immediately after activation.
 // MQTT credentials are not included — the device polls GET /devices/{id}/status
 // until they are ready.
@@ -23,11 +28,12 @@ type ActivationResult struct {
 // ActivationService orchestrates device activation: claim code → store credentials
 // + enqueue HiveMQ provisioning atomically → sign JWT.
 type ActivationService struct {
-	db          *sql.DB
-	store       Store
-	outboxStore outbox.Store
-	signer      devicejwt.Signer
-	logger      *slog.Logger
+	db             *sql.DB
+	store          Store
+	outboxStore    outbox.Store
+	signer         devicejwt.Signer
+	timezoneReader TimezoneReader
+	logger         *slog.Logger
 }
 
 func NewActivationService(
@@ -35,17 +41,19 @@ func NewActivationService(
 	store Store,
 	outboxStore outbox.Store,
 	signer devicejwt.Signer,
+	timezoneReader TimezoneReader,
 	logger *slog.Logger,
 ) *ActivationService {
 	if logger == nil {
 		logger = slog.Default()
 	}
 	return &ActivationService{
-		db:          db,
-		store:       store,
-		outboxStore: outboxStore,
-		signer:      signer,
-		logger:      logger,
+		db:             db,
+		store:          store,
+		outboxStore:    outboxStore,
+		signer:         signer,
+		timezoneReader: timezoneReader,
+		logger:         logger,
 	}
 }
 
@@ -59,6 +67,16 @@ func (s *ActivationService) Activate(ctx context.Context, code string) (Activati
 			s.logger.Error("activate: claim code", "error", err)
 		}
 		return ActivationResult{}, err
+	}
+
+	// Look up the user's timezone before opening the transaction.
+	// Defaults to "UTC" if the account is not yet created or the lookup fails.
+	timezone := "UTC"
+	if tz, err := s.timezoneReader.GetTimezone(ctx, userID); err == nil {
+		timezone = tz
+	} else {
+		s.logger.Warn("activate: timezone lookup failed, defaulting to UTC",
+			"user_id", userID, "error", err)
 	}
 
 	mqttUsername := deviceID
@@ -88,6 +106,14 @@ func (s *ActivationService) Activate(ctx context.Context, code string) (Activati
 	}, hiveMQProvisionClaimTimeoutSeconds); err != nil {
 		s.logger.Error("activate: enqueue hivemq provision", "device_id", deviceID, "error", err)
 		return ActivationResult{}, fmt.Errorf("enqueue hivemq provision: %w", err)
+	}
+
+	if err := s.outboxStore.Insert(ctx, tx, eventTypeDeviceConfigPush, deviceConfigPushPayload{
+		DeviceID: deviceID,
+		Timezone: timezone,
+	}, configPushClaimTimeoutSeconds); err != nil {
+		s.logger.Error("activate: enqueue config push", "device_id", deviceID, "error", err)
+		return ActivationResult{}, fmt.Errorf("enqueue config push: %w", err)
 	}
 
 	if err := tx.Commit(); err != nil {
