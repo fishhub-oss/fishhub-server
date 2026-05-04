@@ -107,28 +107,7 @@ func (s *Service) Update(ctx context.Context, deviceID, userID, triggerID string
 		return Trigger{}, err
 	}
 
-	merged := TriggerUpdate{
-		Name:            current.Name,
-		Condition:       current.Condition,
-		Action:          current.Action,
-		CooldownSeconds: current.CooldownSeconds,
-		Enabled:         current.Enabled,
-	}
-	if patch.Name != nil {
-		merged.Name = *patch.Name
-	}
-	if len(patch.Condition) > 0 {
-		merged.Condition = patch.Condition
-	}
-	if len(patch.Action) > 0 {
-		merged.Action = patch.Action
-	}
-	if patch.CooldownSeconds != nil {
-		merged.CooldownSeconds = *patch.CooldownSeconds
-	}
-	if patch.Enabled != nil {
-		merged.Enabled = *patch.Enabled
-	}
+	merged := applyPatch(current, patch)
 
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -163,6 +142,34 @@ func (s *Service) Update(ctx context.Context, deviceID, userID, triggerID string
 		return Trigger{}, fmt.Errorf("update trigger: commit: %w", err)
 	}
 	return updated, nil
+}
+
+// applyPatch merges a TriggerPatch onto current, returning the fully-merged TriggerUpdate.
+// Nil patch fields leave the current value unchanged.
+func applyPatch(current Trigger, patch TriggerPatch) TriggerUpdate {
+	u := TriggerUpdate{
+		Name:            current.Name,
+		Condition:       current.Condition,
+		Action:          current.Action,
+		CooldownSeconds: current.CooldownSeconds,
+		Enabled:         current.Enabled,
+	}
+	if patch.Name != nil {
+		u.Name = *patch.Name
+	}
+	if len(patch.Condition) > 0 {
+		u.Condition = patch.Condition
+	}
+	if len(patch.Action) > 0 {
+		u.Action = patch.Action
+	}
+	if patch.CooldownSeconds != nil {
+		u.CooldownSeconds = *patch.CooldownSeconds
+	}
+	if patch.Enabled != nil {
+		u.Enabled = *patch.Enabled
+	}
+	return u
 }
 
 // Delete soft-deletes a trigger and enqueues a trigger.push delete outbox event atomically.
