@@ -25,6 +25,7 @@ import (
 	"github.com/fishhub-oss/fishhub-server/internal/peripheral"
 	"github.com/fishhub-oss/fishhub-server/internal/platform"
 	"github.com/fishhub-oss/fishhub-server/internal/provisioning"
+	"github.com/fishhub-oss/fishhub-server/internal/trigger"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/cors"
 )
@@ -264,11 +265,13 @@ func main() {
 	// ── Stores & services ─────────────────────────────────────────────────────
 	deviceStore := device.NewStore(db)
 	peripheralStore := peripheral.NewStore(db)
+	triggerStore := trigger.NewStore(db)
 	provisioningStore := provisioning.NewStore(db)
 	outboxStore := outbox.NewPostgresStore(db)
 	readingsSvc := measurement.NewReadingsService(deviceFinderBridge{deviceStore}, influxClient, influxClient, logger)
 	deviceSvc := device.NewService(deviceStore, hivemqClient, mqttPublisher, logger)
 	peripheralSvc := peripheral.NewService(db, peripheralStore, outboxStore, influxClient, mqttPublisher, logger)
+	triggerSvc := trigger.NewService(db, triggerStore, outboxStore, logger)
 	provisioningSvc := provisioning.NewService(provisioningStore, logger)
 	activationSvc := provisioning.NewActivationService(db, provisioningStore, outboxStore, deviceSigner,
 		accountTimezoneReaderBridge{accountStore}, logger)
@@ -286,6 +289,7 @@ func main() {
 			provisioning.NewHiveMQProvisionProcessor(hivemqClient, logger),
 			peripheral.NewPeripheralPushProcessor(mqttPublisher, logger),
 			account.NewConfigPushProcessor(mqttPublisher, logger),
+			trigger.NewTriggerPushProcessor(mqttPublisher, logger),
 		},
 		10*time.Second,
 		5,
@@ -340,6 +344,11 @@ func main() {
 		r.Delete("/api/devices/{id}/peripherals/{peripheralId}", (&api.DeletePeripheralHandler{Service: peripheralSvc}).ServeHTTP)
 		r.Patch("/api/devices/{id}/peripherals/{peripheralId}/control-mode", (&api.SetControlModeHandler{Service: peripheralSvc}).ServeHTTP)
 		r.Post("/api/devices/{id}/peripherals/{peripheralId}/commands", (&api.CommandHandler{Service: peripheralSvc}).ServeHTTP)
+		r.Post("/api/devices/{id}/triggers", (&api.CreateTriggerHandler{Service: triggerSvc}).ServeHTTP)
+		r.Get("/api/devices/{id}/triggers", (&api.ListTriggersHandler{Service: triggerSvc}).ServeHTTP)
+		r.Get("/api/devices/{id}/triggers/{tid}", (&api.GetTriggerHandler{Service: triggerSvc}).ServeHTTP)
+		r.Patch("/api/devices/{id}/triggers/{tid}", (&api.PatchTriggerHandler{Service: triggerSvc}).ServeHTTP)
+		r.Delete("/api/devices/{id}/triggers/{tid}", (&api.DeleteTriggerHandler{Service: triggerSvc}).ServeHTTP)
 	})
 
 	fmt.Printf("listening on :%s\n", cfg.Port)
