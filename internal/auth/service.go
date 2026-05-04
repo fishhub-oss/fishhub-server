@@ -22,13 +22,13 @@ var ErrProviderConflict    = errors.New("email already registered with a differe
 const refreshTokenTTL = 30 * 24 * time.Hour
 
 type OIDCConfig struct {
-	Providers    map[string]string
-	Store        UserStore
-	RefreshStore RefreshTokenStore
-	EventHandler UserEventHandler
-	Signer       jwtutil.Signer
-	JWTTTL       time.Duration
-	GitHubExchanger GitHubExchanger
+	Providers         map[string]string
+	Store             UserStore
+	RefreshStore      RefreshTokenStore
+	EventHandler      UserEventHandler
+	Signer            jwtutil.Signer
+	JWTTTL            time.Duration
+	GitHubUserFetcher GitHubUserFetcher
 }
 
 type AuthService interface {
@@ -47,7 +47,7 @@ type oidcService struct {
 	eventHandler    UserEventHandler
 	signer          jwtutil.Signer
 	jwtTTL          time.Duration
-	githubExchanger GitHubExchanger
+	githubUserFetcher GitHubUserFetcher
 }
 
 func NewOIDCService(ctx context.Context, cfg OIDCConfig) (AuthService, error) {
@@ -73,7 +73,7 @@ func NewOIDCService(ctx context.Context, cfg OIDCConfig) (AuthService, error) {
 		eventHandler:    cfg.EventHandler,
 		signer:          cfg.Signer,
 		jwtTTL:          cfg.JWTTTL,
-		githubExchanger: cfg.GitHubExchanger,
+		githubUserFetcher: cfg.GitHubUserFetcher,
 	}, nil
 }
 
@@ -116,12 +116,12 @@ func (s *oidcService) verifyOIDC(ctx context.Context, provider, rawIDToken strin
 	return s.upsertAndNotify(ctx, provider, claims.Email, claims.Name, claims.Sub)
 }
 
-func (s *oidcService) verifyGitHub(ctx context.Context, code string) (User, error) {
-	if s.githubExchanger == nil {
+func (s *oidcService) verifyGitHub(ctx context.Context, accessToken string) (User, error) {
+	if s.githubUserFetcher == nil {
 		return User{}, fmt.Errorf("%w: github", ErrUnsupportedProvider)
 	}
 
-	email, name, sub, err := s.githubExchanger.Exchange(ctx, code)
+	email, name, sub, err := s.githubUserFetcher.Fetch(ctx, accessToken)
 	if err != nil {
 		return User{}, err
 	}

@@ -69,15 +69,13 @@ func (b deviceIDListerBridge) ListIDsByUserID(ctx context.Context, userID string
 }
 
 type config struct {
-	Port               string
-	LogFormat          string
-	SessionJWTPEMKey   string
-	SessionJWTKID      string
-	JWTTTLHours        int
-	GoogleClientID     string
-	GitHubClientID     string
-	GitHubClientSecret string
-	InfluxHost         string
+	Port             string
+	LogFormat        string
+	SessionJWTPEMKey string
+	SessionJWTKID    string
+	JWTTTLHours      int
+	GoogleClientID   string
+	InfluxHost       string
 	InfluxToken        string
 	InfluxDatabase     string
 	DeviceJWTPEMKey    string
@@ -118,8 +116,6 @@ func loadConfig() config {
 		SessionJWTKID:      os.Getenv("SESSION_JWT_KID"),
 		JWTTTLHours:        jwtTTLHours,
 		GoogleClientID:     os.Getenv("GOOGLE_CLIENT_ID"),
-		GitHubClientID:     os.Getenv("GITHUB_CLIENT_ID"),
-		GitHubClientSecret: os.Getenv("GITHUB_CLIENT_SECRET"),
 		InfluxHost:         os.Getenv("INFLUXDB3_HOST"),
 		InfluxToken:      os.Getenv("INFLUXDB3_TOKEN"),
 		InfluxDatabase:   os.Getenv("INFLUXDB3_DATABASE"),
@@ -204,22 +200,14 @@ func main() {
 
 	accountStore := account.NewPostgresStore(db)
 
-	var ghExchanger auth.GitHubExchanger
-	if cfg.GitHubClientID != "" && cfg.GitHubClientSecret != "" {
-		ghExchanger = auth.NewGitHubHTTPExchanger(cfg.GitHubClientID, cfg.GitHubClientSecret)
-		logger.Info("github oauth configured")
-	} else {
-		logger.Warn("github oauth not configured — github sign-in will be unavailable")
-	}
-
 	authSvc, err := auth.NewOIDCService(ctx, auth.OIDCConfig{
-		Providers:       map[string]string{"google": cfg.GoogleClientID},
-		Store:           auth.NewPostgresStore(db),
-		RefreshStore:    auth.NewPostgresRefreshTokenStore(db),
-		EventHandler:    &account.AccountEventHandler{Store: accountStore},
-		Signer:          sessionSigner,
-		JWTTTL:          jwtTTL,
-		GitHubExchanger: ghExchanger,
+		Providers:         map[string]string{"google": cfg.GoogleClientID},
+		Store:             auth.NewPostgresStore(db),
+		RefreshStore:      auth.NewPostgresRefreshTokenStore(db),
+		EventHandler:      &account.AccountEventHandler{Store: accountStore},
+		Signer:            sessionSigner,
+		JWTTTL:            jwtTTL,
+		GitHubUserFetcher: auth.NewGitHubHTTPFetcher(),
 	})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "auth init: %v\n", err)

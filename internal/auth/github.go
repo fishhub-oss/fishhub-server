@@ -6,36 +6,23 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"net/url"
-	"strings"
 )
 
-// GitHubExchanger exchanges a GitHub OAuth code for user profile data.
-type GitHubExchanger interface {
-	Exchange(ctx context.Context, code string) (email, name, providerSub string, err error)
+// GitHubUserFetcher fetches a GitHub user profile from an access token.
+type GitHubUserFetcher interface {
+	Fetch(ctx context.Context, accessToken string) (email, name, providerSub string, err error)
 }
 
-type gitHubHTTPExchanger struct {
-	httpClient   *http.Client
-	clientID     string
-	clientSecret string
+type gitHubHTTPFetcher struct {
+	httpClient *http.Client
 }
 
-// NewGitHubHTTPExchanger returns a GitHubExchanger backed by the real GitHub API.
-func NewGitHubHTTPExchanger(clientID, clientSecret string) GitHubExchanger {
-	return &gitHubHTTPExchanger{
-		httpClient:   &http.Client{},
-		clientID:     clientID,
-		clientSecret: clientSecret,
-	}
+// NewGitHubHTTPFetcher returns a GitHubUserFetcher backed by the real GitHub API.
+func NewGitHubHTTPFetcher() GitHubUserFetcher {
+	return &gitHubHTTPFetcher{httpClient: &http.Client{}}
 }
 
-func (e *gitHubHTTPExchanger) Exchange(ctx context.Context, code string) (string, string, string, error) {
-	accessToken, err := e.exchangeCode(ctx, code)
-	if err != nil {
-		return "", "", "", err
-	}
-
+func (e *gitHubHTTPFetcher) Fetch(ctx context.Context, accessToken string) (string, string, string, error) {
 	email, name, sub, err := e.fetchUser(ctx, accessToken)
 	if err != nil {
 		return "", "", "", err
@@ -51,50 +38,7 @@ func (e *gitHubHTTPExchanger) Exchange(ctx context.Context, code string) (string
 	return email, name, sub, nil
 }
 
-func (e *gitHubHTTPExchanger) exchangeCode(ctx context.Context, code string) (string, error) {
-	body := url.Values{
-		"client_id":     {e.clientID},
-		"client_secret": {e.clientSecret},
-		"code":          {code},
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
-		"https://github.com/login/oauth/access_token",
-		strings.NewReader(body.Encode()),
-	)
-	if err != nil {
-		return "", fmt.Errorf("build token request: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.Header.Set("Accept", "application/json")
-
-	resp, err := e.httpClient.Do(req)
-	if err != nil {
-		return "", fmt.Errorf("github token exchange: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		b, _ := io.ReadAll(resp.Body)
-		return "", fmt.Errorf("%w: github token exchange returned %d: %s", ErrInvalidIDToken, resp.StatusCode, b)
-	}
-
-	var tokenResp struct {
-		AccessToken string `json:"access_token"`
-		Error       string `json:"error"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&tokenResp); err != nil {
-		return "", fmt.Errorf("decode github token response: %w", err)
-	}
-	if tokenResp.Error != "" {
-		return "", fmt.Errorf("%w: %s", ErrInvalidIDToken, tokenResp.Error)
-	}
-	if tokenResp.AccessToken == "" {
-		return "", fmt.Errorf("%w: github returned empty access token", ErrInvalidIDToken)
-	}
-	return tokenResp.AccessToken, nil
-}
-
-func (e *gitHubHTTPExchanger) fetchUser(ctx context.Context, accessToken string) (email, name, sub string, err error) {
+func (e *gitHubHTTPFetcher) fetchUser(ctx context.Context, accessToken string) (email, name, sub string, err error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://api.github.com/user", nil)
 	if err != nil {
 		return "", "", "", fmt.Errorf("build user request: %w", err)
@@ -130,7 +74,7 @@ func (e *gitHubHTTPExchanger) fetchUser(ctx context.Context, accessToken string)
 	return user.Email, name, fmt.Sprintf("%d", user.ID), nil
 }
 
-func (e *gitHubHTTPExchanger) fetchPrimaryEmail(ctx context.Context, accessToken string) (string, error) {
+func (e *gitHubHTTPFetcher) fetchPrimaryEmail(ctx context.Context, accessToken string) (string, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://api.github.com/user/emails", nil)
 	if err != nil {
 		return "", fmt.Errorf("build emails request: %w", err)

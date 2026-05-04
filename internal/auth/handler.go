@@ -23,9 +23,9 @@ func NewVerifyHandler(service AuthService, logger *slog.Logger) *VerifyHandler {
 }
 
 type verifyRequest struct {
-	Provider string `json:"provider"`
-	IDToken  string `json:"id_token"` // OIDC providers (google)
-	Code     string `json:"code"`     // OAuth-only providers (github)
+	Provider    string `json:"provider"`
+	IDToken     string `json:"id_token"`     // OIDC providers (google)
+	AccessToken string `json:"access_token"` // OAuth-only providers (github)
 }
 
 func (h *VerifyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -42,11 +42,11 @@ func (h *VerifyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	var credential string
 	switch req.Provider {
 	case "github":
-		if req.Code == "" {
-			apierr.Write(w, http.StatusBadRequest, "invalid_request", "code is required for github provider")
+		if req.AccessToken == "" {
+			apierr.Write(w, http.StatusBadRequest, "invalid_request", "access_token is required for github provider")
 			return
 		}
-		credential = req.Code
+		credential = req.AccessToken
 	default:
 		if req.IDToken == "" {
 			apierr.Write(w, http.StatusBadRequest, "invalid_request", "id_token is required")

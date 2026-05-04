@@ -13,27 +13,27 @@ import (
 	"github.com/fishhub-oss/fishhub-server/internal/auth"
 )
 
-// stubGitHubExchanger is an in-memory GitHubExchanger for unit tests.
-type stubGitHubExchanger struct {
+// stubGitHubUserFetcher is an in-memory GitHubUserFetcher for unit tests.
+type stubGitHubUserFetcher struct {
 	email       string
 	name        string
 	providerSub string
 	err         error
 }
 
-func (s *stubGitHubExchanger) Exchange(_ context.Context, _ string) (string, string, string, error) {
+func (s *stubGitHubUserFetcher) Fetch(_ context.Context, _ string) (string, string, string, error) {
 	return s.email, s.name, s.providerSub, s.err
 }
 
-func githubService(t *testing.T, exchanger auth.GitHubExchanger) auth.AuthService {
+func githubService(t *testing.T, fetcher auth.GitHubUserFetcher) auth.AuthService {
 	t.Helper()
 	svc, err := auth.NewOIDCService(context.Background(), auth.OIDCConfig{
-		Providers:       map[string]string{},
-		Store:           &stubUserStore{},
-		RefreshStore:    &stubRefreshTokenStore{},
-		Signer:          newTestSigner(t),
-		JWTTTL:          time.Hour,
-		GitHubExchanger: exchanger,
+		Providers:         map[string]string{},
+		Store:             &stubUserStore{},
+		RefreshStore:      &stubRefreshTokenStore{},
+		Signer:            newTestSigner(t),
+		JWTTTL:            time.Hour,
+		GitHubUserFetcher: fetcher,
 	})
 	if err != nil {
 		t.Fatalf("NewOIDCService: %v", err)
@@ -42,7 +42,7 @@ func githubService(t *testing.T, exchanger auth.GitHubExchanger) auth.AuthServic
 }
 
 func TestVerifyAndUpsert_GitHub_Success(t *testing.T) {
-	exchanger := &stubGitHubExchanger{
+	exchanger := &stubGitHubUserFetcher{
 		email:       "user@example.com",
 		name:        "Alice",
 		providerSub: "12345",
@@ -65,7 +65,7 @@ func TestVerifyAndUpsert_GitHub_Success(t *testing.T) {
 }
 
 func TestVerifyAndUpsert_GitHub_ExchangeError(t *testing.T) {
-	exchanger := &stubGitHubExchanger{err: auth.ErrInvalidIDToken}
+	exchanger := &stubGitHubUserFetcher{err: auth.ErrInvalidIDToken}
 	svc := githubService(t, exchanger)
 
 	_, err := svc.VerifyAndUpsert(context.Background(), "github", "bad-code")
@@ -81,7 +81,7 @@ func TestVerifyAndUpsert_GitHub_NotConfigured(t *testing.T) {
 		RefreshStore: &stubRefreshTokenStore{},
 		Signer:       newTestSigner(t),
 		JWTTTL:       time.Hour,
-		// GitHubExchanger intentionally nil — github not configured
+		// GitHubUserFetcher intentionally nil — github not configured
 	})
 
 	_, err := svc.VerifyAndUpsert(context.Background(), "github", "some-code")
@@ -91,18 +91,18 @@ func TestVerifyAndUpsert_GitHub_NotConfigured(t *testing.T) {
 }
 
 func TestVerifyAndUpsert_GitHub_ProviderConflict(t *testing.T) {
-	exchanger := &stubGitHubExchanger{
+	exchanger := &stubGitHubUserFetcher{
 		email:       "taken@example.com",
 		name:        "Alice",
 		providerSub: "gh-123",
 	}
 	svc, _ := auth.NewOIDCService(context.Background(), auth.OIDCConfig{
-		Providers:       map[string]string{},
-		Store:           &stubUserStore{err: auth.ErrEmailTaken},
-		RefreshStore:    &stubRefreshTokenStore{},
-		Signer:          newTestSigner(t),
-		JWTTTL:          time.Hour,
-		GitHubExchanger: exchanger,
+		Providers:         map[string]string{},
+		Store:             &stubUserStore{err: auth.ErrEmailTaken},
+		RefreshStore:      &stubRefreshTokenStore{},
+		Signer:            newTestSigner(t),
+		JWTTTL:            time.Hour,
+		GitHubUserFetcher: exchanger,
 	})
 
 	_, err := svc.VerifyAndUpsert(context.Background(), "github", "oauth-code")
@@ -126,7 +126,7 @@ func TestVerifyHandler_GitHub_Success(t *testing.T) {
 		jwtToken:   "session.jwt",
 		refreshRaw: "refresh-token",
 	}, nil)
-	body, _ := json.Marshal(map[string]string{"provider": "github", "code": "gh-oauth-code"})
+	body, _ := json.Marshal(map[string]string{"provider": "github", "access_token": "gh-access-token"})
 	req := httptest.NewRequest(http.MethodPost, "/auth/verify", bytes.NewReader(body))
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, req)
