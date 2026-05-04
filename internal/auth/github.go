@@ -12,20 +12,26 @@ import (
 
 // GitHubExchanger exchanges a GitHub OAuth code for user profile data.
 type GitHubExchanger interface {
-	Exchange(ctx context.Context, code, clientID, clientSecret string) (email, name, providerSub string, err error)
+	Exchange(ctx context.Context, code string) (email, name, providerSub string, err error)
 }
 
 type gitHubHTTPExchanger struct {
-	httpClient *http.Client
+	httpClient   *http.Client
+	clientID     string
+	clientSecret string
 }
 
 // NewGitHubHTTPExchanger returns a GitHubExchanger backed by the real GitHub API.
-func NewGitHubHTTPExchanger() GitHubExchanger {
-	return &gitHubHTTPExchanger{httpClient: &http.Client{}}
+func NewGitHubHTTPExchanger(clientID, clientSecret string) GitHubExchanger {
+	return &gitHubHTTPExchanger{
+		httpClient:   &http.Client{},
+		clientID:     clientID,
+		clientSecret: clientSecret,
+	}
 }
 
-func (e *gitHubHTTPExchanger) Exchange(ctx context.Context, code, clientID, clientSecret string) (string, string, string, error) {
-	accessToken, err := e.exchangeCode(ctx, code, clientID, clientSecret)
+func (e *gitHubHTTPExchanger) Exchange(ctx context.Context, code string) (string, string, string, error) {
+	accessToken, err := e.exchangeCode(ctx, code)
 	if err != nil {
 		return "", "", "", err
 	}
@@ -45,10 +51,10 @@ func (e *gitHubHTTPExchanger) Exchange(ctx context.Context, code, clientID, clie
 	return email, name, sub, nil
 }
 
-func (e *gitHubHTTPExchanger) exchangeCode(ctx context.Context, code, clientID, clientSecret string) (string, error) {
+func (e *gitHubHTTPExchanger) exchangeCode(ctx context.Context, code string) (string, error) {
 	body := url.Values{
-		"client_id":     {clientID},
-		"client_secret": {clientSecret},
+		"client_id":     {e.clientID},
+		"client_secret": {e.clientSecret},
 		"code":          {code},
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost,

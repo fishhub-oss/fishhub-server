@@ -17,19 +17,18 @@ import (
 
 var ErrUnsupportedProvider = errors.New("unsupported provider")
 var ErrInvalidIDToken      = errors.New("invalid id token")
+var ErrProviderConflict    = errors.New("email already registered with a different provider")
 
 const refreshTokenTTL = 30 * 24 * time.Hour
 
 type OIDCConfig struct {
-	Providers        map[string]string
-	Store            UserStore
-	RefreshStore     RefreshTokenStore
-	EventHandler     UserEventHandler
-	Signer           jwtutil.Signer
-	JWTTTL           time.Duration
-	GitHubClientID   string
-	GitHubClientSecret string
-	GitHubExchanger  GitHubExchanger
+	Providers    map[string]string
+	Store        UserStore
+	RefreshStore RefreshTokenStore
+	EventHandler UserEventHandler
+	Signer       jwtutil.Signer
+	JWTTTL       time.Duration
+	GitHubExchanger GitHubExchanger
 }
 
 type AuthService interface {
@@ -42,15 +41,13 @@ type AuthService interface {
 }
 
 type oidcService struct {
-	verifiers          map[string]*gooidc.IDTokenVerifier
-	store              UserStore
-	refreshStore       RefreshTokenStore
-	eventHandler       UserEventHandler
-	signer             jwtutil.Signer
-	jwtTTL             time.Duration
-	githubClientID     string
-	githubClientSecret string
-	githubExchanger    GitHubExchanger
+	verifiers       map[string]*gooidc.IDTokenVerifier
+	store           UserStore
+	refreshStore    RefreshTokenStore
+	eventHandler    UserEventHandler
+	signer          jwtutil.Signer
+	jwtTTL          time.Duration
+	githubExchanger GitHubExchanger
 }
 
 func NewOIDCService(ctx context.Context, cfg OIDCConfig) (AuthService, error) {
@@ -69,20 +66,14 @@ func NewOIDCService(ctx context.Context, cfg OIDCConfig) (AuthService, error) {
 		}
 		verifiers[name] = provider.Verifier(&gooidc.Config{ClientID: clientID})
 	}
-	ghExchanger := cfg.GitHubExchanger
-	if ghExchanger == nil {
-		ghExchanger = NewGitHubHTTPExchanger()
-	}
 	return &oidcService{
-		verifiers:          verifiers,
-		store:              cfg.Store,
-		refreshStore:       cfg.RefreshStore,
-		eventHandler:       cfg.EventHandler,
-		signer:             cfg.Signer,
-		jwtTTL:             cfg.JWTTTL,
-		githubClientID:     cfg.GitHubClientID,
-		githubClientSecret: cfg.GitHubClientSecret,
-		githubExchanger:    ghExchanger,
+		verifiers:       verifiers,
+		store:           cfg.Store,
+		refreshStore:    cfg.RefreshStore,
+		eventHandler:    cfg.EventHandler,
+		signer:          cfg.Signer,
+		jwtTTL:          cfg.JWTTTL,
+		githubExchanger: cfg.GitHubExchanger,
 	}, nil
 }
 
@@ -126,11 +117,11 @@ func (s *oidcService) verifyOIDC(ctx context.Context, provider, rawIDToken strin
 }
 
 func (s *oidcService) verifyGitHub(ctx context.Context, code string) (User, error) {
-	if s.githubClientID == "" || s.githubClientSecret == "" {
+	if s.githubExchanger == nil {
 		return User{}, fmt.Errorf("%w: github", ErrUnsupportedProvider)
 	}
 
-	email, name, sub, err := s.githubExchanger.Exchange(ctx, code, s.githubClientID, s.githubClientSecret)
+	email, name, sub, err := s.githubExchanger.Exchange(ctx, code)
 	if err != nil {
 		return User{}, err
 	}
@@ -141,6 +132,9 @@ func (s *oidcService) verifyGitHub(ctx context.Context, code string) (User, erro
 func (s *oidcService) upsertAndNotify(ctx context.Context, provider, email, name, sub string) (User, error) {
 	user, err := s.store.Upsert(ctx, email, provider, sub)
 	if err != nil {
+		if errors.Is(err, ErrEmailTaken) {
+			return User{}, ErrProviderConflict
+		}
 		return User{}, err
 	}
 

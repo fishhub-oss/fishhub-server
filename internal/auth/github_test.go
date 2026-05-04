@@ -21,21 +21,19 @@ type stubGitHubExchanger struct {
 	err         error
 }
 
-func (s *stubGitHubExchanger) Exchange(_ context.Context, _, _, _ string) (string, string, string, error) {
+func (s *stubGitHubExchanger) Exchange(_ context.Context, _ string) (string, string, string, error) {
 	return s.email, s.name, s.providerSub, s.err
 }
 
 func githubService(t *testing.T, exchanger auth.GitHubExchanger) auth.AuthService {
 	t.Helper()
 	svc, err := auth.NewOIDCService(context.Background(), auth.OIDCConfig{
-		Providers:          map[string]string{},
-		Store:              &stubUserStore{},
-		RefreshStore:       &stubRefreshTokenStore{},
-		Signer:             newTestSigner(t),
-		JWTTTL:             time.Hour,
-		GitHubClientID:     "test-client-id",
-		GitHubClientSecret: "test-client-secret",
-		GitHubExchanger:    exchanger,
+		Providers:       map[string]string{},
+		Store:           &stubUserStore{},
+		RefreshStore:    &stubRefreshTokenStore{},
+		Signer:          newTestSigner(t),
+		JWTTTL:          time.Hour,
+		GitHubExchanger: exchanger,
 	})
 	if err != nil {
 		t.Fatalf("NewOIDCService: %v", err)
@@ -83,12 +81,33 @@ func TestVerifyAndUpsert_GitHub_NotConfigured(t *testing.T) {
 		RefreshStore: &stubRefreshTokenStore{},
 		Signer:       newTestSigner(t),
 		JWTTTL:       time.Hour,
-		// GitHubClientID and GitHubClientSecret intentionally empty
+		// GitHubExchanger intentionally nil — github not configured
 	})
 
 	_, err := svc.VerifyAndUpsert(context.Background(), "github", "some-code")
 	if !errors.Is(err, auth.ErrUnsupportedProvider) {
 		t.Errorf("expected ErrUnsupportedProvider, got %v", err)
+	}
+}
+
+func TestVerifyAndUpsert_GitHub_ProviderConflict(t *testing.T) {
+	exchanger := &stubGitHubExchanger{
+		email:       "taken@example.com",
+		name:        "Alice",
+		providerSub: "gh-123",
+	}
+	svc, _ := auth.NewOIDCService(context.Background(), auth.OIDCConfig{
+		Providers:       map[string]string{},
+		Store:           &stubUserStore{err: auth.ErrEmailTaken},
+		RefreshStore:    &stubRefreshTokenStore{},
+		Signer:          newTestSigner(t),
+		JWTTTL:          time.Hour,
+		GitHubExchanger: exchanger,
+	})
+
+	_, err := svc.VerifyAndUpsert(context.Background(), "github", "oauth-code")
+	if !errors.Is(err, auth.ErrProviderConflict) {
+		t.Errorf("expected ErrProviderConflict, got %v", err)
 	}
 }
 

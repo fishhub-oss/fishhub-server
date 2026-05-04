@@ -7,6 +7,7 @@ import (
 )
 
 var ErrUserNotFound  = errors.New("user not found")
+var ErrEmailTaken    = errors.New("email already registered with a different provider")
 var ErrTokenNotFound = errors.New("refresh token not found")
 var ErrTokenExpired  = errors.New("refresh token expired")
 var ErrTokenRevoked  = errors.New("refresh token revoked")

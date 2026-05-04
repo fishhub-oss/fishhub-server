@@ -65,6 +65,10 @@ func (h *VerifyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			apierr.Write(w, http.StatusUnauthorized, "unauthorized", "invalid id token")
 			return
 		}
+		if errors.Is(err, ErrProviderConflict) {
+			apierr.Write(w, http.StatusConflict, "provider_conflict", "an account with this email already exists under a different sign-in method")
+			return
+		}
 		h.logger.Error("auth verify", "error", err)
 		apierr.Write(w, http.StatusInternalServerError, "internal_error", "internal server error")
 		return

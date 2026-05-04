@@ -177,15 +177,23 @@ func main() {
 	}
 
 	accountStore := account.NewPostgresStore(db)
+
+	var ghExchanger auth.GitHubExchanger
+	if cfg.GitHubClientID != "" && cfg.GitHubClientSecret != "" {
+		ghExchanger = auth.NewGitHubHTTPExchanger(cfg.GitHubClientID, cfg.GitHubClientSecret)
+		logger.Info("github oauth configured")
+	} else {
+		logger.Warn("github oauth not configured — github sign-in will be unavailable")
+	}
+
 	authSvc, err := auth.NewOIDCService(ctx, auth.OIDCConfig{
-		Providers:          map[string]string{"google": cfg.GoogleClientID},
-		Store:              auth.NewPostgresStore(db),
-		RefreshStore:       auth.NewPostgresRefreshTokenStore(db),
-		EventHandler:       &account.AccountEventHandler{Store: accountStore},
-		Signer:             sessionSigner,
-		JWTTTL:             jwtTTL,
-		GitHubClientID:     cfg.GitHubClientID,
-		GitHubClientSecret: cfg.GitHubClientSecret,
+		Providers:       map[string]string{"google": cfg.GoogleClientID},
+		Store:           auth.NewPostgresStore(db),
+		RefreshStore:    auth.NewPostgresRefreshTokenStore(db),
+		EventHandler:    &account.AccountEventHandler{Store: accountStore},
+		Signer:          sessionSigner,
+		JWTTTL:          jwtTTL,
+		GitHubExchanger: ghExchanger,
 	})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "auth init: %v\n", err)
