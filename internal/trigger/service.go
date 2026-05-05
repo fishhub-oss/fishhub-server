@@ -8,21 +8,31 @@ import (
 	"fmt"
 	"log/slog"
 
+	"github.com/fishhub-oss/fishhub-server/internal/device"
 	"github.com/fishhub-oss/fishhub-server/internal/outbox"
 )
 
 const eventTypeTriggerPush = "trigger.push"
 const triggerPushClaimTimeoutSeconds = 30
 
+type actionPayload struct {
+	Type   string          `json:"type"`
+	Config json.RawMessage `json:"config"`
+}
+
 type triggerPushPayload struct {
-	Op               string          `json:"op"`
-	ID               string          `json:"id"`
-	DeviceID         string          `json:"device_id"`
-	Enabled          bool            `json:"enabled,omitempty"`
-	Condition        json.RawMessage `json:"condition,omitempty"`
-	TargetPeripheral string          `json:"target_peripheral,omitempty"`
-	Action           json.RawMessage `json:"action,omitempty"`
-	CooldownS        int             `json:"cooldown_s,omitempty"`
+	Op        string          `json:"op"`
+	ID        string          `json:"id"`
+	DeviceID  string          `json:"device_id"`
+	Enabled   bool            `json:"enabled,omitempty"`
+	Condition json.RawMessage `json:"condition,omitempty"`
+	Actions   []actionPayload `json:"actions,omitempty"`
+	CooldownS int             `json:"cooldown_s,omitempty"`
+}
+
+// PeripheralQuerier is the minimal interface Service needs to validate peripheral ownership.
+type PeripheralQuerier interface {
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
 }
 
 // Service orchestrates trigger CRUD and outbox event enqueuing.
@@ -53,20 +63,30 @@ func (s *Service) Create(ctx context.Context, deviceID, userID string, p Trigger
 	}
 	defer tx.Rollback()
 
-	t, kindPin, err := s.store.Create(ctx, tx, deviceID, userID, p)
+	kindPin, err := s.validatePeripheralAction(ctx, tx, deviceID, userID, p.Action)
+	if err != nil {
+		return Trigger{}, err
+	}
+
+	actionConfig, err := buildPeripheralActionConfig(p.Action.Config, kindPin)
+	if err != nil {
+		return Trigger{}, fmt.Errorf("create trigger: build action config: %w", err)
+	}
+	p.Action.Config = actionConfig
+
+	t, err := s.store.Create(ctx, tx, deviceID, userID, p)
 	if err != nil {
 		return Trigger{}, err
 	}
 
 	if err := s.outbox.Insert(ctx, tx, eventTypeTriggerPush, triggerPushPayload{
-		Op:               "upsert",
-		ID:               t.ID,
-		DeviceID:         t.DeviceID,
-		Enabled:          t.Enabled,
-		Condition:        json.RawMessage(t.Condition),
-		TargetPeripheral: kindPin,
-		Action:           json.RawMessage(t.Action),
-		CooldownS:        t.CooldownSeconds,
+		Op:        "upsert",
+		ID:        t.ID,
+		DeviceID:  t.DeviceID,
+		Enabled:   t.Enabled,
+		Condition: json.RawMessage(t.Condition),
+		Actions:   actionsToPayload(t.Actions),
+		CooldownS: t.CooldownSeconds,
 	}, triggerPushClaimTimeoutSeconds); err != nil {
 		s.logger.Error("create trigger: enqueue push", "device_id", deviceID, "error", err)
 		return Trigger{}, fmt.Errorf("create trigger: enqueue push: %w", err)
@@ -107,15 +127,18 @@ func (s *Service) Update(ctx context.Context, deviceID, userID, triggerID string
 		return Trigger{}, err
 	}
 
-	merged := applyPatch(current, patch)
-
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return Trigger{}, fmt.Errorf("update trigger: begin tx: %w", err)
 	}
 	defer tx.Rollback()
 
-	updated, kindPin, err := s.store.Update(ctx, tx, deviceID, userID, triggerID, merged)
+	merged, err := s.applyPatch(ctx, tx, deviceID, userID, current, patch)
+	if err != nil {
+		return Trigger{}, err
+	}
+
+	updated, err := s.store.Update(ctx, tx, deviceID, userID, triggerID, merged)
 	if err != nil {
 		if !errors.Is(err, ErrNotFound) {
 			s.logger.Error("update trigger: store", "device_id", deviceID, "trigger_id", triggerID, "error", err)
@@ -124,14 +147,13 @@ func (s *Service) Update(ctx context.Context, deviceID, userID, triggerID string
 	}
 
 	if err := s.outbox.Insert(ctx, tx, eventTypeTriggerPush, triggerPushPayload{
-		Op:               "upsert",
-		ID:               updated.ID,
-		DeviceID:         updated.DeviceID,
-		Enabled:          updated.Enabled,
-		Condition:        json.RawMessage(updated.Condition),
-		TargetPeripheral: kindPin,
-		Action:           json.RawMessage(updated.Action),
-		CooldownS:        updated.CooldownSeconds,
+		Op:        "upsert",
+		ID:        updated.ID,
+		DeviceID:  updated.DeviceID,
+		Enabled:   updated.Enabled,
+		Condition: json.RawMessage(updated.Condition),
+		Actions:   actionsToPayload(updated.Actions),
+		CooldownS: updated.CooldownSeconds,
 	}, triggerPushClaimTimeoutSeconds); err != nil {
 		s.logger.Error("update trigger: enqueue push", "device_id", deviceID, "trigger_id", triggerID, "error", err)
 		return Trigger{}, fmt.Errorf("update trigger: enqueue push: %w", err)
@@ -145,12 +167,18 @@ func (s *Service) Update(ctx context.Context, deviceID, userID, triggerID string
 }
 
 // applyPatch merges a TriggerPatch onto current, returning the fully-merged TriggerUpdate.
-// Nil patch fields leave the current value unchanged.
-func applyPatch(current Trigger, patch TriggerPatch) TriggerUpdate {
+// If the action is being changed, validatePeripheralAction is called to resolve the kind-pin
+// and inject it into the config before storing.
+func (s *Service) applyPatch(ctx context.Context, tx *sql.Tx, deviceID, userID string, current Trigger, patch TriggerPatch) (TriggerUpdate, error) {
+	var currentAction Action
+	if len(current.Actions) > 0 {
+		currentAction = current.Actions[0]
+	}
+
 	u := TriggerUpdate{
 		Name:            current.Name,
 		Condition:       current.Condition,
-		Action:          current.Action,
+		Action:          currentAction,
 		CooldownSeconds: current.CooldownSeconds,
 		Enabled:         current.Enabled,
 	}
@@ -160,16 +188,24 @@ func applyPatch(current Trigger, patch TriggerPatch) TriggerUpdate {
 	if len(patch.Condition) > 0 {
 		u.Condition = patch.Condition
 	}
-	if len(patch.Action) > 0 {
-		u.Action = patch.Action
-	}
 	if patch.CooldownSeconds != nil {
 		u.CooldownSeconds = *patch.CooldownSeconds
 	}
 	if patch.Enabled != nil {
 		u.Enabled = *patch.Enabled
 	}
-	return u
+	if patch.Action != nil {
+		kindPin, err := s.validatePeripheralAction(ctx, tx, deviceID, userID, *patch.Action)
+		if err != nil {
+			return TriggerUpdate{}, err
+		}
+		config, err := buildPeripheralActionConfig(patch.Action.Config, kindPin)
+		if err != nil {
+			return TriggerUpdate{}, fmt.Errorf("apply patch: build action config: %w", err)
+		}
+		u.Action = Action{Type: patch.Action.Type, Config: config}
+	}
+	return u, nil
 }
 
 // Delete soft-deletes a trigger and enqueues a trigger.push delete outbox event atomically.
@@ -202,4 +238,65 @@ func (s *Service) Delete(ctx context.Context, deviceID, userID, triggerID string
 		return fmt.Errorf("delete trigger: commit: %w", err)
 	}
 	return nil
+}
+
+// validatePeripheralAction checks that the peripheral in action.Config is an actuator
+// owned by deviceID/userID, and returns its resolved kind-pin string.
+func (s *Service) validatePeripheralAction(ctx context.Context, q PeripheralQuerier, deviceID, userID string, action Action) (string, error) {
+	var cfg struct {
+		PeripheralID string `json:"peripheral_id"`
+	}
+	if err := json.Unmarshal(action.Config, &cfg); err != nil || cfg.PeripheralID == "" {
+		return "", ErrInvalidPeripheral
+	}
+
+	var kindPin string
+	err := q.QueryRowContext(ctx, `
+		SELECT concat(pr.kind, '-', pr.pin::text)
+		FROM peripherals pr
+		JOIN devices d ON d.id = pr.device_id
+		WHERE pr.id = $1
+		  AND pr.device_id = $2
+		  AND d.user_id = $3
+		  AND pr.category = 'actuator'
+		  AND pr.deleted_at IS NULL
+		  AND d.deleted_at IS NULL
+	`, cfg.PeripheralID, deviceID, userID).Scan(&kindPin)
+	if errors.Is(err, sql.ErrNoRows) {
+		var deviceExists bool
+		_ = q.QueryRowContext(ctx,
+			`SELECT EXISTS(SELECT 1 FROM devices WHERE id=$1 AND user_id=$2 AND deleted_at IS NULL)`,
+			deviceID, userID,
+		).Scan(&deviceExists)
+		if !deviceExists {
+			return "", device.ErrNotFound
+		}
+		return "", ErrInvalidPeripheral
+	}
+	if err != nil {
+		return "", fmt.Errorf("validate peripheral action: %w", err)
+	}
+	return kindPin, nil
+}
+
+// buildPeripheralActionConfig injects the resolved kind-pin into the action config JSONB.
+func buildPeripheralActionConfig(raw json.RawMessage, kindPin string) (json.RawMessage, error) {
+	var cfg map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &cfg); err != nil {
+		return nil, err
+	}
+	peripheralBytes, err := json.Marshal(kindPin)
+	if err != nil {
+		return nil, err
+	}
+	cfg["peripheral"] = peripheralBytes
+	return json.Marshal(cfg)
+}
+
+func actionsToPayload(actions []Action) []actionPayload {
+	out := make([]actionPayload, len(actions))
+	for i, a := range actions {
+		out[i] = actionPayload{Type: a.Type, Config: a.Config}
+	}
+	return out
 }

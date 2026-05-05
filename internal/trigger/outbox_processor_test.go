@@ -15,9 +15,9 @@ import (
 var discardLogger = slog.New(slog.NewTextHandler(io.Discard, nil))
 
 type stubPublisher struct {
-	calls    []publishCall
+	calls        []publishCall
 	retainCalled bool
-	err      error
+	err          error
 }
 
 type publishCall struct {
@@ -46,7 +46,24 @@ func makeEvent(t *testing.T, payload any) outbox.Event {
 	return outbox.Event{Payload: b}
 }
 
-type pushPayload struct {
+// internalPayload mirrors the internal triggerPushPayload struct for test construction.
+type internalPayload struct {
+	Op        string           `json:"op"`
+	ID        string           `json:"id"`
+	DeviceID  string           `json:"device_id"`
+	Enabled   bool             `json:"enabled,omitempty"`
+	Condition json.RawMessage  `json:"condition,omitempty"`
+	Actions   []actionPayload  `json:"actions,omitempty"`
+	CooldownS int              `json:"cooldown_s,omitempty"`
+}
+
+type actionPayload struct {
+	Type   string          `json:"type"`
+	Config json.RawMessage `json:"config"`
+}
+
+// wirePayload mirrors the MQTT wire format the firmware expects (unchanged).
+type wirePayload struct {
 	Op               string          `json:"op"`
 	ID               string          `json:"id"`
 	DeviceID         string          `json:"device_id"`
@@ -68,15 +85,23 @@ func TestTriggerPushProcessor_Upsert(t *testing.T) {
 	pub := &stubPublisher{}
 	proc := trigger.NewTriggerPushProcessor(pub, discardLogger)
 
-	payload := pushPayload{
-		Op:               "upsert",
-		ID:               "trig-1",
-		DeviceID:         "dev-1",
-		Enabled:          true,
-		Condition:        json.RawMessage(`{"op":"lt","left":{"op":"value","measurement":"ds18b20-4/temperature"},"right":{"op":"literal","value":19.0}}`),
-		TargetPeripheral: "relay-14",
-		Action:           json.RawMessage(`{"action":"set","value":1.0}`),
-		CooldownS:        60,
+	actionConfig, _ := json.Marshal(map[string]any{
+		"peripheral_id": "p-uuid",
+		"peripheral":    "relay-14",
+		"command":       "set",
+		"value":         1.0,
+	})
+
+	payload := internalPayload{
+		Op:        "upsert",
+		ID:        "trig-1",
+		DeviceID:  "dev-1",
+		Enabled:   true,
+		Condition: json.RawMessage(`{"op":"lt","left":{"op":"value","measurement":"ds18b20-4/temperature"},"right":{"op":"literal","value":19.0}}`),
+		Actions: []actionPayload{
+			{Type: "peripheral_action", Config: actionConfig},
+		},
+		CooldownS: 60,
 	}
 
 	if err := proc.Process(context.Background(), makeEvent(t, payload)); err != nil {
@@ -95,7 +120,7 @@ func TestTriggerPushProcessor_Upsert(t *testing.T) {
 		t.Errorf("topic: got %q, want %q", call.topic, wantTopic)
 	}
 
-	var msg pushPayload
+	var msg wirePayload
 	if err := json.Unmarshal(call.payload, &msg); err != nil {
 		t.Fatalf("unmarshal published payload: %v", err)
 	}
@@ -115,13 +140,25 @@ func TestTriggerPushProcessor_Upsert(t *testing.T) {
 	if msg.DeviceID != "" {
 		t.Errorf("device_id should not be in MQTT payload, got %q", msg.DeviceID)
 	}
+
+	// Verify action shape in wire format: {"action":"set","value":1.0}
+	var action struct {
+		Action string          `json:"action"`
+		Value  json.RawMessage `json:"value"`
+	}
+	if err := json.Unmarshal(msg.Action, &action); err != nil {
+		t.Fatalf("unmarshal action: %v", err)
+	}
+	if action.Action != "set" {
+		t.Errorf("action.action: got %q, want set", action.Action)
+	}
 }
 
 func TestTriggerPushProcessor_Delete(t *testing.T) {
 	pub := &stubPublisher{}
 	proc := trigger.NewTriggerPushProcessor(pub, discardLogger)
 
-	payload := pushPayload{
+	payload := internalPayload{
 		Op:       "delete",
 		ID:       "trig-2",
 		DeviceID: "dev-1",
@@ -166,8 +203,19 @@ func TestTriggerPushProcessor_PublishError(t *testing.T) {
 	pub := &stubPublisher{err: errors.New("broker down")}
 	proc := trigger.NewTriggerPushProcessor(pub, discardLogger)
 
-	payload := pushPayload{Op: "upsert", ID: "t1", DeviceID: "d1",
-		Condition: json.RawMessage(`{}`), Action: json.RawMessage(`{}`)}
+	actionConfig, _ := json.Marshal(map[string]any{
+		"peripheral":    "relay-14",
+		"peripheral_id": "p-uuid",
+		"command":       "set",
+		"value":         1.0,
+	})
+	payload := internalPayload{
+		Op:        "upsert",
+		ID:        "t1",
+		DeviceID:  "d1",
+		Condition: json.RawMessage(`{}`),
+		Actions:   []actionPayload{{Type: "peripheral_action", Config: actionConfig}},
+	}
 
 	if err := proc.Process(context.Background(), makeEvent(t, payload)); err == nil {
 		t.Fatal("expected error, got nil")
@@ -178,7 +226,7 @@ func TestTriggerPushProcessor_DeletePublishError(t *testing.T) {
 	pub := &stubPublisher{err: errors.New("broker down")}
 	proc := trigger.NewTriggerPushProcessor(pub, discardLogger)
 
-	payload := pushPayload{Op: "delete", ID: "t1", DeviceID: "d1"}
+	payload := internalPayload{Op: "delete", ID: "t1", DeviceID: "d1"}
 
 	if err := proc.Process(context.Background(), makeEvent(t, payload)); err == nil {
 		t.Fatal("expected error, got nil")
@@ -191,5 +239,23 @@ func TestTriggerPushProcessor_InvalidPayload(t *testing.T) {
 
 	if err := proc.Process(context.Background(), outbox.Event{Payload: []byte("not json")}); err == nil {
 		t.Fatal("expected error for invalid payload, got nil")
+	}
+}
+
+func TestTriggerPushProcessor_NoPeripheralAction_ReturnsError(t *testing.T) {
+	pub := &stubPublisher{}
+	proc := trigger.NewTriggerPushProcessor(pub, discardLogger)
+
+	// Upsert payload with no actions → processor should return an error.
+	payload := internalPayload{
+		Op:        "upsert",
+		ID:        "t1",
+		DeviceID:  "d1",
+		Condition: json.RawMessage(`{}`),
+		Actions:   []actionPayload{},
+	}
+
+	if err := proc.Process(context.Background(), makeEvent(t, payload)); err == nil {
+		t.Fatal("expected error for missing peripheral_action, got nil")
 	}
 }
