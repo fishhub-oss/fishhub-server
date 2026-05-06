@@ -4,5 +4,5 @@ import "errors"
 
 var (
 	ErrNotFound       = errors.New("device not found")
-	ErrInvalidCommand = errors.New("action must be 'set' or 'schedule'")
+	ErrInvalidCommand = errors.New("command must be 'set' or 'schedule'")
 )
