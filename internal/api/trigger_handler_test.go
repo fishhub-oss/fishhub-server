@@ -65,10 +65,19 @@ func TestCreateTriggerHandler_validateActions(t *testing.T) {
 		assertErrorCode(t, post(t, body), http.StatusBadRequest, "invalid_request")
 	})
 
-	t.Run("more than one action returns 400", func(t *testing.T) {
+	t.Run("two valid actions passes validation", func(t *testing.T) {
+		// Uses a real DB so the service can BeginTx; the peripheral won't exist so it
+		// returns 4xx/5xx, but NOT 400 for having two entries.
+		svc := newTriggerService(t, &stubTriggerStore{})
+		h := &api.CreateTriggerHandler{Service: svc}
 		cfg := `{"peripheral_id":"00000000-0000-0000-0000-000000000001","command":"set"}`
 		body := `{"name":"H","condition":{"op":"lt"},"actions":[{"type":"peripheral_action","config":` + cfg + `},{"type":"peripheral_action","config":` + cfg + `}]}`
-		assertErrorCode(t, post(t, body), http.StatusBadRequest, "invalid_request")
+		req := withChiParam(withClaims(httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body)), "user-1"), "id", "dev-1")
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if rec.Code == http.StatusBadRequest {
+			t.Errorf("expected non-400 for two valid actions, got %d: %s", rec.Code, rec.Body.String())
+		}
 	})
 
 	t.Run("unknown type returns 400", func(t *testing.T) {

@@ -33,15 +33,6 @@ func NewStore(db *sql.DB) Store {
 }
 
 func (s *postgresStore) Create(ctx context.Context, tx *sql.Tx, deviceID, userID string, p TriggerCreate) (Trigger, error) {
-	var actionID string
-	if err := tx.QueryRowContext(ctx, `
-		INSERT INTO actions (type, config)
-		VALUES ($1, $2)
-		RETURNING id
-	`, p.Action.Type, p.Action.Config).Scan(&actionID); err != nil {
-		return Trigger{}, fmt.Errorf("create trigger: insert action: %w", err)
-	}
-
 	var t Trigger
 	if err := tx.QueryRowContext(ctx, `
 		INSERT INTO triggers (device_id, name, condition, cooldown_s)
@@ -54,13 +45,22 @@ func (s *postgresStore) Create(ctx context.Context, tx *sql.Tx, deviceID, userID
 		return Trigger{}, fmt.Errorf("create trigger: insert trigger: %w", err)
 	}
 
-	if _, err := tx.ExecContext(ctx, `
-		INSERT INTO action_triggers (trigger_id, action_id) VALUES ($1, $2)
-	`, t.ID, actionID); err != nil {
-		return Trigger{}, fmt.Errorf("create trigger: insert action_triggers: %w", err)
+	for _, a := range p.Actions {
+		var actionID string
+		if err := tx.QueryRowContext(ctx, `
+			INSERT INTO actions (type, config)
+			VALUES ($1, $2)
+			RETURNING id
+		`, a.Type, a.Config).Scan(&actionID); err != nil {
+			return Trigger{}, fmt.Errorf("create trigger: insert action: %w", err)
+		}
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO action_triggers (trigger_id, action_id) VALUES ($1, $2)
+		`, t.ID, actionID); err != nil {
+			return Trigger{}, fmt.Errorf("create trigger: insert action_triggers: %w", err)
+		}
+		t.Actions = append(t.Actions, Action{ID: actionID, Type: a.Type, Config: a.Config})
 	}
-
-	t.Actions = []Action{{ID: actionID, Type: p.Action.Type, Config: p.Action.Config}}
 	return t, nil
 }
 
@@ -169,25 +169,31 @@ func (s *postgresStore) Update(ctx context.Context, tx *sql.Tx, deviceID, userID
 		return Trigger{}, fmt.Errorf("update trigger: %w", err)
 	}
 
-	var actionID string
-	if err := tx.QueryRowContext(ctx, `
-		SELECT at.action_id
-		FROM action_triggers at
-		JOIN actions a ON a.id = at.action_id
-		WHERE at.trigger_id = $1
-		  AND a.type = 'peripheral_action'
-		LIMIT 1
-	`, t.ID).Scan(&actionID); err != nil {
-		return Trigger{}, fmt.Errorf("update trigger: find action: %w", err)
-	}
-
+	// Replace the full action set: delete existing join rows and orphaned actions,
+	// then insert the new set.
 	if _, err := tx.ExecContext(ctx, `
-		UPDATE actions SET config = $1 WHERE id = $2
-	`, u.Action.Config, actionID); err != nil {
-		return Trigger{}, fmt.Errorf("update trigger: update action: %w", err)
+		DELETE FROM actions a
+		USING action_triggers at
+		WHERE at.action_id = a.id AND at.trigger_id = $1
+	`, t.ID); err != nil {
+		return Trigger{}, fmt.Errorf("update trigger: delete old actions: %w", err)
 	}
 
-	t.Actions = []Action{{ID: actionID, Type: u.Action.Type, Config: u.Action.Config}}
+	t.Actions = t.Actions[:0]
+	for _, a := range u.Actions {
+		var actionID string
+		if err := tx.QueryRowContext(ctx, `
+			INSERT INTO actions (type, config) VALUES ($1, $2) RETURNING id
+		`, a.Type, a.Config).Scan(&actionID); err != nil {
+			return Trigger{}, fmt.Errorf("update trigger: insert action: %w", err)
+		}
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO action_triggers (trigger_id, action_id) VALUES ($1, $2)
+		`, t.ID, actionID); err != nil {
+			return Trigger{}, fmt.Errorf("update trigger: insert action_triggers: %w", err)
+		}
+		t.Actions = append(t.Actions, Action{ID: actionID, Type: a.Type, Config: a.Config})
+	}
 	return t, nil
 }
 

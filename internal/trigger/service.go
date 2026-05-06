@@ -63,16 +63,17 @@ func (s *Service) Create(ctx context.Context, deviceID, userID string, p Trigger
 	}
 	defer tx.Rollback()
 
-	kindPin, err := s.validatePeripheralAction(ctx, tx, deviceID, userID, p.Action)
-	if err != nil {
-		return Trigger{}, err
+	for i, a := range p.Actions {
+		kindPin, err := s.validatePeripheralAction(ctx, tx, deviceID, userID, a)
+		if err != nil {
+			return Trigger{}, err
+		}
+		cfg, err := buildPeripheralActionConfig(a.Config, kindPin)
+		if err != nil {
+			return Trigger{}, fmt.Errorf("create trigger: build action config: %w", err)
+		}
+		p.Actions[i].Config = cfg
 	}
-
-	actionConfig, err := buildPeripheralActionConfig(p.Action.Config, kindPin)
-	if err != nil {
-		return Trigger{}, fmt.Errorf("create trigger: build action config: %w", err)
-	}
-	p.Action.Config = actionConfig
 
 	t, err := s.store.Create(ctx, tx, deviceID, userID, p)
 	if err != nil {
@@ -170,15 +171,10 @@ func (s *Service) Update(ctx context.Context, deviceID, userID, triggerID string
 // If the action is being changed, validatePeripheralAction is called to resolve the kind-pin
 // and inject it into the config before storing.
 func (s *Service) applyPatch(ctx context.Context, tx *sql.Tx, deviceID, userID string, current Trigger, patch TriggerPatch) (TriggerUpdate, error) {
-	var currentAction Action
-	if len(current.Actions) > 0 {
-		currentAction = current.Actions[0]
-	}
-
 	u := TriggerUpdate{
 		Name:            current.Name,
 		Condition:       current.Condition,
-		Action:          currentAction,
+		Actions:         current.Actions,
 		CooldownSeconds: current.CooldownSeconds,
 		Enabled:         current.Enabled,
 	}
@@ -194,16 +190,20 @@ func (s *Service) applyPatch(ctx context.Context, tx *sql.Tx, deviceID, userID s
 	if patch.Enabled != nil {
 		u.Enabled = *patch.Enabled
 	}
-	if patch.Action != nil {
-		kindPin, err := s.validatePeripheralAction(ctx, tx, deviceID, userID, *patch.Action)
-		if err != nil {
-			return TriggerUpdate{}, err
+	if patch.Actions != nil {
+		resolved := make([]Action, len(patch.Actions))
+		for i, a := range patch.Actions {
+			kindPin, err := s.validatePeripheralAction(ctx, tx, deviceID, userID, a)
+			if err != nil {
+				return TriggerUpdate{}, err
+			}
+			cfg, err := buildPeripheralActionConfig(a.Config, kindPin)
+			if err != nil {
+				return TriggerUpdate{}, fmt.Errorf("apply patch: build action config: %w", err)
+			}
+			resolved[i] = Action{Type: a.Type, Config: cfg}
 		}
-		config, err := buildPeripheralActionConfig(patch.Action.Config, kindPin)
-		if err != nil {
-			return TriggerUpdate{}, fmt.Errorf("apply patch: build action config: %w", err)
-		}
-		u.Action = Action{Type: patch.Action.Type, Config: config}
+		u.Actions = resolved
 	}
 	return u, nil
 }
