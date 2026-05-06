@@ -482,8 +482,16 @@ Cookie: session=<session-jwt>
     "left":  { "op": "value",   "measurement": "ds18b20-4/temperature" },
     "right": { "op": "literal", "value": 19.0 }
   },
-  "target_peripheral_id": "<peripheral-uuid>",
-  "action": { "action": "set", "value": 1.0 },
+  "actions": [
+    {
+      "type": "peripheral_action",
+      "config": {
+        "peripheral_id": "<peripheral-uuid>",
+        "command": "set",
+        "value": 1.0
+      }
+    }
+  ],
   "cooldown_s": 60
 }
 ```
@@ -492,29 +500,43 @@ Cookie: session=<session-jwt>
 |---|---|---|
 | `name` | yes | Human-readable label |
 | `condition` | yes | JSON expression tree (see firmware `docs/peripherals.md` for the full operator reference) |
-| `target_peripheral_id` | yes | UUID of the peripheral to actuate — must be an `actuator` peripheral owned by the same device |
-| `action` | yes | `{"action":"set","value":<number>}` or `{"action":"set_mode","mode":"automatic"\|"manual"}` |
+| `actions` | yes | Array of action objects (Phase 1: exactly one entry, type `peripheral_action`) |
+| `actions[].type` | yes | Must be `"peripheral_action"` |
+| `actions[].config.peripheral_id` | yes | UUID of the peripheral to actuate — must be an `actuator` peripheral owned by the same device |
+| `actions[].config.command` | yes | `"set"` or `"set_mode"` |
+| `actions[].config.value` | yes | Value to pass to the peripheral (number for `set`; `"automatic"` or `"manual"` for `set_mode`) |
 | `cooldown_s` | no | Minimum seconds between firings (default: `60`, must be `>= 0`) |
 
 **Validation:**
-- `action.action` must be `"set"` or `"set_mode"`.
-- `target_peripheral_id` must refer to a peripheral with `category = "actuator"` belonging to the same device.
+- `actions` must contain exactly one entry.
+- `actions[0].type` must be `"peripheral_action"`.
+- `actions[0].config.peripheral_id` must be non-empty and refer to a peripheral with `category = "actuator"` belonging to the same device.
+- `actions[0].config.command` must be `"set"` or `"set_mode"`.
 
 **Response `201`**
 ```json
 {
-  "id":                   "<uuid>",
-  "name":                 "Heater on cold",
-  "enabled":              true,
-  "condition":            { ... },
-  "target_peripheral_id": "<peripheral-uuid>",
-  "action":               { "action": "set", "value": 1.0 },
-  "cooldown_s":           60,
-  "created_at":           "2024-04-13T12:00:00Z"
+  "id":        "<uuid>",
+  "name":      "Heater on cold",
+  "enabled":   true,
+  "condition": { ... },
+  "actions": [
+    {
+      "id":     "<action-uuid>",
+      "type":   "peripheral_action",
+      "config": {
+        "peripheral_id": "<peripheral-uuid>",
+        "command": "set",
+        "value": 1.0
+      }
+    }
+  ],
+  "cooldown_s":  60,
+  "created_at":  "2024-04-13T12:00:00Z"
 }
 ```
 
-**Response `400`** — missing required field, invalid `action.action`, `cooldown_s < 0`, or invalid `target_peripheral_id` (not an actuator or not owned by the device)
+**Response `400`** — missing required field, invalid `actions` (wrong count, unknown type, missing `peripheral_id`, invalid `command`), `cooldown_s < 0`, or `peripheral_id` not an actuator owned by the device
 
 **Response `401`** — not authenticated
 
@@ -538,14 +560,23 @@ Cookie: session=<session-jwt>
 ```json
 [
   {
-    "id":                   "<uuid>",
-    "name":                 "Heater on cold",
-    "enabled":              true,
-    "condition":            { ... },
-    "target_peripheral_id": "<peripheral-uuid>",
-    "action":               { "action": "set", "value": 1.0 },
-    "cooldown_s":           60,
-    "created_at":           "2024-04-13T12:00:00Z"
+    "id":        "<uuid>",
+    "name":      "Heater on cold",
+    "enabled":   true,
+    "condition": { ... },
+    "actions": [
+      {
+        "id":     "<action-uuid>",
+        "type":   "peripheral_action",
+        "config": {
+          "peripheral_id": "<peripheral-uuid>",
+          "command": "set",
+          "value": 1.0
+        }
+      }
+    ],
+    "cooldown_s":  60,
+    "created_at":  "2024-04-13T12:00:00Z"
   }
 ]
 ```
@@ -594,14 +625,23 @@ Cookie: session=<session-jwt>
   "name":       "Heater on cold (updated)",
   "enabled":    false,
   "condition":  { ... },
-  "action":     { "action": "set", "value": 1.0 },
+  "actions": [
+    {
+      "type": "peripheral_action",
+      "config": {
+        "peripheral_id": "<peripheral-uuid>",
+        "command": "set",
+        "value": 1.0
+      }
+    }
+  ],
   "cooldown_s": 120
 }
 ```
 
 **Validation (same as create, applied only to provided fields):**
 - `name` must not be an empty string if provided.
-- `action.action` must be `"set"` or `"set_mode"` if `action` is provided.
+- `actions`, if provided, must pass the same validation as create (exactly one entry, valid type, non-empty `peripheral_id`, valid `command`).
 - `cooldown_s` must be `>= 0` if provided.
 
 On success, publishes an updated `upsert` MQTT message to `fishhub/{device_id}/triggers/{trigger_id}` via the outbox.

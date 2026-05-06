@@ -9,31 +9,49 @@ fishhub-server/
 ├── db/
 │   └── migrations/          # SQL migration files (golang-migrate format)
 └── internal/
-    ├── sensors/             # domain: device provisioning, readings ingestion + query, commands
-    │   ├── handler.go               ReadingsHandler, ReadingsQueryHandler,
-    │   │                            DevicesHandler, DeleteDeviceHandler, PatchDeviceHandler,
+    ├── api/                 # HTTP handlers (all session-auth endpoints live here)
+    │   ├── handler.go               DevicesHandler, ReadingsQueryHandler,
+    │   │                            DeleteDeviceHandler, PatchDeviceHandler,
     │   │                            ProvisionHandler, ActivateHandler, ActivationStatusHandler,
-    │   │                            CommandHandler
-    │   ├── service.go               DeviceService, ReadingsService, ProvisioningService,
-    │   │                            ActivationService, HiveMQProvisionProcessor
-    │   ├── store.go                 DeviceStore, ProvisioningStore interfaces
-    │   │                            + error sentinels (ErrCodeNotFound, ErrCodeAlreadyUsed,
-    │   │                            ErrDeviceNotFound, ErrInvalidCommand, ErrInfluxWrite)
-    │   ├── store_postgres.go        DeviceStore Postgres impl
-    │   ├── store_provisioning_postgres.go  ProvisioningStore Postgres impl
-    │   ├── influx.go                InfluxClient (ReadingWriter + ReadingQuerier), influxDBClient
-    │   ├── senml.go                 SenML RFC 8428 parser
-    │   └── model.go                 DeviceInfo, context helpers
+    │   │                            CreatePeripheralHandler, ListPeripheralsHandler,
+    │   │                            SetPeripheralScheduleHandler, CommandHandler, ...
+    │   └── trigger_handler.go       CreateTriggerHandler, ListTriggersHandler,
+    │                                GetTriggerHandler, PatchTriggerHandler, DeleteTriggerHandler
+    ├── device/              # domain: device lifecycle
+    │   ├── model.go                 Device struct, ErrNotFound
+    │   ├── service.go               DeviceService (List, FindByIDAndUserID, Delete, Patch)
+    │   └── store.go                 DeviceStore interface + Postgres impl
+    ├── provisioning/        # domain: device pairing codes + activation
+    │   ├── service.go               ProvisioningService, ActivationService
+    │   ├── store.go                 ProvisioningStore interface + Postgres impl
+    │   └── outbox_processor.go      HiveMQProvisionProcessor (EventProcessor for hivemq.provision)
+    ├── peripheral/          # domain: peripherals, schedules, commands
+    │   ├── model.go                 Peripheral struct, ErrNotFound
+    │   ├── service.go               PeripheralService (Create, List, SetSchedule, SendCommand)
+    │   └── store.go                 PeripheralStore interface + Postgres impl
+    ├── measurement/         # domain: sensor readings (InfluxDB)
+    │   ├── model.go                 Reading, Measurement structs
+    │   ├── service.go               MeasurementService (QueryReadings)
+    │   ├── store_influx.go          InfluxDB reader/writer
+    │   └── mqtt_handler.go          MQTT readings ingestion handler
+    ├── trigger/             # domain: trigger CRUD + MQTT push
+    │   ├── model.go                 Trigger, Action, TriggerCreate, TriggerPatch, TriggerUpdate
+    │   ├── service.go               Service (Create, List, Get, Update, Delete)
+    │   │                            validatePeripheralAction — checks peripheral_id is an actuator
+    │   ├── store.go                 Store interface + Postgres impl
+    │   │                            hydrateActions — batch-loads actions via action_triggers join
+    │   ├── outbox_processor.go      TriggerPushProcessor — publishes upsert/delete to MQTT
+    │   └── errors.go                ErrNotFound, ErrInvalidPeripheral
+    ├── senml/               # SenML RFC 8428 parser
+    ├── apierr/              # apierr.Write — writes consistent JSON error responses
     ├── auth/                # domain: OIDC verification, JWT sessions, refresh token rotation
     │   ├── handler.go               VerifyHandler, RefreshHandler, LogoutHandler
     │   ├── service.go               AuthService interface, oidcService implementation
-    │   ├── store.go                 UserStore + RefreshTokenStore interfaces
-    │   ├── store_postgres.go        Postgres implementations
-    │   └── model.go                 User, RefreshToken, error sentinels
+    │   ├── store.go                 UserStore + RefreshTokenStore interfaces + Postgres impls
+    │   └── model.go                 User, RefreshToken, Claims, error sentinels
     ├── account/             # domain: account profile (created on first login via event)
-    │   ├── handler.go               MeHandler
-    │   ├── store.go                 AccountStore interface
-    │   ├── store_postgres.go        Postgres implementation
+    │   ├── handler.go               MeHandler, UpdateMeHandler
+    │   ├── store.go                 AccountStore interface + Postgres impl
     │   ├── model.go                 Account struct
     │   └── events.go                AccountEventHandler (implements auth.UserEventHandler)
     ├── devicejwt/           # device JWT issuance — wraps jwtutil with device-specific claims
@@ -46,8 +64,8 @@ fishhub-server/
     │   │                            NewNoOp() for unconfigured environments
     │   └── jwks.go                  JWKSHandler — serves GET /.well-known/jwks.json
     │                                aggregates public keys from one or more Signers
-    ├── mqtt/                # MQTT command publishing
-    │   └── publisher.go             Publisher interface (Publish)
+    ├── mqtt/                # MQTT publishing
+    │   └── publisher.go             Publisher interface (Publish, PublishRetained)
     │                                pahoPublisher — TLS connection to HiveMQ broker (QoS 1)
     │                                NewNoOpPublisher() when HIVEMQ_HOST not set
     ├── hivemq/              # HiveMQ Cloud REST API client
@@ -67,18 +85,25 @@ fishhub-server/
 
 ```
 main.go
- ├── platform     — DB connection, migrations, seed, middleware
- ├── jwtutil      — low-level JWT signing + JWKS handler
- ├── devicejwt    — device JWT issuance (wraps jwtutil)
- ├── sensors      — device provisioning, readings ingestion + query, commands
- │    └── uses outbox.Store (for activation), hivemq.Client (for delete), mqtt.Publisher (for commands)
- ├── auth         — OIDC verification, JWT + refresh token issuance
- ├── account      — account profiles, MeHandler
+ ├── platform       — DB connection, migrations, seed, middleware
+ ├── jwtutil        — low-level JWT signing + JWKS handler
+ ├── devicejwt      — device JWT issuance (wraps jwtutil)
+ ├── api            — all HTTP handlers; imports device, peripheral, measurement, trigger, provisioning
+ ├── device         — device lifecycle
+ ├── provisioning   — device pairing + activation
+ │    └── outbox_processor: HiveMQProvisionProcessor (EventProcessor)
+ ├── peripheral     — peripheral CRUD + commands
+ ├── measurement    — InfluxDB readings ingestion + query
+ ├── trigger        — trigger CRUD + MQTT push
+ │    └── outbox_processor: TriggerPushProcessor (EventProcessor)
+ ├── senml          — SenML parser (used by measurement MQTT handler)
+ ├── auth           — OIDC verification, JWT + refresh token issuance
+ ├── account        — account profiles
  │    └── implements auth.UserEventHandler (called after OIDC verify)
- ├── hivemq       — HiveMQ Cloud REST API client
- ├── mqtt         — MQTT broker publisher
- └── outbox       — outbox runner + Postgres store
-      └── runs sensors.HiveMQProvisionProcessor as EventProcessor
+ ├── hivemq         — HiveMQ Cloud REST API client
+ ├── mqtt           — MQTT broker publisher
+ └── outbox         — outbox runner + Postgres store
+      └── runs HiveMQProvisionProcessor and TriggerPushProcessor as EventProcessors
 ```
 
 ## Design principles
@@ -97,20 +122,12 @@ main.go
 
 ## Request lifecycle
 
-### POST /readings (device JWT auth)
+### MQTT readings ingestion (device publishes to broker)
 ```
-DeviceAuthenticator middleware
-  ├── parse "Bearer <token>" from Authorization header
-  ├── validate RS256 JWT signature with devicejwt.Signer.PublicKey()
-  ├── extract sub (device_id) and user_id claims
-  ├── 401 if missing/invalid
-  └── store DeviceInfo{DeviceID, UserID} in context
-
-ReadingsHandler.Create
-  ├── DeviceFromContext(ctx)
-  ├── ParseSenML(body) → Reading{Measurements, BaseTime}
-  ├── 400 on malformed payload
-  └── InfluxClient.WriteReading(ctx, Reading) → InfluxDB 3 Core
+measurement.MQTTHandler
+  ├── receives SenML payload on fishhub/<device_id>/readings
+  ├── senml.Parse(payload) → Reading{Measurements, BaseTime}
+  └── MeasurementService.WriteReading(ctx, Reading) → InfluxDB 3 Core
 ```
 
 ### POST /api/devices/provision → device pairing (session JWT)
@@ -224,6 +241,54 @@ PatchDeviceHandler
         ├── UPDATE devices SET name=? WHERE id=? AND user_id=?
         └── 404 (ErrDeviceNotFound) if no row matched
   └── 200 {"id":"...","name":"...","created_at":"..."}
+```
+
+### POST /api/devices/{id}/triggers → create trigger (session JWT)
+```
+SessionAuthenticator middleware
+  └── store Claims{UserID} in context
+
+api.CreateTriggerHandler
+  ├── decode body {name, condition, actions, cooldown_s}
+  ├── validateActions — exactly one entry, type peripheral_action,
+  │   non-empty peripheral_id, command "set"|"set_mode"
+  └── trigger.Service.Create(ctx, deviceID, userID, TriggerCreate)
+        ├── validatePeripheralAction — peripheral must be category=actuator, owned by device
+        │   builds peripheral kind-pin string for the MQTT config payload
+        ├── (in tx) Store.Create — inserts actions row, triggers row, action_triggers row
+        └── outbox.Store.Insert(tx, "trigger.push", payload{op:upsert, ...})
+  └── 201 {id, name, enabled, condition, actions:[{id, type, config}], cooldown_s, created_at}
+```
+
+### PATCH /api/devices/{id}/triggers/{tid} → update trigger (session JWT)
+```
+api.PatchTriggerHandler
+  ├── decode partial body; validate provided fields
+  └── trigger.Service.Update(ctx, deviceID, userID, triggerID, TriggerPatch)
+        ├── merge patch onto current trigger values
+        ├── if actions provided: validatePeripheralAction
+        ├── (in tx) Store.Update — updates triggers row + existing actions row config
+        └── outbox.Store.Insert(tx, "trigger.push", payload{op:upsert, ...})
+  └── 200 trigger object
+```
+
+### DELETE /api/devices/{id}/triggers/{tid} → delete trigger (session JWT)
+```
+api.DeleteTriggerHandler
+  └── trigger.Service.Delete(ctx, deviceID, userID, triggerID)
+        ├── (in tx) Store.Delete — sets deleted_at on triggers row
+        └── outbox.Store.Insert(tx, "trigger.push", payload{op:delete, id:...})
+  └── 204
+```
+
+### Trigger MQTT push (outbox runner)
+```
+outbox.Runner (background goroutine)
+  └── for each "trigger.push" event:
+        trigger.TriggerPushProcessor.Process(ctx, event)
+          ├── op=upsert → PublishRetained(fishhub/<device_id>/triggers/<trigger_id>,
+          │               {op,id,enabled,condition,actions:[{type,config}],cooldown_s})
+          └── op=delete → PublishRetained({op,id}) then PublishRetained("") to clear retained
 ```
 
 ### POST /auth/verify → session issuance
