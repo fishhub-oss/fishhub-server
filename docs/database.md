@@ -95,21 +95,49 @@ Stores pending side-effects that must be processed asynchronously. Currently use
 ### `triggers`
 ```
 triggers
-├── id                   UUID  PK  default gen_random_uuid()
-├── device_id            UUID  FK → devices.id  NOT NULL
-├── name                 TEXT  NOT NULL
-├── enabled              BOOL  NOT NULL  default true
-├── condition            JSONB NOT NULL
-├── target_peripheral_id UUID  FK → peripherals.id  NOT NULL
-├── action               JSONB NOT NULL
-├── cooldown_s           INT   NOT NULL  default 60
-├── deleted_at           TIMESTAMPTZ  (nullable)
-└── created_at           TIMESTAMPTZ  NOT NULL  default now()
+├── id         UUID  PK  default gen_random_uuid()
+├── device_id  UUID  FK → devices.id  NOT NULL
+├── name       TEXT  NOT NULL
+├── enabled    BOOL  NOT NULL  default true
+├── condition  JSONB NOT NULL
+├── cooldown_s INT   NOT NULL  default 60
+├── deleted_at TIMESTAMPTZ  (nullable)
+└── created_at TIMESTAMPTZ  NOT NULL  default now()
 
 INDEX triggers_device_id_idx ON (device_id) WHERE deleted_at IS NULL
 ```
 
-Each trigger belongs to one device and targets one peripheral. `condition` is an opaque JSONB expression tree — the server stores and forwards it without interpreting it; evaluation happens on the firmware. `action` is a JSONB object with shape `{"action":"set","value":<number>}` or `{"action":"set_mode","mode":"automatic"|"manual"}`. Soft-deleted triggers (`deleted_at IS NOT NULL`) are excluded from all list/get queries.
+Each trigger belongs to one device. `condition` is an opaque JSONB expression tree — the server stores and forwards it without interpreting it; evaluation happens on the firmware. Soft-deleted triggers (`deleted_at IS NOT NULL`) are excluded from all list/get queries.
+
+### `actions`
+```
+actions
+├── id         UUID  PK  default gen_random_uuid()
+├── type       TEXT  NOT NULL
+├── config     JSONB NOT NULL
+└── created_at TIMESTAMPTZ  NOT NULL  default now()
+```
+
+Stores the what-to-do for a trigger. `type` is always `"peripheral_action"` in Phase 1. `config` is a JSONB object with shape:
+```json
+{
+  "peripheral_id": "<peripheral-uuid>",
+  "command": "set" | "set_mode",
+  "value": <number> | "automatic" | "manual"
+}
+```
+
+### `action_triggers`
+```
+action_triggers
+├── trigger_id  UUID  FK → triggers.id  ON DELETE CASCADE  NOT NULL
+└── action_id   UUID  FK → actions.id   ON DELETE CASCADE  NOT NULL
+
+PRIMARY KEY (trigger_id, action_id)
+INDEX action_triggers_trigger_id_idx ON (trigger_id)
+```
+
+Join table linking triggers to their actions. Phase 1 always has exactly one action per trigger, but the schema is open for future multi-action support.
 
 ## Relationships
 
@@ -120,7 +148,7 @@ users ──< devices
       └──  accounts  (1:1 via user_id UNIQUE)
 devices ──< peripherals
         └──< triggers
-triggers ──> peripherals  (target_peripheral_id)
+triggers ──< action_triggers ──> actions
 outbox_events  (standalone — no FK; device/trigger referenced via payload)
 ```
 
@@ -156,6 +184,9 @@ They run automatically on server startup via `platform.Migrate()`. Current migra
 | 017 | Add `category` and `control_mode` columns to `peripherals` |
 | 018 | Add `timezone` column to `accounts` |
 | 019 | Create `triggers` table |
+| 020 | Create `actions` table |
+| 021 | Create `action_triggers` join table |
+| 022 | Migrate existing trigger rows to `actions` + `action_triggers`; drop `target_peripheral_id` and `action` columns from `triggers` |
 
 To add a migration, create the next numbered `.up.sql` / `.down.sql` pair in `db/migrations/`. Migrations run on the next server startup.
 
