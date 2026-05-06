@@ -253,21 +253,19 @@ var errSentinel = errors.New("store error")
 // ── TriggerStore ──────────────────────────────────────────────────────────────
 
 type stubTriggerStore struct {
-	created       trigger.Trigger
-	createKindPin string
-	createErr     error
-	listed        []trigger.Trigger
-	listErr       error
-	got           trigger.Trigger
-	getErr        error
-	updated       trigger.Trigger
-	updateKindPin string
-	updateErr     error
-	deletedErr    error
+	created    trigger.Trigger
+	createErr  error
+	listed     []trigger.Trigger
+	listErr    error
+	got        trigger.Trigger
+	getErr     error
+	updated    trigger.Trigger
+	updateErr  error
+	deletedErr error
 }
 
-func (s *stubTriggerStore) Create(_ context.Context, _ *sql.Tx, _, _ string, _ trigger.TriggerCreate) (trigger.Trigger, string, error) {
-	return s.created, s.createKindPin, s.createErr
+func (s *stubTriggerStore) Create(_ context.Context, _ *sql.Tx, _, _ string, _ trigger.TriggerCreate) (trigger.Trigger, error) {
+	return s.created, s.createErr
 }
 func (s *stubTriggerStore) List(_ context.Context, _, _ string) ([]trigger.Trigger, error) {
 	return s.listed, s.listErr
@@ -275,8 +273,8 @@ func (s *stubTriggerStore) List(_ context.Context, _, _ string) ([]trigger.Trigg
 func (s *stubTriggerStore) Get(_ context.Context, _, _, _ string) (trigger.Trigger, error) {
 	return s.got, s.getErr
 }
-func (s *stubTriggerStore) Update(_ context.Context, _ *sql.Tx, _, _, _ string, _ trigger.TriggerUpdate) (trigger.Trigger, string, error) {
-	return s.updated, s.updateKindPin, s.updateErr
+func (s *stubTriggerStore) Update(_ context.Context, _ *sql.Tx, _, _, _ string, _ trigger.TriggerUpdate) (trigger.Trigger, error) {
+	return s.updated, s.updateErr
 }
 func (s *stubTriggerStore) Delete(_ context.Context, _ *sql.Tx, _, _, _ string) (trigger.Trigger, error) {
 	return s.created, s.deletedErr
