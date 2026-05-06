@@ -14,60 +14,48 @@ import (
 	"github.com/go-chi/render"
 )
 
+type ActionResponse struct {
+	ID     string          `json:"id"`
+	Type   string          `json:"type"`
+	Config json.RawMessage `json:"config"`
+}
+
 type TriggerResponse struct {
-	ID                 string          `json:"id"`
-	Name               string          `json:"name"`
-	Enabled            bool            `json:"enabled"`
-	Condition          json.RawMessage `json:"condition"`
-	TargetPeripheralID string          `json:"target_peripheral_id"`
-	Action             json.RawMessage `json:"action"`
-	CooldownSeconds    int             `json:"cooldown_s"`
-	CreatedAt          string          `json:"created_at"`
+	ID              string           `json:"id"`
+	Name            string           `json:"name"`
+	Enabled         bool             `json:"enabled"`
+	Condition       json.RawMessage  `json:"condition"`
+	Actions         []ActionResponse `json:"actions"`
+	CooldownSeconds int              `json:"cooldown_s"`
+	CreatedAt       string           `json:"created_at"`
 }
 
 func triggerResponse(t trigger.Trigger) TriggerResponse {
-	resp := TriggerResponse{
+	actions := make([]ActionResponse, len(t.Actions))
+	for i, a := range t.Actions {
+		actions[i] = ActionResponse{ID: a.ID, Type: a.Type, Config: a.Config}
+	}
+	return TriggerResponse{
 		ID:              t.ID,
 		Name:            t.Name,
 		Enabled:         t.Enabled,
 		Condition:       t.Condition,
+		Actions:         actions,
 		CooldownSeconds: t.CooldownSeconds,
 		CreatedAt:       t.CreatedAt.UTC().Format(time.RFC3339),
 	}
-	// Extract target_peripheral_id and action from the first peripheral_action.
-	for _, a := range t.Actions {
-		if a.Type != "peripheral_action" {
-			continue
-		}
-		var cfg struct {
-			PeripheralID string          `json:"peripheral_id"`
-			Command      string          `json:"command"`
-			Value        json.RawMessage `json:"value"`
-		}
-		if err := json.Unmarshal(a.Config, &cfg); err != nil {
-			break
-		}
-		resp.TargetPeripheralID = cfg.PeripheralID
-		resp.Action, _ = json.Marshal(map[string]json.RawMessage{
-			"action": mustMarshalString(cfg.Command),
-			"value":  cfg.Value,
-		})
-		break
-	}
-	return resp
 }
 
-func mustMarshalString(s string) json.RawMessage {
-	b, _ := json.Marshal(s)
-	return b
+type actionRequest struct {
+	Type   string          `json:"type"`
+	Config json.RawMessage `json:"config"`
 }
 
 type createTriggerRequest struct {
-	Name               string          `json:"name"`
-	Condition          json.RawMessage `json:"condition"`
-	TargetPeripheralID string          `json:"target_peripheral_id"`
-	Action             json.RawMessage `json:"action"`
-	CooldownSeconds    int             `json:"cooldown_s"`
+	Name            string          `json:"name"`
+	Condition       json.RawMessage `json:"condition"`
+	Actions         []actionRequest `json:"actions"`
+	CooldownSeconds int             `json:"cooldown_s"`
 }
 
 // CreateTriggerHandler handles POST /api/devices/{id}/triggers (session auth).
@@ -92,15 +80,7 @@ func (h *CreateTriggerHandler) ServeHTTP(w http.ResponseWriter, r *http.Request)
 		apierr.Write(w, http.StatusBadRequest, "invalid_request", "condition is required")
 		return
 	}
-	if req.TargetPeripheralID == "" {
-		apierr.Write(w, http.StatusBadRequest, "invalid_request", "target_peripheral_id is required")
-		return
-	}
-	if len(req.Action) == 0 {
-		apierr.Write(w, http.StatusBadRequest, "invalid_request", "action is required")
-		return
-	}
-	if err := validateTriggerAction(req.Action); err != nil {
+	if err := validateActions(req.Actions); err != nil {
 		apierr.Write(w, http.StatusBadRequest, "invalid_request", err.Error())
 		return
 	}
@@ -109,19 +89,10 @@ func (h *CreateTriggerHandler) ServeHTTP(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	actionConfig, err := buildPeripheralActionRequestConfig(req.TargetPeripheralID, req.Action)
-	if err != nil {
-		apierr.Write(w, http.StatusBadRequest, "invalid_request", "invalid action")
-		return
-	}
-
 	t, err := h.Service.Create(r.Context(), deviceID, claims.UserID, trigger.TriggerCreate{
 		Name:      req.Name,
 		Condition: req.Condition,
-		Action: trigger.Action{
-			Type:   "peripheral_action",
-			Config: actionConfig,
-		},
+		Action:    trigger.Action{Type: req.Actions[0].Type, Config: req.Actions[0].Config},
 		CooldownSeconds: req.CooldownSeconds,
 	})
 	if err != nil {
@@ -187,12 +158,11 @@ func (h *GetTriggerHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 type patchTriggerRequest struct {
-	Name               *string         `json:"name"`
-	Condition          json.RawMessage `json:"condition"`
-	TargetPeripheralID *string         `json:"target_peripheral_id"`
-	Action             json.RawMessage `json:"action"`
-	CooldownSeconds    *int            `json:"cooldown_s"`
-	Enabled            *bool           `json:"enabled"`
+	Name            *string         `json:"name"`
+	Condition       json.RawMessage `json:"condition"`
+	Actions         []actionRequest `json:"actions"`
+	CooldownSeconds *int            `json:"cooldown_s"`
+	Enabled         *bool           `json:"enabled"`
 }
 
 // PatchTriggerHandler handles PATCH /api/devices/{id}/triggers/{tid} (session auth).
@@ -214,12 +184,6 @@ func (h *PatchTriggerHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 		apierr.Write(w, http.StatusBadRequest, "invalid_request", "name must not be empty")
 		return
 	}
-	if len(req.Action) > 0 && string(req.Action) != "null" {
-		if err := validateTriggerAction(req.Action); err != nil {
-			apierr.Write(w, http.StatusBadRequest, "invalid_request", err.Error())
-			return
-		}
-	}
 	if req.CooldownSeconds != nil && *req.CooldownSeconds < 0 {
 		apierr.Write(w, http.StatusBadRequest, "invalid_request", "cooldown_s must be >= 0")
 		return
@@ -238,24 +202,12 @@ func (h *PatchTriggerHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 		Enabled:         req.Enabled,
 	}
 
-	// Only build the action patch if either the peripheral or action body is being changed.
-	actionJSON := req.Action
-	if string(actionJSON) == "null" {
-		actionJSON = nil
-	}
-	if req.TargetPeripheralID != nil || len(actionJSON) > 0 {
-		// Both fields must be present together to form a valid peripheral_action patch.
-		// If only one is present we cannot construct a valid config; return an error.
-		if req.TargetPeripheralID == nil || len(actionJSON) == 0 {
-			apierr.Write(w, http.StatusBadRequest, "invalid_request", "target_peripheral_id and action must be provided together")
+	if len(req.Actions) > 0 {
+		if err := validateActions(req.Actions); err != nil {
+			apierr.Write(w, http.StatusBadRequest, "invalid_request", err.Error())
 			return
 		}
-		config, err := buildPeripheralActionRequestConfig(*req.TargetPeripheralID, actionJSON)
-		if err != nil {
-			apierr.Write(w, http.StatusBadRequest, "invalid_request", "invalid action")
-			return
-		}
-		a := trigger.Action{Type: "peripheral_action", Config: config}
+		a := trigger.Action{Type: req.Actions[0].Type, Config: req.Actions[0].Config}
 		patch.Action = &a
 	}
 
@@ -298,33 +250,31 @@ func (h *DeleteTriggerHandler) ServeHTTP(w http.ResponseWriter, r *http.Request)
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// validateTriggerAction checks that action.action is "set" or "set_mode".
-func validateTriggerAction(raw json.RawMessage) error {
-	var a struct {
-		Action string `json:"action"`
+// validateActions enforces Phase 1 constraints: exactly one peripheral_action with
+// a non-empty peripheral_id and a valid command.
+func validateActions(actions []actionRequest) error {
+	if len(actions) == 0 {
+		return errors.New("actions must have exactly one entry")
 	}
-	if err := json.Unmarshal(raw, &a); err != nil {
-		return errors.New("action must be valid JSON")
+	if len(actions) > 1 {
+		return errors.New("actions must have exactly one entry")
 	}
-	if a.Action != "set" && a.Action != "set_mode" {
-		return errors.New(`action.action must be "set" or "set_mode"`)
+	a := actions[0]
+	if a.Type != "peripheral_action" {
+		return errors.New(`actions[0].type must be "peripheral_action"`)
+	}
+	var cfg struct {
+		PeripheralID string `json:"peripheral_id"`
+		Command      string `json:"command"`
+	}
+	if err := json.Unmarshal(a.Config, &cfg); err != nil {
+		return errors.New("actions[0].config must be valid JSON")
+	}
+	if cfg.PeripheralID == "" {
+		return errors.New("actions[0].config.peripheral_id is required")
+	}
+	if cfg.Command != "set" && cfg.Command != "set_mode" {
+		return errors.New(`actions[0].config.command must be "set" or "set_mode"`)
 	}
 	return nil
-}
-
-// buildPeripheralActionRequestConfig builds the peripheral_action config JSONB from
-// the flat API request fields (target_peripheral_id + action body).
-func buildPeripheralActionRequestConfig(peripheralID string, actionBody json.RawMessage) (json.RawMessage, error) {
-	var action struct {
-		Action string          `json:"action"`
-		Value  json.RawMessage `json:"value"`
-	}
-	if err := json.Unmarshal(actionBody, &action); err != nil {
-		return nil, err
-	}
-	return json.Marshal(map[string]any{
-		"peripheral_id": peripheralID,
-		"command":       action.Action,
-		"value":         action.Value,
-	})
 }
