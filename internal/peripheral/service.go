@@ -144,7 +144,7 @@ func (s *Service) SetSchedule(ctx context.Context, deviceID, userID, peripheralI
 
 	msg, err := json.Marshal(map[string]any{
 		"id":      uuid.NewString(),
-		"action":  "schedule",
+		"command": "schedule",
 		"windows": schedule,
 	})
 	if err != nil {
@@ -178,9 +178,9 @@ func (s *Service) SetControlMode(ctx context.Context, deviceID, userID, peripher
 	}
 
 	msg, err := json.Marshal(map[string]any{
-		"id":     uuid.NewString(),
-		"action": "set_mode",
-		"mode":   mode,
+		"id":      uuid.NewString(),
+		"command": "set_mode",
+		"mode":    mode,
 	})
 	if err != nil {
 		return Peripheral{}, fmt.Errorf("set control mode: marshal mqtt payload: %w", err)
@@ -212,10 +212,10 @@ func (s *Service) SendCommand(ctx context.Context, deviceID, userID, peripheralI
 	}
 
 	var req struct {
-		Action string `json:"action"`
+		Command string `json:"command"`
 	}
 	if err := json.NewDecoder(bytes.NewReader(body)).Decode(&req); err != nil ||
-		(req.Action != "set" && req.Action != "schedule") {
+		(req.Command != "set" && req.Command != "schedule") {
 		return ErrInvalidCommand
 	}
 

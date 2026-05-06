@@ -11,7 +11,7 @@ func TestNoOpPublisher(t *testing.T) {
 	ctx := context.Background()
 	p := mqtt.NewNoOpPublisher()
 
-	if err := p.Publish(ctx, "fishhub/dev-1/commands/light", []byte(`{"action":"set","state":true}`)); err != nil {
+	if err := p.Publish(ctx, "fishhub/dev-1/commands/light", []byte(`{"command":"set","state":true}`)); err != nil {
 		t.Errorf("expected nil, got %v", err)
 	}
 }
