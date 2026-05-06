@@ -58,8 +58,8 @@ func TestApplyPatch_noPatch_preservesAll(t *testing.T) {
 	if !bytes.Equal(u.Condition, cur.Condition) {
 		t.Error("condition changed")
 	}
-	if u.Action.ID != "a1" {
-		t.Error("action changed")
+	if len(u.Actions) != 1 || u.Actions[0].ID != "a1" {
+		t.Error("actions changed")
 	}
 }
 
@@ -122,14 +122,14 @@ func TestApplyPatch_nilCondition_unchanged(t *testing.T) {
 	}
 }
 
-func TestApplyPatch_nilAction_unchanged(t *testing.T) {
+func TestApplyPatch_nilActions_unchanged(t *testing.T) {
 	svc := NewService(nil, &stubStore{}, &stubOutbox{}, svcDiscardLogger)
-	u, err := svc.applyPatch(context.Background(), nil, "dev-1", "user-1", baseTrigger(), TriggerPatch{Action: nil})
+	u, err := svc.applyPatch(context.Background(), nil, "dev-1", "user-1", baseTrigger(), TriggerPatch{Actions: nil})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if u.Action.ID != "a1" {
-		t.Error("action was changed by nil patch")
+	if len(u.Actions) != 1 || u.Actions[0].ID != "a1" {
+		t.Error("actions were changed by nil patch")
 	}
 }
 
@@ -291,10 +291,10 @@ func TestService_Create_outboxFailure_rollsBack(t *testing.T) {
 	_, err := svc.Create(context.Background(), "dev-1", "user-1", TriggerCreate{
 		Name:      "test",
 		Condition: json.RawMessage(`{}`),
-		Action: Action{
+		Actions: []Action{{
 			Type:   "peripheral_action",
 			Config: json.RawMessage(`{"peripheral_id":"00000000-0000-0000-0000-000000000099"}`),
-		},
+		}},
 	})
 	// validatePeripheralAction will fail since peripheral doesn't exist — that's fine,
 	// the test just checks that errors propagate and no panic occurs.

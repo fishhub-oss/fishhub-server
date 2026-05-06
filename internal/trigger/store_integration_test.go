@@ -64,9 +64,8 @@ func TestTriggerStore_integration(t *testing.T) {
 		tr, err := store.Create(ctx, tx, deviceID, userID, trigger.TriggerCreate{
 			Name:      "Heater on cold",
 			Condition: condition,
-			Action: trigger.Action{
-				Type:   "peripheral_action",
-				Config: actionConfig,
+			Actions: []trigger.Action{
+				{Type: "peripheral_action", Config: actionConfig},
 			},
 			CooldownSeconds: 60,
 		})
@@ -127,7 +126,7 @@ func TestTriggerStore_integration(t *testing.T) {
 		_, err = store.Create(ctx, tx, "00000000-0000-0000-0000-000000000099", userID, trigger.TriggerCreate{
 			Name:      "bad",
 			Condition: condition,
-			Action:    trigger.Action{Type: "peripheral_action", Config: actionConfig},
+			Actions:   []trigger.Action{{Type: "peripheral_action", Config: actionConfig}},
 		})
 		// Store itself just inserts — it does not validate the peripheral. device.ErrNotFound
 		// comes from the service layer via validatePeripheralAction. The store will return a
@@ -203,17 +202,13 @@ func TestTriggerStore_integration(t *testing.T) {
 		}
 	})
 
-	t.Run("update trigger updates actions row, no new rows", func(t *testing.T) {
+	t.Run("update trigger replaces action set atomically", func(t *testing.T) {
 		newActionConfig, _ := json.Marshal(map[string]any{
 			"peripheral_id": peripheralID,
 			"peripheral":    "relay-14",
 			"command":       "set",
 			"value":         0.0,
 		})
-
-		// Capture the current action ID before updating.
-		currentTr, _ := store.Get(ctx, deviceID, userID, triggerID)
-		currentActionID := currentTr.Actions[0].ID
 
 		tx, err := db.BeginTx(ctx, nil)
 		if err != nil {
@@ -222,7 +217,7 @@ func TestTriggerStore_integration(t *testing.T) {
 		updated, err := store.Update(ctx, tx, deviceID, userID, triggerID, trigger.TriggerUpdate{
 			Name:            "Heater on cold updated",
 			Condition:       condition,
-			Action:          trigger.Action{Type: "peripheral_action", Config: newActionConfig},
+			Actions:         []trigger.Action{{Type: "peripheral_action", Config: newActionConfig}},
 			CooldownSeconds: 120,
 			Enabled:         false,
 		})
@@ -243,16 +238,10 @@ func TestTriggerStore_integration(t *testing.T) {
 		if updated.CooldownSeconds != 120 {
 			t.Errorf("cooldown_s: got %d, want 120", updated.CooldownSeconds)
 		}
-
-		// Same action ID — no new rows created.
 		if len(updated.Actions) != 1 {
 			t.Fatalf("expected 1 action, got %d", len(updated.Actions))
 		}
-		if updated.Actions[0].ID != currentActionID {
-			t.Errorf("expected same action ID %q, got %q", currentActionID, updated.Actions[0].ID)
-		}
 
-		// Verify action count is still 1 for this trigger.
 		var actionCount int
 		db.QueryRowContext(ctx,
 			`SELECT COUNT(*) FROM action_triggers WHERE trigger_id = $1`,
@@ -260,6 +249,56 @@ func TestTriggerStore_integration(t *testing.T) {
 		).Scan(&actionCount)
 		if actionCount != 1 {
 			t.Errorf("expected 1 action_triggers row after update, got %d", actionCount)
+		}
+	})
+
+	t.Run("create trigger with two actions inserts both rows", func(t *testing.T) {
+		action2Config, _ := json.Marshal(map[string]any{
+			"peripheral_id": peripheralID,
+			"command":       "set",
+			"value":         0.0,
+		})
+
+		tx, err := db.BeginTx(ctx, nil)
+		if err != nil {
+			t.Fatalf("begin tx: %v", err)
+		}
+		tr, err := store.Create(ctx, tx, deviceID, userID, trigger.TriggerCreate{
+			Name:      "Multi-action trigger",
+			Condition: condition,
+			Actions: []trigger.Action{
+				{Type: "peripheral_action", Config: actionConfig},
+				{Type: "peripheral_action", Config: action2Config},
+			},
+			CooldownSeconds: 30,
+		})
+		if err != nil {
+			tx.Rollback()
+			t.Fatalf("create multi-action: %v", err)
+		}
+		if err := tx.Commit(); err != nil {
+			t.Fatalf("commit: %v", err)
+		}
+
+		if len(tr.Actions) != 2 {
+			t.Fatalf("expected 2 actions, got %d", len(tr.Actions))
+		}
+
+		var joinCount int
+		db.QueryRowContext(ctx,
+			`SELECT COUNT(*) FROM action_triggers WHERE trigger_id = $1`, tr.ID,
+		).Scan(&joinCount)
+		if joinCount != 2 {
+			t.Errorf("expected 2 action_triggers rows, got %d", joinCount)
+		}
+
+		// Get hydrates both actions.
+		fetched, err := store.Get(ctx, deviceID, userID, tr.ID)
+		if err != nil {
+			t.Fatalf("get multi-action: %v", err)
+		}
+		if len(fetched.Actions) != 2 {
+			t.Errorf("get: expected 2 actions, got %d", len(fetched.Actions))
 		}
 	})
 
@@ -273,7 +312,7 @@ func TestTriggerStore_integration(t *testing.T) {
 		_, err = store.Update(ctx, tx, deviceID, userID, "00000000-0000-0000-0000-000000000000", trigger.TriggerUpdate{
 			Name:      "x",
 			Condition: condition,
-			Action:    trigger.Action{Type: "peripheral_action", Config: actionConfig},
+			Actions:   []trigger.Action{{Type: "peripheral_action", Config: actionConfig}},
 		})
 		if !errors.Is(err, trigger.ErrNotFound) {
 			t.Errorf("expected ErrNotFound, got %v", err)
@@ -341,7 +380,7 @@ func TestTriggerStore_integration(t *testing.T) {
 		_, err = store.Create(ctx, tx, "00000000-0000-0000-0000-000000000099", userID, trigger.TriggerCreate{
 			Name:      "orphan",
 			Condition: condition,
-			Action:    trigger.Action{Type: "peripheral_action", Config: actionConfig},
+			Actions:   []trigger.Action{{Type: "peripheral_action", Config: actionConfig}},
 		})
 		if err == nil {
 			t.Error("expected FK violation error, got nil")

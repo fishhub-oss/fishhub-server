@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"time"
 
@@ -89,10 +90,14 @@ func (h *CreateTriggerHandler) ServeHTTP(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	actions := make([]trigger.Action, len(req.Actions))
+	for i, a := range req.Actions {
+		actions[i] = trigger.Action{Type: a.Type, Config: a.Config}
+	}
 	t, err := h.Service.Create(r.Context(), deviceID, claims.UserID, trigger.TriggerCreate{
-		Name:      req.Name,
-		Condition: req.Condition,
-		Action:    trigger.Action{Type: req.Actions[0].Type, Config: req.Actions[0].Config},
+		Name:            req.Name,
+		Condition:       req.Condition,
+		Actions:         actions,
 		CooldownSeconds: req.CooldownSeconds,
 	})
 	if err != nil {
@@ -207,8 +212,11 @@ func (h *PatchTriggerHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 			apierr.Write(w, http.StatusBadRequest, "invalid_request", err.Error())
 			return
 		}
-		a := trigger.Action{Type: req.Actions[0].Type, Config: req.Actions[0].Config}
-		patch.Action = &a
+		actions := make([]trigger.Action, len(req.Actions))
+		for i, a := range req.Actions {
+			actions[i] = trigger.Action{Type: a.Type, Config: a.Config}
+		}
+		patch.Actions = actions
 	}
 
 	t, err := h.Service.Update(r.Context(), deviceID, claims.UserID, triggerID, patch)
@@ -250,31 +258,28 @@ func (h *DeleteTriggerHandler) ServeHTTP(w http.ResponseWriter, r *http.Request)
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// validateActions enforces Phase 1 constraints: exactly one peripheral_action with
-// a non-empty peripheral_id and a valid command.
+// validateActions requires at least one action and validates each peripheral_action entry.
 func validateActions(actions []actionRequest) error {
 	if len(actions) == 0 {
-		return errors.New("actions must have exactly one entry")
+		return errors.New("actions must have at least one entry")
 	}
-	if len(actions) > 1 {
-		return errors.New("actions must have exactly one entry")
-	}
-	a := actions[0]
-	if a.Type != "peripheral_action" {
-		return errors.New(`actions[0].type must be "peripheral_action"`)
-	}
-	var cfg struct {
-		PeripheralID string `json:"peripheral_id"`
-		Command      string `json:"command"`
-	}
-	if err := json.Unmarshal(a.Config, &cfg); err != nil {
-		return errors.New("actions[0].config must be valid JSON")
-	}
-	if cfg.PeripheralID == "" {
-		return errors.New("actions[0].config.peripheral_id is required")
-	}
-	if cfg.Command != "set" && cfg.Command != "set_mode" {
-		return errors.New(`actions[0].config.command must be "set" or "set_mode"`)
+	for i, a := range actions {
+		if a.Type != "peripheral_action" {
+			return fmt.Errorf("actions[%d].type must be \"peripheral_action\"", i)
+		}
+		var cfg struct {
+			PeripheralID string `json:"peripheral_id"`
+			Command      string `json:"command"`
+		}
+		if err := json.Unmarshal(a.Config, &cfg); err != nil {
+			return fmt.Errorf("actions[%d].config must be valid JSON", i)
+		}
+		if cfg.PeripheralID == "" {
+			return fmt.Errorf("actions[%d].config.peripheral_id is required", i)
+		}
+		if cfg.Command != "set" && cfg.Command != "set_mode" {
+			return fmt.Errorf("actions[%d].config.command must be \"set\" or \"set_mode\"", i)
+		}
 	}
 	return nil
 }

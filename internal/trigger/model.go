@@ -25,7 +25,7 @@ type Trigger struct {
 type TriggerCreate struct {
 	Name            string
 	Condition       json.RawMessage
-	Action          Action
+	Actions         []Action
 	CooldownSeconds int
 }
 
@@ -33,16 +33,17 @@ type TriggerCreate struct {
 type TriggerUpdate struct {
 	Name            string
 	Condition       json.RawMessage
-	Action          Action
+	Actions         []Action
 	CooldownSeconds int
 	Enabled         bool
 }
 
 // TriggerPatch holds the partial fields from a PATCH request (nil means no change).
+// Actions nil = no change; empty slice is disallowed.
 type TriggerPatch struct {
 	Name            *string
 	Condition       json.RawMessage
-	Action          *Action
+	Actions         []Action
 	CooldownSeconds *int
 	Enabled         *bool
 }
