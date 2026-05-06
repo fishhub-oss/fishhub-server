@@ -26,6 +26,7 @@ import (
 	"github.com/fishhub-oss/fishhub-server/internal/platform"
 	"github.com/fishhub-oss/fishhub-server/internal/provisioning"
 	"github.com/fishhub-oss/fishhub-server/internal/trigger"
+	trigger_events "github.com/fishhub-oss/fishhub-server/internal/trigger_events"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/cors"
 )
@@ -282,6 +283,13 @@ func main() {
 		logger.Error("mqtt readings subscription failed", "error", err)
 	}
 
+	// ── MQTT trigger_events subscription ──────────────────────────────────────
+	triggerEventStore := trigger_events.NewStore(db)
+	triggerEventsMQTTHandler := trigger_events.NewMQTTHandler(triggerEventStore, logger)
+	if err := mqttSubscriber.Subscribe(ctx, "fishhub/+/trigger_events", triggerEventsMQTTHandler.Handle); err != nil {
+		logger.Error("mqtt trigger_events subscription failed", "error", err)
+	}
+
 	// ── Outbox runner ─────────────────────────────────────────────────────────
 	outboxRunner := outbox.NewRunner(
 		outboxStore,
@@ -349,6 +357,7 @@ func main() {
 		r.Get("/api/devices/{id}/triggers/{tid}", (&api.GetTriggerHandler{Service: triggerSvc}).ServeHTTP)
 		r.Patch("/api/devices/{id}/triggers/{tid}", (&api.PatchTriggerHandler{Service: triggerSvc}).ServeHTTP)
 		r.Delete("/api/devices/{id}/triggers/{tid}", (&api.DeleteTriggerHandler{Service: triggerSvc}).ServeHTTP)
+		r.Get("/api/devices/{id}/triggers/{tid}/events", (&api.ListTriggerEventsHandler{TriggerStore: triggerStore, EventStore: triggerEventStore}).ServeHTTP)
 	})
 
 	fmt.Printf("listening on :%s\n", cfg.Port)
