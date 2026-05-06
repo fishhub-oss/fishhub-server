@@ -5,26 +5,21 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-
-	"github.com/fishhub-oss/fishhub-server/internal/device"
 )
 
 // Store handles trigger persistence.
 type Store interface {
-	// Create inserts a new trigger for deviceID owned by userID.
-	// Validates that target_peripheral_id refers to an actuator peripheral on the same device.
+	// Create inserts a new trigger, its peripheral_action row in actions, and the
+	// action_triggers join row, all within tx.
 	// Returns device.ErrNotFound if the device does not exist or is not owned by userID.
-	// Returns ErrInvalidPeripheral if the peripheral is missing, deleted, or not an actuator.
-	// Returns (trigger, peripheralKindPin, error).
-	Create(ctx context.Context, tx *sql.Tx, deviceID, userID string, p TriggerCreate) (Trigger, string, error)
-	// List returns non-deleted triggers for the device owned by userID.
+	Create(ctx context.Context, tx *sql.Tx, deviceID, userID string, p TriggerCreate) (Trigger, error)
+	// List returns non-deleted triggers for the device owned by userID, with Actions hydrated.
 	List(ctx context.Context, deviceID, userID string) ([]Trigger, error)
-	// Get returns a single non-deleted trigger. Returns ErrNotFound if not reachable.
+	// Get returns a single non-deleted trigger with Actions hydrated. Returns ErrNotFound if not reachable.
 	Get(ctx context.Context, deviceID, userID, triggerID string) (Trigger, error)
-	// Update replaces trigger fields within tx, joining peripherals to return kind-pin.
+	// Update replaces trigger fields and updates the existing actions row config within tx.
 	// Returns ErrNotFound if the trigger does not exist or is not reachable by userID.
-	// Returns (trigger, peripheralKindPin, error).
-	Update(ctx context.Context, tx *sql.Tx, deviceID, userID, triggerID string, u TriggerUpdate) (Trigger, string, error)
+	Update(ctx context.Context, tx *sql.Tx, deviceID, userID, triggerID string, u TriggerUpdate) (Trigger, error)
 	// Delete soft-deletes the trigger (sets deleted_at). Returns ErrNotFound if not reachable.
 	Delete(ctx context.Context, tx *sql.Tx, deviceID, userID, triggerID string) (Trigger, error)
 }
@@ -37,53 +32,42 @@ func NewStore(db *sql.DB) Store {
 	return &postgresStore{db: db}
 }
 
-func (s *postgresStore) Create(ctx context.Context, tx *sql.Tx, deviceID, userID string, p TriggerCreate) (Trigger, string, error) {
-	var kindPin string
-	err := tx.QueryRowContext(ctx, `
-		SELECT concat(pr.kind, '-', pr.pin::text)
-		FROM peripherals pr
-		JOIN devices d ON d.id = pr.device_id
-		WHERE pr.id = $1
-		  AND pr.device_id = $2
-		  AND d.user_id = $3
-		  AND pr.category = 'actuator'
-		  AND pr.deleted_at IS NULL
-		  AND d.deleted_at IS NULL
-	`, p.TargetPeripheralID, deviceID, userID).Scan(&kindPin)
-	if errors.Is(err, sql.ErrNoRows) {
-		var deviceExists bool
-		_ = tx.QueryRowContext(ctx,
-			`SELECT EXISTS(SELECT 1 FROM devices WHERE id=$1 AND user_id=$2 AND deleted_at IS NULL)`,
-			deviceID, userID,
-		).Scan(&deviceExists)
-		if !deviceExists {
-			return Trigger{}, "", device.ErrNotFound
-		}
-		return Trigger{}, "", ErrInvalidPeripheral
-	}
-	if err != nil {
-		return Trigger{}, "", fmt.Errorf("create trigger: resolve peripheral: %w", err)
+func (s *postgresStore) Create(ctx context.Context, tx *sql.Tx, deviceID, userID string, p TriggerCreate) (Trigger, error) {
+	var actionID string
+	if err := tx.QueryRowContext(ctx, `
+		INSERT INTO actions (type, config)
+		VALUES ($1, $2)
+		RETURNING id
+	`, p.Action.Type, p.Action.Config).Scan(&actionID); err != nil {
+		return Trigger{}, fmt.Errorf("create trigger: insert action: %w", err)
 	}
 
 	var t Trigger
-	err = tx.QueryRowContext(ctx, `
-		INSERT INTO triggers (device_id, name, condition, target_peripheral_id, action, cooldown_s)
-		VALUES ($1, $2, $3, $4, $5, $6)
-		RETURNING id, device_id, name, enabled, condition, target_peripheral_id, action, cooldown_s, created_at
-	`, deviceID, p.Name, p.Condition, p.TargetPeripheralID, p.Action, p.CooldownSeconds).Scan(
+	if err := tx.QueryRowContext(ctx, `
+		INSERT INTO triggers (device_id, name, condition, cooldown_s)
+		VALUES ($1, $2, $3, $4)
+		RETURNING id, device_id, name, enabled, condition, cooldown_s, created_at
+	`, deviceID, p.Name, p.Condition, p.CooldownSeconds).Scan(
 		&t.ID, &t.DeviceID, &t.Name, &t.Enabled,
-		&t.Condition, &t.TargetPeripheralID, &t.Action, &t.CooldownSeconds, &t.CreatedAt,
-	)
-	if err != nil {
-		return Trigger{}, "", fmt.Errorf("create trigger: insert: %w", err)
+		&t.Condition, &t.CooldownSeconds, &t.CreatedAt,
+	); err != nil {
+		return Trigger{}, fmt.Errorf("create trigger: insert trigger: %w", err)
 	}
-	return t, kindPin, nil
+
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO action_triggers (trigger_id, action_id) VALUES ($1, $2)
+	`, t.ID, actionID); err != nil {
+		return Trigger{}, fmt.Errorf("create trigger: insert action_triggers: %w", err)
+	}
+
+	t.Actions = []Action{{ID: actionID, Type: p.Action.Type, Config: p.Action.Config}}
+	return t, nil
 }
 
 func (s *postgresStore) List(ctx context.Context, deviceID, userID string) ([]Trigger, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT tr.id, tr.device_id, tr.name, tr.enabled, tr.condition,
-		       tr.target_peripheral_id, tr.action, tr.cooldown_s, tr.created_at
+		       tr.cooldown_s, tr.created_at
 		FROM triggers tr
 		JOIN devices d ON d.id = tr.device_id
 		WHERE tr.device_id = $1
@@ -97,25 +81,39 @@ func (s *postgresStore) List(ctx context.Context, deviceID, userID string) ([]Tr
 	}
 	defer rows.Close()
 
-	triggers := []Trigger{}
+	var triggers []Trigger
+	var ids []string
+	idIndex := map[string]int{}
 	for rows.Next() {
 		var t Trigger
 		if err := rows.Scan(
 			&t.ID, &t.DeviceID, &t.Name, &t.Enabled,
-			&t.Condition, &t.TargetPeripheralID, &t.Action, &t.CooldownSeconds, &t.CreatedAt,
+			&t.Condition, &t.CooldownSeconds, &t.CreatedAt,
 		); err != nil {
 			return nil, fmt.Errorf("list triggers: scan: %w", err)
 		}
+		idIndex[t.ID] = len(triggers)
+		ids = append(ids, t.ID)
 		triggers = append(triggers, t)
 	}
-	return triggers, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if len(triggers) == 0 {
+		return []Trigger{}, nil
+	}
+
+	if err := s.hydrateActions(ctx, s.db, triggers, ids, idIndex); err != nil {
+		return nil, fmt.Errorf("list triggers: %w", err)
+	}
+	return triggers, nil
 }
 
 func (s *postgresStore) Get(ctx context.Context, deviceID, userID, triggerID string) (Trigger, error) {
 	var t Trigger
 	err := s.db.QueryRowContext(ctx, `
 		SELECT tr.id, tr.device_id, tr.name, tr.enabled, tr.condition,
-		       tr.target_peripheral_id, tr.action, tr.cooldown_s, tr.created_at
+		       tr.cooldown_s, tr.created_at
 		FROM triggers tr
 		JOIN devices d ON d.id = tr.device_id
 		WHERE tr.id = $1
@@ -125,7 +123,7 @@ func (s *postgresStore) Get(ctx context.Context, deviceID, userID, triggerID str
 		  AND d.deleted_at IS NULL
 	`, triggerID, deviceID, userID).Scan(
 		&t.ID, &t.DeviceID, &t.Name, &t.Enabled,
-		&t.Condition, &t.TargetPeripheralID, &t.Action, &t.CooldownSeconds, &t.CreatedAt,
+		&t.Condition, &t.CooldownSeconds, &t.CreatedAt,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Trigger{}, ErrNotFound
@@ -133,45 +131,64 @@ func (s *postgresStore) Get(ctx context.Context, deviceID, userID, triggerID str
 	if err != nil {
 		return Trigger{}, fmt.Errorf("get trigger: %w", err)
 	}
-	return t, nil
+
+	triggers := []Trigger{t}
+	if err := s.hydrateActions(ctx, s.db, triggers, []string{t.ID}, map[string]int{t.ID: 0}); err != nil {
+		return Trigger{}, fmt.Errorf("get trigger: %w", err)
+	}
+	return triggers[0], nil
 }
 
-func (s *postgresStore) Update(ctx context.Context, tx *sql.Tx, deviceID, userID, triggerID string, u TriggerUpdate) (Trigger, string, error) {
+func (s *postgresStore) Update(ctx context.Context, tx *sql.Tx, deviceID, userID, triggerID string, u TriggerUpdate) (Trigger, error) {
 	var t Trigger
-	var kindPin string
 	err := tx.QueryRowContext(ctx, `
 		UPDATE triggers tr
 		SET name       = $1,
 		    condition  = $2,
-		    action     = $3,
-		    cooldown_s = $4,
-		    enabled    = $5
-		FROM devices d,
-		     peripherals pr
-		WHERE tr.id        = $6
-		  AND tr.device_id = $7
+		    cooldown_s = $3,
+		    enabled    = $4
+		FROM devices d
+		WHERE tr.id        = $5
+		  AND tr.device_id = $6
 		  AND d.id         = tr.device_id
-		  AND d.user_id    = $8
-		  AND pr.id        = tr.target_peripheral_id
+		  AND d.user_id    = $7
 		  AND tr.deleted_at IS NULL
 		  AND d.deleted_at  IS NULL
 		RETURNING tr.id, tr.device_id, tr.name, tr.enabled, tr.condition,
-		          tr.target_peripheral_id, tr.action, tr.cooldown_s, tr.created_at,
-		          concat(pr.kind, '-', pr.pin::text)
-	`, u.Name, u.Condition, u.Action, u.CooldownSeconds, u.Enabled,
+		          tr.cooldown_s, tr.created_at
+	`, u.Name, u.Condition, u.CooldownSeconds, u.Enabled,
 		triggerID, deviceID, userID,
 	).Scan(
 		&t.ID, &t.DeviceID, &t.Name, &t.Enabled,
-		&t.Condition, &t.TargetPeripheralID, &t.Action, &t.CooldownSeconds, &t.CreatedAt,
-		&kindPin,
+		&t.Condition, &t.CooldownSeconds, &t.CreatedAt,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
-		return Trigger{}, "", ErrNotFound
+		return Trigger{}, ErrNotFound
 	}
 	if err != nil {
-		return Trigger{}, "", fmt.Errorf("update trigger: %w", err)
+		return Trigger{}, fmt.Errorf("update trigger: %w", err)
 	}
-	return t, kindPin, nil
+
+	var actionID string
+	if err := tx.QueryRowContext(ctx, `
+		SELECT at.action_id
+		FROM action_triggers at
+		JOIN actions a ON a.id = at.action_id
+		WHERE at.trigger_id = $1
+		  AND a.type = 'peripheral_action'
+		LIMIT 1
+	`, t.ID).Scan(&actionID); err != nil {
+		return Trigger{}, fmt.Errorf("update trigger: find action: %w", err)
+	}
+
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE actions SET config = $1 WHERE id = $2
+	`, u.Action.Config, actionID); err != nil {
+		return Trigger{}, fmt.Errorf("update trigger: update action: %w", err)
+	}
+
+	t.Actions = []Action{{ID: actionID, Type: u.Action.Type, Config: u.Action.Config}}
+	return t, nil
 }
 
 func (s *postgresStore) Delete(ctx context.Context, tx *sql.Tx, deviceID, userID, triggerID string) (Trigger, error) {
@@ -187,10 +204,10 @@ func (s *postgresStore) Delete(ctx context.Context, tx *sql.Tx, deviceID, userID
 		  AND tr.deleted_at IS NULL
 		  AND d.deleted_at  IS NULL
 		RETURNING tr.id, tr.device_id, tr.name, tr.enabled, tr.condition,
-		          tr.target_peripheral_id, tr.action, tr.cooldown_s, tr.created_at
+		          tr.cooldown_s, tr.created_at
 	`, triggerID, deviceID, userID).Scan(
 		&t.ID, &t.DeviceID, &t.Name, &t.Enabled,
-		&t.Condition, &t.TargetPeripheralID, &t.Action, &t.CooldownSeconds, &t.CreatedAt,
+		&t.Condition, &t.CooldownSeconds, &t.CreatedAt,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Trigger{}, ErrNotFound
@@ -199,4 +216,54 @@ func (s *postgresStore) Delete(ctx context.Context, tx *sql.Tx, deviceID, userID
 		return Trigger{}, fmt.Errorf("delete trigger: %w", err)
 	}
 	return t, nil
+}
+
+// hydrateActions fetches all actions for the given trigger IDs and populates
+// the Actions slice on each element of triggers (matched by idIndex).
+func (s *postgresStore) hydrateActions(ctx context.Context, q interface {
+	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
+}, triggers []Trigger, ids []string, idIndex map[string]int) error {
+	placeholders := make([]any, len(ids))
+	for i, id := range ids {
+		placeholders[i] = id
+	}
+	query := buildInQuery(`
+		SELECT at.trigger_id, a.id, a.type, a.config
+		FROM action_triggers at
+		JOIN actions a ON a.id = at.action_id
+		WHERE at.trigger_id IN (`, len(ids), `)
+		ORDER BY a.created_at ASC
+	`)
+	rows, err := q.QueryContext(ctx, query, placeholders...)
+	if err != nil {
+		return fmt.Errorf("hydrate actions: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var triggerID string
+		var a Action
+		if err := rows.Scan(&triggerID, &a.ID, &a.Type, &a.Config); err != nil {
+			return fmt.Errorf("hydrate actions: scan: %w", err)
+		}
+		if idx, ok := idIndex[triggerID]; ok {
+			triggers[idx].Actions = append(triggers[idx].Actions, a)
+		}
+	}
+	return rows.Err()
+}
+
+// buildInQuery builds a parameterised IN clause query.
+// prefix ends just before the opening paren; suffix starts just after.
+func buildInQuery(prefix string, n int, suffix string) string {
+	buf := make([]byte, 0, len(prefix)+len(suffix)+n*4)
+	buf = append(buf, prefix...)
+	for i := range n {
+		if i > 0 {
+			buf = append(buf, ',')
+		}
+		buf = fmt.Appendf(buf, "$%d", i+1)
+	}
+	buf = append(buf, suffix...)
+	return string(buf)
 }

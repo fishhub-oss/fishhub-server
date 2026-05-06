@@ -5,31 +5,35 @@ import (
 	"time"
 )
 
+type Action struct {
+	ID     string
+	Type   string
+	Config json.RawMessage
+}
+
 type Trigger struct {
-	ID                 string
-	DeviceID           string
-	Name               string
-	Enabled            bool
-	Condition          json.RawMessage
-	TargetPeripheralID string
-	Action             json.RawMessage
-	CooldownSeconds    int
-	CreatedAt          time.Time
+	ID              string
+	DeviceID        string
+	Name            string
+	Enabled         bool
+	Condition       json.RawMessage
+	Actions         []Action
+	CooldownSeconds int
+	CreatedAt       time.Time
 }
 
 type TriggerCreate struct {
-	Name               string
-	Condition          json.RawMessage
-	TargetPeripheralID string
-	Action             json.RawMessage
-	CooldownSeconds    int
+	Name            string
+	Condition       json.RawMessage
+	Action          Action
+	CooldownSeconds int
 }
 
 // TriggerUpdate holds fully-merged values for an update (all fields required).
 type TriggerUpdate struct {
 	Name            string
 	Condition       json.RawMessage
-	Action          json.RawMessage
+	Action          Action
 	CooldownSeconds int
 	Enabled         bool
 }
@@ -38,7 +42,7 @@ type TriggerUpdate struct {
 type TriggerPatch struct {
 	Name            *string
 	Condition       json.RawMessage
-	Action          json.RawMessage
+	Action          *Action
 	CooldownSeconds *int
 	Enabled         *bool
 }
