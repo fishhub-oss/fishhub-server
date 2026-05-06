@@ -16,7 +16,7 @@ import (
 
 func newTrigger() trigger.Trigger {
 	actionConfig, _ := json.Marshal(map[string]any{
-		"peripheral_id": "peri-1",
+		"peripheral_id": "00000000-0000-0000-0000-000000000001",
 		"peripheral":    "relay-14",
 		"command":       "set",
 		"value":         1.0,
@@ -40,14 +40,56 @@ func newTriggerService(t *testing.T, store *stubTriggerStore) *trigger.Service {
 	return trigger.NewService(testutil.NewTestDB(t), store, &stubOutboxStore{}, discardLogger)
 }
 
+// validActionBody is a well-formed actions array for use in request bodies.
+const validActionBody = `{"name":"Heater on cold","condition":{"op":"lt"},"actions":[{"type":"peripheral_action","config":{"peripheral_id":"00000000-0000-0000-0000-000000000001","command":"set","value":1.0}}],"cooldown_s":60}`
+
+// ── validateActions ───────────────────────────────────────────────────────────
+
+func TestCreateTriggerHandler_validateActions(t *testing.T) {
+	newSvc := func() *trigger.Service {
+		return trigger.NewService(nil, &stubTriggerStore{}, &stubOutboxStore{}, discardLogger)
+	}
+	newH := func() *api.CreateTriggerHandler {
+		return &api.CreateTriggerHandler{Service: newSvc()}
+	}
+	post := func(t *testing.T, body string) *httptest.ResponseRecorder {
+		t.Helper()
+		req := withChiParam(withClaims(httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body)), "user-1"), "id", "dev-1")
+		rec := httptest.NewRecorder()
+		newH().ServeHTTP(rec, req)
+		return rec
+	}
+
+	t.Run("zero actions returns 400", func(t *testing.T) {
+		body := `{"name":"H","condition":{"op":"lt"},"actions":[]}`
+		assertErrorCode(t, post(t, body), http.StatusBadRequest, "invalid_request")
+	})
+
+	t.Run("more than one action returns 400", func(t *testing.T) {
+		cfg := `{"peripheral_id":"00000000-0000-0000-0000-000000000001","command":"set"}`
+		body := `{"name":"H","condition":{"op":"lt"},"actions":[{"type":"peripheral_action","config":` + cfg + `},{"type":"peripheral_action","config":` + cfg + `}]}`
+		assertErrorCode(t, post(t, body), http.StatusBadRequest, "invalid_request")
+	})
+
+	t.Run("unknown type returns 400", func(t *testing.T) {
+		body := `{"name":"H","condition":{"op":"lt"},"actions":[{"type":"unknown","config":{"peripheral_id":"00000000-0000-0000-0000-000000000001","command":"set"}}]}`
+		assertErrorCode(t, post(t, body), http.StatusBadRequest, "invalid_request")
+	})
+
+	t.Run("missing peripheral_id returns 400", func(t *testing.T) {
+		body := `{"name":"H","condition":{"op":"lt"},"actions":[{"type":"peripheral_action","config":{"command":"set"}}]}`
+		assertErrorCode(t, post(t, body), http.StatusBadRequest, "invalid_request")
+	})
+
+	t.Run("invalid command returns 400", func(t *testing.T) {
+		body := `{"name":"H","condition":{"op":"lt"},"actions":[{"type":"peripheral_action","config":{"peripheral_id":"00000000-0000-0000-0000-000000000001","command":"explode"}}]}`
+		assertErrorCode(t, post(t, body), http.StatusBadRequest, "invalid_request")
+	})
+}
+
 // ── CreateTriggerHandler ──────────────────────────────────────────────────────
 
 func TestCreateTriggerHandler(t *testing.T) {
-	// Use valid UUIDs so Postgres doesn't reject the query with a syntax error.
-	// The device/peripheral do not exist in the test DB, so the service returns
-	// device.ErrNotFound or ErrInvalidPeripheral as appropriate.
-	validBody := `{"name":"Heater on cold","condition":{"op":"lt"},"target_peripheral_id":"00000000-0000-0000-0000-000000000001","action":{"action":"set","value":1.0},"cooldown_s":60}`
-
 	t.Run("invalid body returns 400", func(t *testing.T) {
 		svc := trigger.NewService(nil, &stubTriggerStore{}, &stubOutboxStore{}, discardLogger)
 		h := &api.CreateTriggerHandler{Service: svc}
@@ -62,7 +104,7 @@ func TestCreateTriggerHandler(t *testing.T) {
 		svc := trigger.NewService(nil, &stubTriggerStore{}, &stubOutboxStore{}, discardLogger)
 		h := &api.CreateTriggerHandler{Service: svc}
 
-		body := `{"condition":{"op":"lt"},"target_peripheral_id":"peri-1","action":{"action":"set","value":1.0}}`
+		body := `{"condition":{"op":"lt"},"actions":[{"type":"peripheral_action","config":{"peripheral_id":"00000000-0000-0000-0000-000000000001","command":"set"}}]}`
 		req := withChiParam(withClaims(httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body)), "user-1"), "id", "dev-1")
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, req)
@@ -73,40 +115,18 @@ func TestCreateTriggerHandler(t *testing.T) {
 		svc := trigger.NewService(nil, &stubTriggerStore{}, &stubOutboxStore{}, discardLogger)
 		h := &api.CreateTriggerHandler{Service: svc}
 
-		body := `{"name":"Heater","target_peripheral_id":"peri-1","action":{"action":"set","value":1.0}}`
+		body := `{"name":"H","actions":[{"type":"peripheral_action","config":{"peripheral_id":"00000000-0000-0000-0000-000000000001","command":"set"}}]}`
 		req := withChiParam(withClaims(httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body)), "user-1"), "id", "dev-1")
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, req)
 		assertErrorCode(t, rec, http.StatusBadRequest, "invalid_request")
 	})
 
-	t.Run("missing target_peripheral_id returns 400", func(t *testing.T) {
+	t.Run("missing actions returns 400", func(t *testing.T) {
 		svc := trigger.NewService(nil, &stubTriggerStore{}, &stubOutboxStore{}, discardLogger)
 		h := &api.CreateTriggerHandler{Service: svc}
 
-		body := `{"name":"Heater","condition":{"op":"lt"},"action":{"action":"set","value":1.0}}`
-		req := withChiParam(withClaims(httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body)), "user-1"), "id", "dev-1")
-		rec := httptest.NewRecorder()
-		h.ServeHTTP(rec, req)
-		assertErrorCode(t, rec, http.StatusBadRequest, "invalid_request")
-	})
-
-	t.Run("missing action returns 400", func(t *testing.T) {
-		svc := trigger.NewService(nil, &stubTriggerStore{}, &stubOutboxStore{}, discardLogger)
-		h := &api.CreateTriggerHandler{Service: svc}
-
-		body := `{"name":"Heater","condition":{"op":"lt"},"target_peripheral_id":"peri-1"}`
-		req := withChiParam(withClaims(httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body)), "user-1"), "id", "dev-1")
-		rec := httptest.NewRecorder()
-		h.ServeHTTP(rec, req)
-		assertErrorCode(t, rec, http.StatusBadRequest, "invalid_request")
-	})
-
-	t.Run("invalid action.action returns 400", func(t *testing.T) {
-		svc := trigger.NewService(nil, &stubTriggerStore{}, &stubOutboxStore{}, discardLogger)
-		h := &api.CreateTriggerHandler{Service: svc}
-
-		body := `{"name":"Heater","condition":{"op":"lt"},"target_peripheral_id":"peri-1","action":{"action":"invalid"}}`
+		body := `{"name":"H","condition":{"op":"lt"}}`
 		req := withChiParam(withClaims(httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body)), "user-1"), "id", "dev-1")
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, req)
@@ -117,7 +137,7 @@ func TestCreateTriggerHandler(t *testing.T) {
 		svc := trigger.NewService(nil, &stubTriggerStore{}, &stubOutboxStore{}, discardLogger)
 		h := &api.CreateTriggerHandler{Service: svc}
 
-		body := `{"name":"Heater","condition":{"op":"lt"},"target_peripheral_id":"peri-1","action":{"action":"set","value":1.0},"cooldown_s":-1}`
+		body := `{"name":"H","condition":{"op":"lt"},"actions":[{"type":"peripheral_action","config":{"peripheral_id":"00000000-0000-0000-0000-000000000001","command":"set"}}],"cooldown_s":-1}`
 		req := withChiParam(withClaims(httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body)), "user-1"), "id", "dev-1")
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, req)
@@ -125,13 +145,12 @@ func TestCreateTriggerHandler(t *testing.T) {
 	})
 
 	t.Run("device not found returns 404", func(t *testing.T) {
-		// Both device UUID and user UUID are valid but don't exist in the DB
-		// → validatePeripheralAction returns device.ErrNotFound.
+		// Both UUIDs valid but absent from DB → validatePeripheralAction returns device.ErrNotFound.
 		svc := newTriggerService(t, &stubTriggerStore{})
 		h := &api.CreateTriggerHandler{Service: svc}
 
 		req := withChiParam(
-			withClaims(httptest.NewRequest(http.MethodPost, "/", strings.NewReader(validBody)), "00000000-0000-0000-0000-000000000099"),
+			withClaims(httptest.NewRequest(http.MethodPost, "/", strings.NewReader(validActionBody)), "00000000-0000-0000-0000-000000000099"),
 			"id", "00000000-0000-0000-0000-000000000098",
 		)
 		rec := httptest.NewRecorder()
@@ -147,11 +166,11 @@ func TestCreateTriggerHandler(t *testing.T) {
 		var deviceID string
 		db.QueryRowContext(ctx, `INSERT INTO devices (user_id) VALUES ('00000000-0000-0000-0000-000000000001') RETURNING id`).Scan(&deviceID)
 
-		// peripheral_id in the request refers to a non-existent peripheral → ErrInvalidPeripheral.
 		svc := trigger.NewService(db, &stubTriggerStore{}, &stubOutboxStore{}, discardLogger)
 		h := &api.CreateTriggerHandler{Service: svc}
 
-		body := `{"name":"H","condition":{"op":"lt"},"target_peripheral_id":"00000000-0000-0000-0000-000000000099","action":{"action":"set","value":1.0}}`
+		// peripheral_id doesn't exist → ErrInvalidPeripheral.
+		body := `{"name":"H","condition":{"op":"lt"},"actions":[{"type":"peripheral_action","config":{"peripheral_id":"00000000-0000-0000-0000-000000000099","command":"set"}}]}`
 		req := withChiParam(withClaims(httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body)), "00000000-0000-0000-0000-000000000001"), "id", deviceID)
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, req)
@@ -162,7 +181,7 @@ func TestCreateTriggerHandler(t *testing.T) {
 // ── ListTriggersHandler ───────────────────────────────────────────────────────
 
 func TestListTriggersHandler(t *testing.T) {
-	t.Run("returns 200 with trigger list", func(t *testing.T) {
+	t.Run("returns 200 with trigger list including actions", func(t *testing.T) {
 		store := &stubTriggerStore{listed: []trigger.Trigger{newTrigger()}}
 		svc := trigger.NewService(nil, store, &stubOutboxStore{}, discardLogger)
 		h := &api.ListTriggersHandler{Service: svc}
@@ -180,6 +199,17 @@ func TestListTriggersHandler(t *testing.T) {
 		}
 		if len(resp) != 1 || resp[0]["name"] != "Heater on cold" {
 			t.Errorf("unexpected response: %v", resp)
+		}
+		actions, ok := resp[0]["actions"].([]any)
+		if !ok || len(actions) != 1 {
+			t.Errorf("expected actions array with 1 entry, got %v", resp[0]["actions"])
+		}
+		// Old fields must be absent.
+		if _, found := resp[0]["target_peripheral_id"]; found {
+			t.Error("target_peripheral_id should not be in response")
+		}
+		if _, found := resp[0]["action"]; found {
+			t.Error("action should not be in response")
 		}
 	})
 
@@ -206,7 +236,7 @@ func TestListTriggersHandler(t *testing.T) {
 // ── GetTriggerHandler ─────────────────────────────────────────────────────────
 
 func TestGetTriggerHandler(t *testing.T) {
-	t.Run("returns 200 with trigger", func(t *testing.T) {
+	t.Run("returns 200 with actions array", func(t *testing.T) {
 		store := &stubTriggerStore{got: newTrigger()}
 		svc := trigger.NewService(nil, store, &stubOutboxStore{}, discardLogger)
 		h := &api.GetTriggerHandler{Service: svc}
@@ -225,6 +255,14 @@ func TestGetTriggerHandler(t *testing.T) {
 		}
 		if resp["name"] != "Heater on cold" {
 			t.Errorf("unexpected name: %v", resp["name"])
+		}
+		actions, ok := resp["actions"].([]any)
+		if !ok || len(actions) != 1 {
+			t.Errorf("expected actions array with 1 entry, got %v", resp["actions"])
+		}
+		// Old fields must be absent.
+		if _, found := resp["target_peripheral_id"]; found {
+			t.Error("target_peripheral_id should not be in response")
 		}
 	})
 
@@ -266,11 +304,11 @@ func TestPatchTriggerHandler(t *testing.T) {
 		assertErrorCode(t, rec, http.StatusBadRequest, "invalid_request")
 	})
 
-	t.Run("invalid action.action returns 400", func(t *testing.T) {
+	t.Run("invalid actions in patch returns 400", func(t *testing.T) {
 		svc := trigger.NewService(nil, &stubTriggerStore{}, &stubOutboxStore{}, discardLogger)
 		h := &api.PatchTriggerHandler{Service: svc}
 
-		body := `{"action":{"action":"invalid"}}`
+		body := `{"actions":[{"type":"peripheral_action","config":{"peripheral_id":"00000000-0000-0000-0000-000000000001","command":"explode"}}]}`
 		req := withChiParams(withClaims(httptest.NewRequest(http.MethodPatch, "/", strings.NewReader(body)), "user-1"),
 			map[string]string{"id": "dev-1", "tid": "trig-1"})
 		rec := httptest.NewRecorder()
@@ -301,6 +339,22 @@ func TestPatchTriggerHandler(t *testing.T) {
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, req)
 		assertErrorCode(t, rec, http.StatusNotFound, "trigger_not_found")
+	})
+
+	t.Run("absent actions field leaves action unchanged", func(t *testing.T) {
+		store := &stubTriggerStore{got: newTrigger(), updated: newTrigger()}
+		svc := newTriggerService(t, store)
+		h := &api.PatchTriggerHandler{Service: svc}
+
+		body := `{"name":"renamed"}`
+		req := withChiParams(withClaims(httptest.NewRequest(http.MethodPatch, "/", strings.NewReader(body)), "user-1"),
+			map[string]string{"id": "dev-1", "tid": "trig-1"})
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+		}
 	})
 }
 
