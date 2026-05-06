@@ -7,5 +7,5 @@ var (
 	ErrNotFound       = errors.New("peripheral not found")
 	ErrAlreadyExists  = errors.New("peripheral already exists")
 	ErrPinInUse       = errors.New("peripheral pin already in use")
-	ErrInvalidCommand = errors.New("action must be 'set' or 'schedule'")
+	ErrInvalidCommand = errors.New("command must be 'set' or 'schedule'")
 )
