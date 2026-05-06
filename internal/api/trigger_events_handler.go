@@ -1,9 +1,10 @@
 package api
 
 import (
+	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"net/http"
-	"strconv"
 	"time"
 
 	"github.com/fishhub-oss/fishhub-server/internal/apierr"
@@ -14,10 +15,7 @@ import (
 	"github.com/go-chi/render"
 )
 
-const (
-	defaultEventLimit = 50
-	maxEventLimit     = 200
-)
+const defaultEventPageSize = 20
 
 type ReadingResponse struct {
 	Peripheral string  `json:"peripheral"`
@@ -31,6 +29,34 @@ type TriggerEventResponse struct {
 	FiredAt        string            `json:"fired_at"`
 	ReceivedAt     string            `json:"received_at"`
 	Readings       []ReadingResponse `json:"readings"`
+}
+
+type TriggerEventsPageResponse struct {
+	Events     []TriggerEventResponse `json:"events"`
+	NextCursor *string                `json:"next_cursor,omitempty"`
+}
+
+// cursorToken is the JSON payload encoded inside the base64 cursor string.
+type cursorToken struct {
+	FiredAt time.Time `json:"fired_at"`
+	ID      string    `json:"id"`
+}
+
+func encodeCursor(firedAt time.Time, id string) string {
+	b, _ := json.Marshal(cursorToken{FiredAt: firedAt, ID: id})
+	return base64.RawURLEncoding.EncodeToString(b)
+}
+
+func decodeCursor(raw string) (time.Time, string, error) {
+	b, err := base64.RawURLEncoding.DecodeString(raw)
+	if err != nil {
+		return time.Time{}, "", err
+	}
+	var tok cursorToken
+	if err := json.Unmarshal(b, &tok); err != nil {
+		return time.Time{}, "", err
+	}
+	return tok.FiredAt, tok.ID, nil
 }
 
 func triggerEventResponse(e trigger_events.TriggerEvent) TriggerEventResponse {
@@ -59,17 +85,16 @@ func (h *ListTriggerEventsHandler) ServeHTTP(w http.ResponseWriter, r *http.Requ
 	deviceID := chi.URLParam(r, "id")
 	triggerID := chi.URLParam(r, "tid")
 
-	limit := defaultEventLimit
-	if raw := r.URL.Query().Get("limit"); raw != "" {
-		v, err := strconv.Atoi(raw)
-		if err != nil || v <= 0 {
-			apierr.Write(w, http.StatusBadRequest, "invalid_request", "limit must be a positive integer")
+	// Parse optional cursor.
+	page := trigger_events.CursorPage{PageSize: defaultEventPageSize}
+	if raw := r.URL.Query().Get("cursor"); raw != "" {
+		firedAt, id, err := decodeCursor(raw)
+		if err != nil {
+			apierr.Write(w, http.StatusBadRequest, "invalid_request", "invalid cursor")
 			return
 		}
-		if v > maxEventLimit {
-			v = maxEventLimit
-		}
-		limit = v
+		page.AfterFiredAt = &firedAt
+		page.AfterID = &id
 	}
 
 	// Verify the trigger exists and belongs to this device + user.
@@ -82,15 +107,25 @@ func (h *ListTriggerEventsHandler) ServeHTTP(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	events, err := h.EventStore.ListByTrigger(r.Context(), triggerID, limit)
+	events, err := h.EventStore.ListByTriggerCursor(r.Context(), triggerID, page)
 	if err != nil {
 		apierr.Write(w, http.StatusInternalServerError, "internal_error", "internal server error")
 		return
 	}
 
-	resp := make([]TriggerEventResponse, len(events))
-	for i, e := range events {
-		resp[i] = triggerEventResponse(e)
+	resp := TriggerEventsPageResponse{
+		Events: make([]TriggerEventResponse, len(events)),
 	}
+	for i, e := range events {
+		resp.Events[i] = triggerEventResponse(e)
+	}
+
+	// Emit next_cursor only when a full page was returned (more may exist).
+	if len(events) == page.PageSize {
+		last := events[len(events)-1]
+		cursor := encodeCursor(last.FiredAt, last.ID)
+		resp.NextCursor = &cursor
+	}
+
 	render.JSON(w, r, resp)
 }

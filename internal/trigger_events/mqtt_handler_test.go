@@ -28,7 +28,7 @@ func (s *stubStore) Ingest(_ context.Context, e trigger_events.TriggerEvent) err
 	return s.ingestErr
 }
 
-func (s *stubStore) ListByTrigger(_ context.Context, _ string, _ int) ([]trigger_events.TriggerEvent, error) {
+func (s *stubStore) ListByTriggerCursor(_ context.Context, _ string, _ trigger_events.CursorPage) ([]trigger_events.TriggerEvent, error) {
 	return nil, nil
 }
 
