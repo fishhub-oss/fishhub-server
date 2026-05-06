@@ -504,7 +504,7 @@ func newCommandHandler(t *testing.T, pStore *stubPeripheralStore, pub *stubPubli
 }
 
 func TestCommandHandler(t *testing.T) {
-	const body = `{"action":"set","id":"cmd-1","value":1}`
+	const body = `{"command":"set","id":"cmd-1","value":1}`
 
 	relay := peripheral.Peripheral{ID: "p-1", DeviceID: "dev-1", Kind: "relay", Pin: 5, Category: "actuator"}
 
@@ -538,7 +538,7 @@ func TestCommandHandler(t *testing.T) {
 	t.Run("400 on invalid action", func(t *testing.T) {
 		h := newCommandHandler(t, &stubPeripheralStore{created: relay}, &stubPublisher{})
 		rec := httptest.NewRecorder()
-		h.ServeHTTP(rec, makeReq(`{"action":"invalid"}`, "user-1"))
+		h.ServeHTTP(rec, makeReq(`{"command":"invalid"}`, "user-1"))
 		assertErrorCode(t, rec, http.StatusBadRequest, "invalid_request")
 	})
 

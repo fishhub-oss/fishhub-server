@@ -443,17 +443,17 @@ Cookie: session=<session-jwt>
 **Request body**
 ```json
 {
-  "action": "set"
+  "command": "set"
 }
 ```
 
 | Field | Values | Description |
 |---|---|---|
-| `action` | `"set"` \| `"schedule"` | Command action to send to the peripheral |
+| `command` | `"set"` \| `"schedule"` | Command to send to the peripheral |
 
 **Response `204`** — command published
 
-**Response `400`** — invalid action (must be `"set"` or `"schedule"`)
+**Response `400`** — invalid command (must be `"set"` or `"schedule"`)
 
 **Response `401`** — not authenticated
 

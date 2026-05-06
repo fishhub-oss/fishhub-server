@@ -77,10 +77,10 @@ func (s *Service) SendCommand(ctx context.Context, deviceID, userID, peripheralN
 	}
 
 	var req struct {
-		Action string `json:"action"`
+		Command string `json:"command"`
 	}
 	if err := json.NewDecoder(io.NopCloser(bytes.NewReader(body))).Decode(&req); err != nil ||
-		(req.Action != "set" && req.Action != "schedule") {
+		(req.Command != "set" && req.Command != "schedule") {
 		return ErrInvalidCommand
 	}
 
