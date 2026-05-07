@@ -112,7 +112,7 @@ func (h *MQTTHandler) enqueueActions(ctx context.Context, event TriggerEvent) {
 			continue
 		}
 
-		if err := h.queue.Enqueue(ctx, "fishhub-jobs", queue.Job{
+		if err := h.queue.Enqueue(ctx, "trigger-actions", queue.Job{
 			ID:      uuid.New().String(),
 			Type:    action.Type,
 			Payload: jobPayload,

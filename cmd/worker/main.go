@@ -55,7 +55,7 @@ func main() {
 	srv := asynq.NewServer(
 		asynq.RedisClientOpt{Addr: redisURL},
 		asynq.Config{
-			Queues: map[string]int{"fishhub-jobs": 1},
+			Queues: map[string]int{"trigger-actions": 1},
 			Logger: &asynqLogger{logger},
 		},
 	)
@@ -68,7 +68,7 @@ func main() {
 		})
 	})
 
-	logger.Info("worker starting", "queue", "fishhub-jobs")
+	logger.Info("worker starting", "queue", "trigger-actions")
 	go func() {
 		<-ctx.Done()
 		srv.Shutdown()

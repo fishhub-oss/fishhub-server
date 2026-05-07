@@ -189,8 +189,8 @@ func TestMQTTHandler_Handle(t *testing.T) {
 		if spy.jobs[0].job.Type != "alert" {
 			t.Errorf("job type: got %q, want %q", spy.jobs[0].job.Type, "alert")
 		}
-		if spy.jobs[0].queue != "fishhub-jobs" {
-			t.Errorf("queue name: got %q, want %q", spy.jobs[0].queue, "fishhub-jobs")
+		if spy.jobs[0].queue != "trigger-actions" {
+			t.Errorf("queue name: got %q, want %q", spy.jobs[0].queue, "trigger-actions")
 		}
 
 		var p queue.AlertJobPayload
