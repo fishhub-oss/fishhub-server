@@ -11,6 +11,7 @@ import (
 	"strings"
 	"syscall"
 	"time"
+	_ "time/tzdata"
 
 	"github.com/fishhub-oss/fishhub-server/internal/account"
 	"github.com/fishhub-oss/fishhub-server/internal/alerts"
