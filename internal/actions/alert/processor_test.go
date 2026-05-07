@@ -27,6 +27,10 @@ func (s *stubAlertStore) ListByUser(_ context.Context, _ string, _ int) ([]alert
 	return nil, nil
 }
 
+func (s *stubAlertStore) ListByUserCursor(_ context.Context, _ string, _ alerts.CursorPage) ([]alerts.Alert, error) {
+	return nil, nil
+}
+
 type stubTriggerStore struct {
 	trig   trigger.Trigger
 	action trigger.Action

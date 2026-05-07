@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/fishhub-oss/fishhub-server/internal/account"
+	"github.com/fishhub-oss/fishhub-server/internal/alerts"
 	"github.com/fishhub-oss/fishhub-server/internal/api"
 	"github.com/fishhub-oss/fishhub-server/internal/auth"
 	"github.com/fishhub-oss/fishhub-server/internal/device"
@@ -312,6 +313,9 @@ func main() {
 		logger.Warn("redis not configured — jobs will not be enqueued")
 	}
 
+	// ── Alerts store ──────────────────────────────────────────────────────────
+	alertStore := alerts.NewPostgresStore(db)
+
 	// ── MQTT trigger_events subscription ──────────────────────────────────────
 	triggerEventStore := trigger_events.NewStore(db)
 	triggerEventsMQTTHandler := trigger_events.NewMQTTHandler(
@@ -392,6 +396,7 @@ func main() {
 		r.Patch("/api/devices/{id}/triggers/{tid}", (&api.PatchTriggerHandler{Service: triggerSvc}).ServeHTTP)
 		r.Delete("/api/devices/{id}/triggers/{tid}", (&api.DeleteTriggerHandler{Service: triggerSvc}).ServeHTTP)
 		r.Get("/api/devices/{id}/triggers/{tid}/events", (&api.ListTriggerEventsHandler{TriggerStore: triggerStore, EventStore: triggerEventStore}).ServeHTTP)
+		r.Get("/api/alerts", (&api.ListAlertsHandler{Store: alertStore}).ServeHTTP)
 	})
 
 	srv := &http.Server{Addr: ":" + cfg.Port, Handler: r}
