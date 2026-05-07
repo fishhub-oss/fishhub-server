@@ -71,7 +71,7 @@ func TestTriggerEventsStore_integration(t *testing.T) {
 		}
 	})
 
-	t.Run("ListByTrigger returns events in fired_at DESC order", func(t *testing.T) {
+	t.Run("ListByTriggerCursor first page returns events in fired_at DESC order", func(t *testing.T) {
 		earlier := now.Add(-5 * time.Minute)
 		if err := store.Ingest(ctx, trigger_events.TriggerEvent{
 			TriggerEventID: "event-id-2",
@@ -82,7 +82,7 @@ func TestTriggerEventsStore_integration(t *testing.T) {
 			t.Fatalf("ingest second event: %v", err)
 		}
 
-		events, err := store.ListByTrigger(ctx, triggerID, 10)
+		events, err := store.ListByTriggerCursor(ctx, triggerID, trigger_events.CursorPage{PageSize: 10})
 		if err != nil {
 			t.Fatalf("list: %v", err)
 		}
@@ -95,18 +95,50 @@ func TestTriggerEventsStore_integration(t *testing.T) {
 		}
 	})
 
-	t.Run("ListByTrigger respects limit", func(t *testing.T) {
-		events, err := store.ListByTrigger(ctx, triggerID, 1)
+	t.Run("ListByTriggerCursor respects page size", func(t *testing.T) {
+		events, err := store.ListByTriggerCursor(ctx, triggerID, trigger_events.CursorPage{PageSize: 1})
 		if err != nil {
 			t.Fatalf("list: %v", err)
 		}
 		if len(events) != 1 {
-			t.Errorf("expected 1 event with limit=1, got %d", len(events))
+			t.Errorf("expected 1 event with page size 1, got %d", len(events))
 		}
 	})
 
-	t.Run("ListByTrigger returns readings correctly", func(t *testing.T) {
-		events, err := store.ListByTrigger(ctx, triggerID, 10)
+	t.Run("ListByTriggerCursor second page excludes first page events", func(t *testing.T) {
+		// First page: newest event (fired_at = now).
+		first, err := store.ListByTriggerCursor(ctx, triggerID, trigger_events.CursorPage{PageSize: 1})
+		if err != nil {
+			t.Fatalf("first page: %v", err)
+		}
+		if len(first) != 1 {
+			t.Fatalf("expected 1 event on first page, got %d", len(first))
+		}
+
+		// Second page using cursor from the first page's last item.
+		afterFiredAt := first[0].FiredAt
+		afterID := first[0].ID
+		second, err := store.ListByTriggerCursor(ctx, triggerID, trigger_events.CursorPage{
+			PageSize:     10,
+			AfterFiredAt: &afterFiredAt,
+			AfterID:      &afterID,
+		})
+		if err != nil {
+			t.Fatalf("second page: %v", err)
+		}
+		if len(second) == 0 {
+			t.Fatal("expected at least 1 event on second page")
+		}
+		// All second-page events must be strictly older than the cursor.
+		for _, e := range second {
+			if !e.FiredAt.Before(afterFiredAt) {
+				t.Errorf("second page event fired_at %v is not before cursor %v", e.FiredAt, afterFiredAt)
+			}
+		}
+	})
+
+	t.Run("ListByTriggerCursor returns readings correctly", func(t *testing.T) {
+		events, err := store.ListByTriggerCursor(ctx, triggerID, trigger_events.CursorPage{PageSize: 10})
 		if err != nil {
 			t.Fatalf("list: %v", err)
 		}
