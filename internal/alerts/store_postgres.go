@@ -35,6 +35,54 @@ func (s *postgresStore) Create(ctx context.Context, a Alert) (Alert, error) {
 	return out, nil
 }
 
+func (s *postgresStore) ListByUserCursor(ctx context.Context, userID string, page CursorPage) ([]Alert, error) {
+	var (
+		rows *sql.Rows
+		err  error
+	)
+	if page.AfterCreatedAt == nil || page.AfterID == nil {
+		rows, err = s.db.QueryContext(ctx, `
+			SELECT id, user_id, device_id, trigger_id, event_id, severity, message, context, created_at
+			FROM alerts
+			WHERE user_id = $1
+			ORDER BY created_at DESC, id DESC
+			LIMIT $2
+		`, userID, page.PageSize)
+	} else {
+		rows, err = s.db.QueryContext(ctx, `
+			SELECT id, user_id, device_id, trigger_id, event_id, severity, message, context, created_at
+			FROM alerts
+			WHERE user_id = $1
+			  AND (created_at, id) < ($2, $3)
+			ORDER BY created_at DESC, id DESC
+			LIMIT $4
+		`, userID, page.AfterCreatedAt, page.AfterID, page.PageSize)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("list alerts cursor: %w", err)
+	}
+	defer rows.Close()
+
+	var out []Alert
+	for rows.Next() {
+		var a Alert
+		if err := rows.Scan(
+			&a.ID, &a.UserID, &a.DeviceID, &a.TriggerID, &a.EventID,
+			&a.Severity, &a.Message, (*jsonMap)(&a.Context), &a.CreatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("list alerts cursor: scan: %w", err)
+		}
+		out = append(out, a)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if out == nil {
+		return []Alert{}, nil
+	}
+	return out, nil
+}
+
 func (s *postgresStore) ListByUser(ctx context.Context, userID string, limit int) ([]Alert, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT id, user_id, device_id, trigger_id, event_id, severity, message, context, created_at

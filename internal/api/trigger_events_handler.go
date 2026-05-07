@@ -1,8 +1,6 @@
 package api
 
 import (
-	"encoding/base64"
-	"encoding/json"
 	"errors"
 	"net/http"
 	"time"
@@ -34,29 +32,6 @@ type TriggerEventResponse struct {
 type TriggerEventsPageResponse struct {
 	Events     []TriggerEventResponse `json:"events"`
 	NextCursor *string                `json:"next_cursor,omitempty"`
-}
-
-// cursorToken is the JSON payload encoded inside the base64 cursor string.
-type cursorToken struct {
-	FiredAt time.Time `json:"fired_at"`
-	ID      string    `json:"id"`
-}
-
-func encodeCursor(firedAt time.Time, id string) string {
-	b, _ := json.Marshal(cursorToken{FiredAt: firedAt, ID: id})
-	return base64.RawURLEncoding.EncodeToString(b)
-}
-
-func decodeCursor(raw string) (time.Time, string, error) {
-	b, err := base64.RawURLEncoding.DecodeString(raw)
-	if err != nil {
-		return time.Time{}, "", err
-	}
-	var tok cursorToken
-	if err := json.Unmarshal(b, &tok); err != nil {
-		return time.Time{}, "", err
-	}
-	return tok.FiredAt, tok.ID, nil
 }
 
 func triggerEventResponse(e trigger_events.TriggerEvent) TriggerEventResponse {
