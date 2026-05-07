@@ -38,6 +38,22 @@ services:
       - grafana_data:/var/lib/grafana
       - ./grafana/provisioning:/etc/grafana/provisioning
 
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+
+  asynqmon:
+    image: hibiken/asynqmon:latest
+    platform: linux/amd64
+    ports:
+      - "8090:8080"
+    command: --redis-addr=redis:6379
+    depends_on:
+      - redis
+
 secrets:
   influxdb-admin-token:
     file: ${INFLUX_TOKEN_FILE}
@@ -46,3 +62,4 @@ volumes:
   postgres_data:
   influxdb_data:
   grafana_data:
+  redis_data:

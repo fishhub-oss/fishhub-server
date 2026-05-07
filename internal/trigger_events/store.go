@@ -17,7 +17,7 @@ type CursorPage struct {
 }
 
 type Store interface {
-	Ingest(ctx context.Context, e TriggerEvent) error
+	Ingest(ctx context.Context, e TriggerEvent) (TriggerEvent, error)
 	ListByTriggerCursor(ctx context.Context, triggerID string, page CursorPage) ([]TriggerEvent, error)
 	TriggerBelongsToDevice(ctx context.Context, triggerID, deviceID string) (bool, error)
 }
@@ -30,20 +30,24 @@ func NewStore(db *sql.DB) Store {
 	return &postgresStore{db: db}
 }
 
-func (s *postgresStore) Ingest(ctx context.Context, e TriggerEvent) error {
+func (s *postgresStore) Ingest(ctx context.Context, e TriggerEvent) (TriggerEvent, error) {
 	readings, err := json.Marshal(e.Readings)
 	if err != nil {
-		return fmt.Errorf("ingest trigger event: marshal readings: %w", err)
+		return TriggerEvent{}, fmt.Errorf("ingest trigger event: marshal readings: %w", err)
 	}
-	_, err = s.db.ExecContext(ctx, `
+	// ON CONFLICT DO UPDATE with no-op keeps the RETURNING clause working even on duplicates.
+	err = s.db.QueryRowContext(ctx, `
 		INSERT INTO trigger_events (trigger_event_id, trigger_id, fired_at, readings)
 		VALUES ($1, $2, $3, $4)
-		ON CONFLICT (trigger_event_id) DO NOTHING
-	`, e.TriggerEventID, e.TriggerID, e.FiredAt, readings)
+		ON CONFLICT (trigger_event_id) DO UPDATE SET trigger_event_id = EXCLUDED.trigger_event_id
+		RETURNING id, trigger_event_id, trigger_id, fired_at, received_at
+	`, e.TriggerEventID, e.TriggerID, e.FiredAt, readings).Scan(
+		&e.ID, &e.TriggerEventID, &e.TriggerID, &e.FiredAt, &e.ReceivedAt,
+	)
 	if err != nil {
-		return fmt.Errorf("ingest trigger event: %w", err)
+		return TriggerEvent{}, fmt.Errorf("ingest trigger event: %w", err)
 	}
-	return nil
+	return e, nil
 }
 
 func (s *postgresStore) ListByTriggerCursor(ctx context.Context, triggerID string, page CursorPage) ([]TriggerEvent, error) {

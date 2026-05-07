@@ -22,6 +22,12 @@ type Store interface {
 	Update(ctx context.Context, tx *sql.Tx, deviceID, userID, triggerID string, u TriggerUpdate) (Trigger, error)
 	// Delete soft-deletes the trigger (sets deleted_at). Returns ErrNotFound if not reachable.
 	Delete(ctx context.Context, tx *sql.Tx, deviceID, userID, triggerID string) (Trigger, error)
+	// GetActions returns all actions for the given trigger.
+	GetActions(ctx context.Context, triggerID string) ([]Action, error)
+	// GetByID returns a trigger by ID regardless of device/user ownership. Returns ErrNotFound if not found.
+	GetByID(ctx context.Context, triggerID string) (Trigger, error)
+	// GetActionConfig returns the type and config for a single action by ID.
+	GetActionConfig(ctx context.Context, actionID string) (Action, error)
 }
 
 type postgresStore struct {
@@ -222,6 +228,70 @@ func (s *postgresStore) Delete(ctx context.Context, tx *sql.Tx, deviceID, userID
 		return Trigger{}, fmt.Errorf("delete trigger: %w", err)
 	}
 	return t, nil
+}
+
+func (s *postgresStore) GetActions(ctx context.Context, triggerID string) ([]Action, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT a.id, a.type, a.config
+		FROM actions a
+		JOIN action_triggers at ON at.action_id = a.id
+		WHERE at.trigger_id = $1
+		ORDER BY a.created_at ASC
+	`, triggerID)
+	if err != nil {
+		return nil, fmt.Errorf("get actions: %w", err)
+	}
+	defer rows.Close()
+
+	var actions []Action
+	for rows.Next() {
+		var a Action
+		if err := rows.Scan(&a.ID, &a.Type, &a.Config); err != nil {
+			return nil, fmt.Errorf("get actions: scan: %w", err)
+		}
+		actions = append(actions, a)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if actions == nil {
+		return []Action{}, nil
+	}
+	return actions, nil
+}
+
+func (s *postgresStore) GetByID(ctx context.Context, triggerID string) (Trigger, error) {
+	var t Trigger
+	err := s.db.QueryRowContext(ctx, `
+		SELECT tr.id, tr.device_id, d.user_id, tr.name, tr.enabled, tr.condition, tr.cooldown_s, tr.created_at
+		FROM triggers tr
+		JOIN devices d ON d.id = tr.device_id
+		WHERE tr.id = $1 AND tr.deleted_at IS NULL AND d.deleted_at IS NULL
+	`, triggerID).Scan(
+		&t.ID, &t.DeviceID, &t.UserID, &t.Name, &t.Enabled,
+		&t.Condition, &t.CooldownSeconds, &t.CreatedAt,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Trigger{}, ErrNotFound
+	}
+	if err != nil {
+		return Trigger{}, fmt.Errorf("get trigger by id: %w", err)
+	}
+	return t, nil
+}
+
+func (s *postgresStore) GetActionConfig(ctx context.Context, actionID string) (Action, error) {
+	var a Action
+	err := s.db.QueryRowContext(ctx, `
+		SELECT id, type, config FROM actions WHERE id = $1
+	`, actionID).Scan(&a.ID, &a.Type, &a.Config)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Action{}, ErrNotFound
+	}
+	if err != nil {
+		return Action{}, fmt.Errorf("get action config: %w", err)
+	}
+	return a, nil
 }
 
 // hydrateActions fetches all actions for the given trigger IDs and populates

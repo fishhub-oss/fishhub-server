@@ -34,7 +34,7 @@ func TestTriggerEventsStore_integration(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Second)
 
 	t.Run("ingest stores event", func(t *testing.T) {
-		err := store.Ingest(ctx, trigger_events.TriggerEvent{
+		_, err := store.Ingest(ctx, trigger_events.TriggerEvent{
 			TriggerEventID: "event-id-1",
 			TriggerID:      triggerID,
 			FiredAt:        now,
@@ -54,7 +54,7 @@ func TestTriggerEventsStore_integration(t *testing.T) {
 	})
 
 	t.Run("ingest is idempotent — duplicate trigger_event_id is a no-op", func(t *testing.T) {
-		err := store.Ingest(ctx, trigger_events.TriggerEvent{
+		_, err := store.Ingest(ctx, trigger_events.TriggerEvent{
 			TriggerEventID: "event-id-1",
 			TriggerID:      triggerID,
 			FiredAt:        now,
@@ -73,7 +73,7 @@ func TestTriggerEventsStore_integration(t *testing.T) {
 
 	t.Run("ListByTriggerCursor first page returns events in fired_at DESC order", func(t *testing.T) {
 		earlier := now.Add(-5 * time.Minute)
-		if err := store.Ingest(ctx, trigger_events.TriggerEvent{
+		if _, err := store.Ingest(ctx, trigger_events.TriggerEvent{
 			TriggerEventID: "event-id-2",
 			TriggerID:      triggerID,
 			FiredAt:        earlier,

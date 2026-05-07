@@ -21,8 +21,8 @@ type stubTriggerEventStore struct {
 	listErr error
 }
 
-func (s *stubTriggerEventStore) Ingest(_ context.Context, _ trigger_events.TriggerEvent) error {
-	return nil
+func (s *stubTriggerEventStore) Ingest(_ context.Context, e trigger_events.TriggerEvent) (trigger_events.TriggerEvent, error) {
+	return e, nil
 }
 func (s *stubTriggerEventStore) ListByTriggerCursor(_ context.Context, _ string, _ trigger_events.CursorPage) ([]trigger_events.TriggerEvent, error) {
 	return s.events, s.listErr

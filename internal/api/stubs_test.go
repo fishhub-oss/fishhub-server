@@ -279,3 +279,12 @@ func (s *stubTriggerStore) Update(_ context.Context, _ *sql.Tx, _, _, _ string, 
 func (s *stubTriggerStore) Delete(_ context.Context, _ *sql.Tx, _, _, _ string) (trigger.Trigger, error) {
 	return s.created, s.deletedErr
 }
+func (s *stubTriggerStore) GetActions(_ context.Context, _ string) ([]trigger.Action, error) {
+	return nil, nil
+}
+func (s *stubTriggerStore) GetByID(_ context.Context, _ string) (trigger.Trigger, error) {
+	return s.got, s.getErr
+}
+func (s *stubTriggerStore) GetActionConfig(_ context.Context, _ string) (trigger.Action, error) {
+	return trigger.Action{}, nil
+}
