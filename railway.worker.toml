@@ -1,0 +1,6 @@
+[build]
+buildCommand = "go build -o /app/fishhub-worker ./cmd/worker"
+
+[deploy]
+startCommand = "/app/fishhub-worker"
+restartPolicyType = "on_failure"

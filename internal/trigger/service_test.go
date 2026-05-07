@@ -205,6 +205,11 @@ func (s *stubStore) Update(_ context.Context, _ *sql.Tx, _, _, _ string, _ Trigg
 func (s *stubStore) Delete(_ context.Context, _ *sql.Tx, _, _, _ string) (Trigger, error) {
 	return s.created, s.deleteErr
 }
+func (s *stubStore) GetActions(_ context.Context, _ string) ([]Action, error) { return nil, nil }
+func (s *stubStore) GetByID(_ context.Context, _ string) (Trigger, error)     { return s.got, s.getErr }
+func (s *stubStore) GetActionConfig(_ context.Context, _ string) (Action, error) {
+	return Action{}, nil
+}
 
 type stubOutbox struct{ insertErr error }
 
@@ -368,4 +373,13 @@ func (c *captureUpdateStore) Update(_ context.Context, _ *sql.Tx, _, _, _ string
 }
 func (c *captureUpdateStore) Delete(_ context.Context, _ *sql.Tx, _, _, _ string) (Trigger, error) {
 	return Trigger{}, nil
+}
+func (c *captureUpdateStore) GetActions(_ context.Context, _ string) ([]Action, error) {
+	return nil, nil
+}
+func (c *captureUpdateStore) GetByID(_ context.Context, _ string) (Trigger, error) {
+	return c.got, nil
+}
+func (c *captureUpdateStore) GetActionConfig(_ context.Context, _ string) (Action, error) {
+	return Action{}, nil
 }

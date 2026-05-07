@@ -25,6 +25,8 @@ import (
 	"github.com/fishhub-oss/fishhub-server/internal/peripheral"
 	"github.com/fishhub-oss/fishhub-server/internal/platform"
 	"github.com/fishhub-oss/fishhub-server/internal/provisioning"
+	"github.com/fishhub-oss/fishhub-server/internal/queue"
+	asynqqueue "github.com/fishhub-oss/fishhub-server/internal/queue/asynq"
 	"github.com/fishhub-oss/fishhub-server/internal/trigger"
 	trigger_events "github.com/fishhub-oss/fishhub-server/internal/trigger_events"
 	"github.com/go-chi/chi/v5"
@@ -53,6 +55,21 @@ func (b accountTimezoneReaderBridge) GetTimezone(ctx context.Context, userID str
 		return "UTC", err
 	}
 	return a.Timezone, nil
+}
+
+// triggerActionGetterBridge adapts trigger.Store to trigger_events.ActionGetter.
+type triggerActionGetterBridge struct{ store trigger.Store }
+
+func (b triggerActionGetterBridge) GetActions(ctx context.Context, triggerID string) ([]trigger_events.TriggerAction, error) {
+	actions, err := b.store.GetActions(ctx, triggerID)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]trigger_events.TriggerAction, len(actions))
+	for i, a := range actions {
+		out[i] = trigger_events.TriggerAction{ID: a.ID, Type: a.Type, Config: a.Config}
+	}
+	return out, nil
 }
 
 // deviceIDListerBridge adapts device.Store to account.DeviceLister.
@@ -91,6 +108,7 @@ type config struct {
 	HiveMQServerUser   string
 	HiveMQServerPass   string
 	CORSOrigins        []string
+	RedisURL           string
 }
 
 func loadConfig() config {
@@ -132,6 +150,7 @@ func loadConfig() config {
 		HiveMQServerUser: os.Getenv("HIVEMQ_SERVER_USERNAME"),
 		HiveMQServerPass: os.Getenv("HIVEMQ_SERVER_PASSWORD"),
 		CORSOrigins:      corsOrigins,
+		RedisURL:         os.Getenv("REDIS_URL"),
 	}
 }
 
@@ -283,9 +302,24 @@ func main() {
 		logger.Error("mqtt readings subscription failed", "error", err)
 	}
 
+	// ── Queue ─────────────────────────────────────────────────────────────────
+	var jobQueue queue.Queue
+	if cfg.RedisURL != "" {
+		jobQueue = asynqqueue.NewQueue(cfg.RedisURL)
+		logger.Info("asynq queue configured", "redis_url", cfg.RedisURL)
+	} else {
+		jobQueue = queue.NewNoOpQueue(logger)
+		logger.Warn("redis not configured — jobs will not be enqueued")
+	}
+
 	// ── MQTT trigger_events subscription ──────────────────────────────────────
 	triggerEventStore := trigger_events.NewStore(db)
-	triggerEventsMQTTHandler := trigger_events.NewMQTTHandler(triggerEventStore, logger)
+	triggerEventsMQTTHandler := trigger_events.NewMQTTHandler(
+		triggerEventStore,
+		triggerActionGetterBridge{store: triggerStore},
+		jobQueue,
+		logger,
+	)
 	if err := mqttSubscriber.Subscribe(ctx, "fishhub/+/trigger_events", triggerEventsMQTTHandler.Handle); err != nil {
 		logger.Error("mqtt trigger_events subscription failed", "error", err)
 	}
@@ -360,8 +394,17 @@ func main() {
 		r.Get("/api/devices/{id}/triggers/{tid}/events", (&api.ListTriggerEventsHandler{TriggerStore: triggerStore, EventStore: triggerEventStore}).ServeHTTP)
 	})
 
+	srv := &http.Server{Addr: ":" + cfg.Port, Handler: r}
+
+	go func() {
+		<-ctx.Done()
+		if err := srv.Shutdown(context.Background()); err != nil {
+			fmt.Fprintf(os.Stderr, "server shutdown: %v\n", err)
+		}
+	}()
+
 	fmt.Printf("listening on :%s\n", cfg.Port)
-	if err := http.ListenAndServe(":"+cfg.Port, r); err != nil {
+	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		fmt.Fprintf(os.Stderr, "server error: %v\n", err)
 		os.Exit(1)
 	}

@@ -1,4 +1,4 @@
-.PHONY: run build dev influx-setup
+.PHONY: run build dev worker influx-setup
 
 -include .env
 export
@@ -8,10 +8,14 @@ DEVICE_JWT_PRIVATE_KEY = $(shell awk '{printf "%s\\n", $$0}' secrets/device_jwt_
 INFLUX_TOKEN_FILE := $(CURDIR)/.influxdb-admin-token.json
 
 build:
-	go build -o bin/server ./...
+	go build -o bin/server .
+	go build -o bin/worker ./cmd/worker
 
 run:
-	go run ./...
+	go run .
+
+worker:
+	go run ./cmd/worker
 
 dev:
 	echo '{"token":"$(INFLUXDB3_TOKEN)","name":"admin"}' > $(INFLUX_TOKEN_FILE)
@@ -23,7 +27,7 @@ dev:
 	@ipconfig getifaddr en0 2>/dev/null && echo "  (Wi-Fi)" || true
 	@ipconfig getifaddr en1 2>/dev/null && echo "  (Ethernet)" || true
 	@echo ""
-	go run ./... || true
+	go run . || true
 	docker compose down
 
 influx-setup:

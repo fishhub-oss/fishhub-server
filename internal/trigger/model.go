@@ -14,6 +14,7 @@ type Action struct {
 type Trigger struct {
 	ID              string
 	DeviceID        string
+	UserID          string
 	Name            string
 	Enabled         bool
 	Condition       json.RawMessage
