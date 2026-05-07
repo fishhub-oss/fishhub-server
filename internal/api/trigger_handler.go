@@ -258,27 +258,43 @@ func (h *DeleteTriggerHandler) ServeHTTP(w http.ResponseWriter, r *http.Request)
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// validateActions requires at least one action and validates each peripheral_action entry.
+// validateActions requires at least one action and validates each action by type.
 func validateActions(actions []actionRequest) error {
 	if len(actions) == 0 {
 		return errors.New("actions must have at least one entry")
 	}
 	for i, a := range actions {
-		if a.Type != "peripheral_action" {
-			return fmt.Errorf("actions[%d].type must be \"peripheral_action\"", i)
-		}
-		var cfg struct {
-			PeripheralID string `json:"peripheral_id"`
-			Command      string `json:"command"`
-		}
-		if err := json.Unmarshal(a.Config, &cfg); err != nil {
-			return fmt.Errorf("actions[%d].config must be valid JSON", i)
-		}
-		if cfg.PeripheralID == "" {
-			return fmt.Errorf("actions[%d].config.peripheral_id is required", i)
-		}
-		if cfg.Command != "set" && cfg.Command != "set_mode" {
-			return fmt.Errorf("actions[%d].config.command must be \"set\" or \"set_mode\"", i)
+		switch a.Type {
+		case "peripheral_action":
+			var cfg struct {
+				PeripheralID string `json:"peripheral_id"`
+				Command      string `json:"command"`
+			}
+			if err := json.Unmarshal(a.Config, &cfg); err != nil {
+				return fmt.Errorf("actions[%d].config must be valid JSON", i)
+			}
+			if cfg.PeripheralID == "" {
+				return fmt.Errorf("actions[%d].config.peripheral_id is required", i)
+			}
+			if cfg.Command != "set" && cfg.Command != "set_mode" {
+				return fmt.Errorf("actions[%d].config.command must be \"set\" or \"set_mode\"", i)
+			}
+		case "alert":
+			var cfg struct {
+				Severity        string `json:"severity"`
+				MessageTemplate string `json:"message_template"`
+			}
+			if err := json.Unmarshal(a.Config, &cfg); err != nil {
+				return fmt.Errorf("actions[%d].config must be valid JSON", i)
+			}
+			if cfg.Severity != "info" && cfg.Severity != "warning" && cfg.Severity != "critical" {
+				return fmt.Errorf("actions[%d].config.severity must be \"info\", \"warning\", or \"critical\"", i)
+			}
+			if cfg.MessageTemplate == "" {
+				return fmt.Errorf("actions[%d].config.message_template is required", i)
+			}
+		default:
+			return fmt.Errorf("actions[%d].type %q is not supported", i, a.Type)
 		}
 	}
 	return nil

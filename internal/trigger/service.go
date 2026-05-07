@@ -64,6 +64,9 @@ func (s *Service) Create(ctx context.Context, deviceID, userID string, p Trigger
 	defer tx.Rollback()
 
 	for i, a := range p.Actions {
+		if a.Type != "peripheral_action" {
+			continue
+		}
 		kindPin, err := s.validatePeripheralAction(ctx, tx, deviceID, userID, a)
 		if err != nil {
 			return Trigger{}, err
@@ -193,6 +196,10 @@ func (s *Service) applyPatch(ctx context.Context, tx *sql.Tx, deviceID, userID s
 	if patch.Actions != nil {
 		resolved := make([]Action, len(patch.Actions))
 		for i, a := range patch.Actions {
+			if a.Type != "peripheral_action" {
+				resolved[i] = a
+				continue
+			}
 			kindPin, err := s.validatePeripheralAction(ctx, tx, deviceID, userID, a)
 			if err != nil {
 				return TriggerUpdate{}, err
