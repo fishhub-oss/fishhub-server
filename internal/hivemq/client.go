@@ -6,13 +6,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+
+	"github.com/fishhub-oss/fishhub-server/internal/mqttbroker"
 )
 
-// Client provisions and removes per-device MQTT credentials in HiveMQ Cloud.
-type Client interface {
-	ProvisionDevice(ctx context.Context, username, password string) error
-	DeleteDevice(ctx context.Context, username string) error
-}
+// Ensure apiClient and noopClient implement mqttbroker.Provisioner.
+var _ mqttbroker.Provisioner = (*apiClient)(nil)
+var _ mqttbroker.Provisioner = (*noopClient)(nil)
 
 type apiClient struct {
 	baseURL      string
@@ -21,8 +21,8 @@ type apiClient struct {
 	http         *http.Client
 }
 
-// NewAPIClient returns a Client that calls the HiveMQ Cloud REST API.
-func NewAPIClient(baseURL, apiToken, deviceRoleID string) Client {
+// NewAPIClient returns a Provisioner that calls the HiveMQ Cloud REST API.
+func NewAPIClient(baseURL, apiToken, deviceRoleID string) mqttbroker.Provisioner {
 	return &apiClient{
 		baseURL:      baseURL,
 		apiToken:     apiToken,
@@ -92,6 +92,6 @@ func (c *apiClient) do(ctx context.Context, method, path string, body []byte) er
 // noopClient is returned when HIVEMQ_API_BASE_URL is not configured.
 type noopClient struct{}
 
-func NewNoOp() Client                                                          { return &noopClient{} }
+func NewNoOp() mqttbroker.Provisioner                                          { return &noopClient{} }
 func (n *noopClient) ProvisionDevice(_ context.Context, _, _ string) error    { return nil }
 func (n *noopClient) DeleteDevice(_ context.Context, _ string) error          { return nil }

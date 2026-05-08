@@ -9,23 +9,23 @@ import (
 	"io"
 	"log/slog"
 
-	"github.com/fishhub-oss/fishhub-server/internal/hivemq"
 	"github.com/fishhub-oss/fishhub-server/internal/mqtt"
+	"github.com/fishhub-oss/fishhub-server/internal/mqttbroker"
 )
 
 // Service orchestrates multi-step device operations.
 type Service struct {
-	store     Store
-	hiveMQ    hivemq.Client
-	publisher mqtt.Publisher
-	logger    *slog.Logger
+	store       Store
+	provisioner mqttbroker.Provisioner
+	publisher   mqtt.Publisher
+	logger      *slog.Logger
 }
 
-func NewService(store Store, hiveMQ hivemq.Client, publisher mqtt.Publisher, logger *slog.Logger) *Service {
+func NewService(store Store, provisioner mqttbroker.Provisioner, publisher mqtt.Publisher, logger *slog.Logger) *Service {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &Service{store: store, hiveMQ: hiveMQ, publisher: publisher, logger: logger}
+	return &Service{store: store, provisioner: provisioner, publisher: publisher, logger: logger}
 }
 
 // Delete soft-deletes the device and revokes its MQTT credentials.
@@ -39,8 +39,8 @@ func (s *Service) Delete(ctx context.Context, deviceID, userID string) error {
 		return err
 	}
 	if mqttUsername != "" {
-		if err := s.hiveMQ.DeleteDevice(ctx, mqttUsername); err != nil {
-			s.logger.Warn("hivemq delete device", "device_id", deviceID, "error", err)
+		if err := s.provisioner.DeleteDevice(ctx, mqttUsername); err != nil {
+			s.logger.Warn("mqtt broker delete device", "device_id", deviceID, "error", err)
 		}
 	}
 	return nil

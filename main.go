@@ -19,10 +19,12 @@ import (
 	"github.com/fishhub-oss/fishhub-server/internal/auth"
 	"github.com/fishhub-oss/fishhub-server/internal/device"
 	"github.com/fishhub-oss/fishhub-server/internal/devicejwt"
+	"github.com/fishhub-oss/fishhub-server/internal/emqx"
 	"github.com/fishhub-oss/fishhub-server/internal/hivemq"
 	"github.com/fishhub-oss/fishhub-server/internal/jwtutil"
 	"github.com/fishhub-oss/fishhub-server/internal/measurement"
 	"github.com/fishhub-oss/fishhub-server/internal/mqtt"
+	"github.com/fishhub-oss/fishhub-server/internal/mqttbroker"
 	"github.com/fishhub-oss/fishhub-server/internal/outbox"
 	"github.com/fishhub-oss/fishhub-server/internal/peripheral"
 	"github.com/fishhub-oss/fishhub-server/internal/platform"
@@ -102,6 +104,7 @@ type config struct {
 	DeviceJWTPEMKey    string
 	DeviceJWTKID       string
 	IDPHost            string
+	// HiveMQ
 	HiveMQBaseURL      string
 	HiveMQAPIToken     string
 	HiveMQRoleID       string
@@ -109,8 +112,21 @@ type config struct {
 	HiveMQPort         int
 	HiveMQServerUser   string
 	HiveMQServerPass   string
-	CORSOrigins        []string
-	RedisURL           string
+	// EMQX
+	EMQXAPIBaseURL   string
+	EMQXAPIKey       string
+	EMQXAPISecret    string
+	EMQXAuthID       string
+	EMQXHost         string
+	EMQXPort         int
+	EMQXDeviceHost   string
+	EMQXDevicePort   int
+	EMQXServerUser   string
+	EMQXServerPass   string
+	// Broker selector
+	MQTTBroker       string // "hivemq" (default) or "emqx"
+	CORSOrigins      []string
+	RedisURL         string
 }
 
 func loadConfig() config {
@@ -126,6 +142,20 @@ func loadConfig() config {
 		hivemqPort = 8883
 	}
 
+	emqxPort, _ := strconv.Atoi(os.Getenv("EMQX_PORT"))
+	if emqxPort == 0 {
+		emqxPort = 1883
+	}
+	emqxDevicePort, _ := strconv.Atoi(os.Getenv("EMQX_DEVICE_PORT"))
+	if emqxDevicePort == 0 {
+		emqxDevicePort = 8883
+	}
+
+	mqttBroker := os.Getenv("MQTT_BROKER")
+	if mqttBroker == "" {
+		mqttBroker = "hivemq"
+	}
+
 	corsOrigins := []string{"http://localhost:3001"}
 	if v := os.Getenv("CORS_ALLOWED_ORIGINS"); v != "" {
 		corsOrigins = strings.Split(v, ",")
@@ -139,20 +169,31 @@ func loadConfig() config {
 		JWTTTLHours:        jwtTTLHours,
 		GoogleClientID:     os.Getenv("GOOGLE_CLIENT_ID"),
 		InfluxHost:         os.Getenv("INFLUXDB3_HOST"),
-		InfluxToken:      os.Getenv("INFLUXDB3_TOKEN"),
-		InfluxDatabase:   os.Getenv("INFLUXDB3_DATABASE"),
-		DeviceJWTPEMKey:  strings.ReplaceAll(os.Getenv("DEVICE_JWT_PRIVATE_KEY"), `\n`, "\n"),
-		DeviceJWTKID:     os.Getenv("DEVICE_JWT_KID"),
-		IDPHost:          os.Getenv("IDP_HOST"),
-		HiveMQBaseURL:    os.Getenv("HIVEMQ_API_BASE_URL"),
-		HiveMQAPIToken:   os.Getenv("HIVEMQ_API_TOKEN"),
-		HiveMQRoleID:     os.Getenv("HIVEMQ_DEVICE_ROLE_ID"),
-		HiveMQHost:       os.Getenv("HIVEMQ_HOST"),
-		HiveMQPort:       hivemqPort,
-		HiveMQServerUser: os.Getenv("HIVEMQ_SERVER_USERNAME"),
-		HiveMQServerPass: os.Getenv("HIVEMQ_SERVER_PASSWORD"),
-		CORSOrigins:      corsOrigins,
-		RedisURL:         os.Getenv("REDIS_URL"),
+		InfluxToken:        os.Getenv("INFLUXDB3_TOKEN"),
+		InfluxDatabase:     os.Getenv("INFLUXDB3_DATABASE"),
+		DeviceJWTPEMKey:    strings.ReplaceAll(os.Getenv("DEVICE_JWT_PRIVATE_KEY"), `\n`, "\n"),
+		DeviceJWTKID:       os.Getenv("DEVICE_JWT_KID"),
+		IDPHost:            os.Getenv("IDP_HOST"),
+		HiveMQBaseURL:      os.Getenv("HIVEMQ_API_BASE_URL"),
+		HiveMQAPIToken:     os.Getenv("HIVEMQ_API_TOKEN"),
+		HiveMQRoleID:       os.Getenv("HIVEMQ_DEVICE_ROLE_ID"),
+		HiveMQHost:         os.Getenv("HIVEMQ_HOST"),
+		HiveMQPort:         hivemqPort,
+		HiveMQServerUser:   os.Getenv("HIVEMQ_SERVER_USERNAME"),
+		HiveMQServerPass:   os.Getenv("HIVEMQ_SERVER_PASSWORD"),
+		EMQXAPIBaseURL:     os.Getenv("EMQX_API_BASE_URL"),
+		EMQXAPIKey:         os.Getenv("EMQX_API_KEY"),
+		EMQXAPISecret:      os.Getenv("EMQX_API_SECRET"),
+		EMQXAuthID:         os.Getenv("EMQX_AUTH_ID"),
+		EMQXHost:           os.Getenv("EMQX_HOST"),
+		EMQXPort:           emqxPort,
+		EMQXDeviceHost:     os.Getenv("EMQX_DEVICE_HOST"),
+		EMQXDevicePort:     emqxDevicePort,
+		EMQXServerUser:     os.Getenv("EMQX_SERVER_USERNAME"),
+		EMQXServerPass:     os.Getenv("EMQX_SERVER_PASSWORD"),
+		MQTTBroker:         mqttBroker,
+		CORSOrigins:        corsOrigins,
+		RedisURL:           os.Getenv("REDIS_URL"),
 	}
 }
 
@@ -253,35 +294,58 @@ func main() {
 		logger.Warn("device jwt not configured — tokens will not be issued at activation")
 	}
 
-	// ── HiveMQ ────────────────────────────────────────────────────────────────
-	hivemqClient := hivemq.Client(hivemq.NewNoOp())
-	if cfg.HiveMQBaseURL != "" {
-		hivemqClient = hivemq.NewAPIClient(cfg.HiveMQBaseURL, cfg.HiveMQAPIToken, cfg.HiveMQRoleID)
-		logger.Info("hivemq api configured", "base_url", cfg.HiveMQBaseURL)
-	} else {
-		logger.Warn("hivemq api not configured — mqtt credentials will not be provisioned at activation")
+	// ── MQTT broker provisioner + connection ──────────────────────────────────
+	var brokerProvisioner mqttbroker.Provisioner
+	var mqttHost string
+	var mqttPort int
+	var mqttUser, mqttPass string
+	var deviceMQTTHost string
+	var deviceMQTTPort int
+
+	switch cfg.MQTTBroker {
+	case "emqx":
+		if cfg.EMQXAPIBaseURL != "" {
+			brokerProvisioner = emqx.NewAPIClient(cfg.EMQXAPIBaseURL, cfg.EMQXAPIKey, cfg.EMQXAPISecret, cfg.EMQXAuthID)
+			logger.Info("emqx api configured", "base_url", cfg.EMQXAPIBaseURL)
+		} else {
+			brokerProvisioner = emqx.NewNoOp()
+			logger.Warn("emqx api not configured — mqtt credentials will not be provisioned at activation")
+		}
+		mqttHost, mqttPort = cfg.EMQXHost, cfg.EMQXPort
+		mqttUser, mqttPass = cfg.EMQXServerUser, cfg.EMQXServerPass
+		deviceMQTTHost, deviceMQTTPort = cfg.EMQXDeviceHost, cfg.EMQXDevicePort
+	default: // "hivemq"
+		if cfg.HiveMQBaseURL != "" {
+			brokerProvisioner = hivemq.NewAPIClient(cfg.HiveMQBaseURL, cfg.HiveMQAPIToken, cfg.HiveMQRoleID)
+			logger.Info("hivemq api configured", "base_url", cfg.HiveMQBaseURL)
+		} else {
+			brokerProvisioner = hivemq.NewNoOp()
+			logger.Warn("hivemq api not configured — mqtt credentials will not be provisioned at activation")
+		}
+		mqttHost, mqttPort = cfg.HiveMQHost, cfg.HiveMQPort
+		mqttUser, mqttPass = cfg.HiveMQServerUser, cfg.HiveMQServerPass
+		deviceMQTTHost, deviceMQTTPort = cfg.HiveMQHost, cfg.HiveMQPort
 	}
 
-	// ── MQTT publisher + subscriber ───────────────────────────────────────────
 	var mqttPublisher mqtt.Publisher = mqtt.NewNoOpPublisher()
 	var mqttSubscriber mqtt.Subscriber = mqtt.NewNoOpSubscriber()
-	if cfg.HiveMQHost != "" {
-		p, err := mqtt.NewPublisher(cfg.HiveMQHost, cfg.HiveMQPort, cfg.HiveMQServerUser, cfg.HiveMQServerPass, logger)
+	if mqttHost != "" {
+		p, err := mqtt.NewPublisher(mqttHost, mqttPort, mqttUser, mqttPass, logger)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "mqtt init: %v\n", err)
 			os.Exit(1)
 		}
 		mqttPublisher = p
-		logger.Info("mqtt publisher configured", "host", cfg.HiveMQHost)
+		logger.Info("mqtt publisher configured", "host", mqttHost, "broker", cfg.MQTTBroker)
 
-		sub, err := mqtt.NewSubscriber(cfg.HiveMQHost, cfg.HiveMQPort, cfg.HiveMQServerUser, cfg.HiveMQServerPass, logger)
+		sub, err := mqtt.NewSubscriber(mqttHost, mqttPort, mqttUser, mqttPass, logger)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "mqtt subscriber init: %v\n", err)
 			os.Exit(1)
 		}
 		mqttSubscriber = sub
 	} else {
-		logger.Warn("mqtt publishing disabled — HIVEMQ_HOST not set")
+		logger.Warn("mqtt publishing disabled — broker host not set", "broker", cfg.MQTTBroker)
 	}
 
 	// ── Stores & services ─────────────────────────────────────────────────────
@@ -291,7 +355,7 @@ func main() {
 	provisioningStore := provisioning.NewStore(db)
 	outboxStore := outbox.NewPostgresStore(db)
 	readingsSvc := measurement.NewReadingsService(deviceFinderBridge{deviceStore}, influxClient, influxClient, logger)
-	deviceSvc := device.NewService(deviceStore, hivemqClient, mqttPublisher, logger)
+	deviceSvc := device.NewService(deviceStore, brokerProvisioner, mqttPublisher, logger)
 	peripheralSvc := peripheral.NewService(db, peripheralStore, outboxStore, influxClient, mqttPublisher, logger)
 	triggerSvc := trigger.NewService(db, triggerStore, outboxStore, logger)
 	provisioningSvc := provisioning.NewService(provisioningStore, logger)
@@ -333,7 +397,7 @@ func main() {
 	outboxRunner := outbox.NewRunner(
 		outboxStore,
 		[]outbox.EventProcessor{
-			provisioning.NewHiveMQProvisionProcessor(hivemqClient, logger),
+			provisioning.NewMQTTProvisionProcessor(brokerProvisioner, logger),
 			peripheral.NewPeripheralPushProcessor(mqttPublisher, logger),
 			account.NewConfigPushProcessor(mqttPublisher, logger),
 			trigger.NewTriggerPushProcessor(mqttPublisher, logger),
@@ -365,8 +429,8 @@ func main() {
 		r.Use(platform.DeviceAuthenticator(deviceSigner))
 		r.Get("/devices/{id}/status", (&api.ActivationStatusHandler{
 			Store:    deviceStore,
-			MQTTHost: cfg.HiveMQHost,
-			MQTTPort: cfg.HiveMQPort,
+			MQTTHost: deviceMQTTHost,
+			MQTTPort: deviceMQTTPort,
 		}).ServeHTTP)
 	})
 
