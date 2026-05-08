@@ -37,7 +37,16 @@ influx-setup:
 
 emqx-setup:
 	until curl -sf http://localhost:18083/api/v5/status > /dev/null; do sleep 1; done
+	@echo "→ Creating password_based:built_in_database authentication backend..."
+	curl -sf -u "$(EMQX_API_KEY):$(EMQX_API_SECRET)" \
+	  -X POST http://localhost:18083/api/v5/authentication \
+	  -H "Content-Type: application/json" \
+	  -d '{"backend":"built_in_database","mechanism":"password_based","password_hash_algorithm":{"name":"bcrypt"},"user_id_type":"username"}' \
+	  -o /dev/null || true
+	@echo "→ Creating server MQTT credential ($(EMQX_SERVER_USERNAME))..."
 	curl -sf -u "$(EMQX_API_KEY):$(EMQX_API_SECRET)" \
 	  -X POST http://localhost:18083/api/v5/authentication/$(EMQX_AUTH_ID)/users \
 	  -H "Content-Type: application/json" \
-	  -d '{"user_id":"$(EMQX_SERVER_USERNAME)","password":"$(EMQX_SERVER_PASSWORD)"}' || true
+	  -d '{"user_id":"$(EMQX_SERVER_USERNAME)","password":"$(EMQX_SERVER_PASSWORD)"}' \
+	  -o /dev/null || true
+	@echo "✓ EMQX setup complete"
