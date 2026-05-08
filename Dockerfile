@@ -4,12 +4,14 @@ WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
-RUN go build -o /app/fishhub-server .
+RUN go build -o /app/fishhub-server . && \
+    go build -o /app/fishhub-worker ./cmd/worker
 
 FROM alpine:3.21
 
 WORKDIR /app
 COPY --from=builder /app/fishhub-server .
+COPY --from=builder /app/fishhub-worker .
 COPY --from=builder /src/db/migrations ./db/migrations
 
 CMD ["/app/fishhub-server"]
