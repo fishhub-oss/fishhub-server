@@ -478,6 +478,52 @@ func (h *DeletePeripheralHandler) ServeHTTP(w http.ResponseWriter, r *http.Reque
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// PatchPeripheralHandler handles PATCH /api/devices/{id}/peripherals/{peripheralId} (session auth).
+type PatchPeripheralHandler struct {
+	Service *peripheral.Service
+}
+
+type patchPeripheralRequest struct {
+	Name string `json:"name"`
+	Pin  int    `json:"pin"`
+}
+
+func (h *PatchPeripheralHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	claims := auth.MustClaimsFromContext(r.Context())
+
+	var req patchPeripheralRequest
+	if err := render.DecodeJSON(r.Body, &req); err != nil {
+		apierr.Write(w, http.StatusBadRequest, "invalid_request", "invalid request body")
+		return
+	}
+	if req.Name == "" {
+		apierr.Write(w, http.StatusBadRequest, "invalid_request", "name is required")
+		return
+	}
+
+	deviceID := chi.URLParam(r, "id")
+	peripheralID := chi.URLParam(r, "peripheralId")
+	p, err := h.Service.Update(r.Context(), deviceID, claims.UserID, peripheralID, req.Name, req.Pin)
+	if err != nil {
+		if errors.Is(err, peripheral.ErrNotFound) {
+			apierr.Write(w, http.StatusNotFound, "peripheral_not_found", "peripheral not found")
+			return
+		}
+		if errors.Is(err, peripheral.ErrAlreadyExists) {
+			apierr.Write(w, http.StatusConflict, "peripheral_name_conflict", "a peripheral with that name already exists")
+			return
+		}
+		if errors.Is(err, peripheral.ErrPinInUse) {
+			apierr.Write(w, http.StatusConflict, "peripheral_pin_conflict", "pin already in use by another peripheral")
+			return
+		}
+		apierr.Write(w, http.StatusInternalServerError, "internal_error", "internal server error")
+		return
+	}
+
+	render.JSON(w, r, peripheralResponse(p))
+}
+
 // SetControlModeHandler handles PATCH /api/devices/{id}/peripherals/{peripheralId}/control-mode (session auth).
 type SetControlModeHandler struct {
 	Service *peripheral.Service

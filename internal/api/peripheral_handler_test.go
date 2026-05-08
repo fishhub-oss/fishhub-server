@@ -205,6 +205,108 @@ func TestCreatePeripheralHandler(t *testing.T) {
 	})
 }
 
+// ── PatchPeripheralHandler ────────────────────────────────────────────────────
+
+func TestPatchPeripheralHandler(t *testing.T) {
+	t.Run("returns 200 with updated peripheral", func(t *testing.T) {
+		p := newPeripheral("renamed")
+		p.Pin = 7
+		store := &stubPeripheralStore{updated: p}
+		svc := peripheral.NewService(nil, store, &stubOutboxStore{}, nil, &stubPublisher{}, discardLogger)
+		h := &api.PatchPeripheralHandler{Service: svc}
+
+		body := `{"name":"renamed","pin":7}`
+		req := withChiParams(
+			withClaims(httptest.NewRequest(http.MethodPatch, "/", strings.NewReader(body)), "user-1"),
+			map[string]string{"id": "dev-1", "peripheralId": "pid-1"},
+		)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+		}
+		var resp map[string]any
+		if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		if resp["name"] != "renamed" {
+			t.Errorf("unexpected name: %v", resp["name"])
+		}
+		if resp["pin"] != float64(7) {
+			t.Errorf("unexpected pin: %v", resp["pin"])
+		}
+	})
+
+	t.Run("peripheral not found returns 404", func(t *testing.T) {
+		store := &stubPeripheralStore{updateErr: peripheral.ErrNotFound}
+		svc := peripheral.NewService(nil, store, &stubOutboxStore{}, nil, &stubPublisher{}, discardLogger)
+		h := &api.PatchPeripheralHandler{Service: svc}
+
+		req := withChiParams(
+			withClaims(httptest.NewRequest(http.MethodPatch, "/", strings.NewReader(`{"name":"x","pin":1}`)), "user-1"),
+			map[string]string{"id": "dev-1", "peripheralId": "ghost"},
+		)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		assertErrorCode(t, rec, http.StatusNotFound, "peripheral_not_found")
+	})
+
+	t.Run("name conflict returns 409", func(t *testing.T) {
+		store := &stubPeripheralStore{updateErr: peripheral.ErrAlreadyExists}
+		svc := peripheral.NewService(nil, store, &stubOutboxStore{}, nil, &stubPublisher{}, discardLogger)
+		h := &api.PatchPeripheralHandler{Service: svc}
+
+		req := withChiParams(
+			withClaims(httptest.NewRequest(http.MethodPatch, "/", strings.NewReader(`{"name":"taken","pin":1}`)), "user-1"),
+			map[string]string{"id": "dev-1", "peripheralId": "pid-1"},
+		)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		assertErrorCode(t, rec, http.StatusConflict, "peripheral_name_conflict")
+	})
+
+	t.Run("pin conflict returns 409", func(t *testing.T) {
+		store := &stubPeripheralStore{updateErr: peripheral.ErrPinInUse}
+		svc := peripheral.NewService(nil, store, &stubOutboxStore{}, nil, &stubPublisher{}, discardLogger)
+		h := &api.PatchPeripheralHandler{Service: svc}
+
+		req := withChiParams(
+			withClaims(httptest.NewRequest(http.MethodPatch, "/", strings.NewReader(`{"name":"x","pin":5}`)), "user-1"),
+			map[string]string{"id": "dev-1", "peripheralId": "pid-1"},
+		)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		assertErrorCode(t, rec, http.StatusConflict, "peripheral_pin_conflict")
+	})
+
+	t.Run("missing name returns 400", func(t *testing.T) {
+		svc := peripheral.NewService(nil, &stubPeripheralStore{}, &stubOutboxStore{}, nil, &stubPublisher{}, discardLogger)
+		h := &api.PatchPeripheralHandler{Service: svc}
+
+		req := withChiParams(
+			withClaims(httptest.NewRequest(http.MethodPatch, "/", strings.NewReader(`{"pin":5}`)), "user-1"),
+			map[string]string{"id": "dev-1", "peripheralId": "pid-1"},
+		)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		assertErrorCode(t, rec, http.StatusBadRequest, "invalid_request")
+	})
+
+	t.Run("invalid body returns 400", func(t *testing.T) {
+		svc := peripheral.NewService(nil, &stubPeripheralStore{}, &stubOutboxStore{}, nil, &stubPublisher{}, discardLogger)
+		h := &api.PatchPeripheralHandler{Service: svc}
+
+		req := withChiParams(
+			withClaims(httptest.NewRequest(http.MethodPatch, "/", strings.NewReader("not json")), "user-1"),
+			map[string]string{"id": "dev-1", "peripheralId": "pid-1"},
+		)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		assertErrorCode(t, rec, http.StatusBadRequest, "invalid_request")
+	})
+}
+
 // ── SetControlModeHandler ─────────────────────────────────────────────────────
 
 func TestSetControlModeHandler(t *testing.T) {

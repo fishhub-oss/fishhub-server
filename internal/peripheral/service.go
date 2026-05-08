@@ -227,6 +227,19 @@ func (s *Service) SendCommand(ctx context.Context, deviceID, userID, peripheralI
 	return nil
 }
 
+// Update updates name and pin on a peripheral. No firmware notification is needed
+// because the firmware identifies peripherals by kind-pin namespace, not by name.
+func (s *Service) Update(ctx context.Context, deviceID, userID, peripheralID, name string, pin int) (Peripheral, error) {
+	p, err := s.store.UpdatePeripheral(ctx, deviceID, userID, peripheralID, name, pin)
+	if err != nil {
+		if !errors.Is(err, ErrNotFound) && !errors.Is(err, ErrAlreadyExists) && !errors.Is(err, ErrPinInUse) {
+			s.logger.Error("update peripheral", "device_id", deviceID, "peripheral_id", peripheralID, "error", err)
+		}
+		return Peripheral{}, err
+	}
+	return p, nil
+}
+
 // Delete soft-deletes the peripheral and enqueues a peripheral.push delete event atomically.
 func (s *Service) Delete(ctx context.Context, deviceID, userID, peripheralID string) error {
 	tx, err := s.db.BeginTx(ctx, nil)

@@ -209,6 +209,8 @@ type stubPeripheralStore struct {
 	schedErr       error
 	controlModeP   peripheral.Peripheral
 	controlModeErr error
+	updated        peripheral.Peripheral
+	updateErr      error
 	deleteErr      error
 }
 
@@ -226,6 +228,9 @@ func (s *stubPeripheralStore) SetPeripheralSchedule(_ context.Context, _, _, _ s
 }
 func (s *stubPeripheralStore) SetControlMode(_ context.Context, _ *sql.Tx, _, _, _, _ string) (peripheral.Peripheral, error) {
 	return s.controlModeP, s.controlModeErr
+}
+func (s *stubPeripheralStore) UpdatePeripheral(_ context.Context, _, _, _, _ string, _ int) (peripheral.Peripheral, error) {
+	return s.updated, s.updateErr
 }
 func (s *stubPeripheralStore) DeletePeripheral(_ context.Context, _ *sql.Tx, _, _, _ string) (peripheral.Peripheral, error) {
 	return s.created, s.deleteErr
