@@ -56,11 +56,26 @@ If `INFLUXDB3_HOST`, `INFLUXDB3_TOKEN`, and `INFLUXDB3_DATABASE` are all set, th
 ```bash
 cp .env.example .env          # copy defaults; fill in GOOGLE_CLIENT_ID and JWT keys
 make dev                      # start all services and run the server
+```
 
-# In a second terminal (first time only):
+In a second terminal, run the one-time setup steps:
+
+```bash
 make influx-setup             # create the InfluxDB database
-make emqx-setup               # seed the server's MQTT credential in EMQX
+```
 
+For EMQX, you must first generate an API key in the dashboard before running setup:
+
+1. Open http://localhost:18083 and log in (default: `admin` / `public`).
+2. Go to **System → API Keys** and create a new key. Copy the key and secret — the secret is only shown once.
+3. Update `EMQX_API_KEY` and `EMQX_API_SECRET` in your `.env` with the values from step 2.
+4. Run:
+
+```bash
+make emqx-setup               # create auth backend + seed the server MQTT credential
+```
+
+```bash
 curl -s localhost:8080/health  # verify server is up
 ```
 
@@ -78,13 +93,28 @@ This runs `influxdb3 create database` inside the InfluxDB container using the co
 
 ## EMQX setup
 
-After `make dev`, seed the server's MQTT credential in EMQX (first time only):
+After `make dev`, run the following once to configure EMQX for local development.
+
+**Step 1 — generate an API key**
+
+The EMQX default credentials (`admin` / `public`) are for the dashboard UI only and cannot be used directly as API credentials. You must create a dedicated API key first:
+
+1. Open http://localhost:18083 and log in (`admin` / `public`).
+2. Go to **System → API Keys** and create a new key.
+3. Copy the key ID and secret — **the secret is only shown once**.
+4. Set `EMQX_API_KEY` and `EMQX_API_SECRET` in your `.env` to these values.
+
+**Step 2 — run setup**
 
 ```bash
 make emqx-setup
 ```
 
-This calls the EMQX REST API to create a user with the credentials from `EMQX_SERVER_USERNAME` and `EMQX_SERVER_PASSWORD`. The EMQX dashboard is available at http://localhost:18083 (default login: `admin` / `public`).
+This does two things via the EMQX REST API:
+1. Creates the `password_based:built_in_database` authentication backend.
+2. Creates the server MQTT user (`EMQX_SERVER_USERNAME` / `EMQX_SERVER_PASSWORD`).
+
+Both steps are idempotent — safe to re-run if something fails partway through.
 
 ## Testing
 
