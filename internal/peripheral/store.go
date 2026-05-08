@@ -31,6 +31,11 @@ type Store interface {
 	// Returns ErrNotFound if the peripheral does not exist or is not reachable by userID.
 	// Returns ErrNotAnActuator if the peripheral's category is not "actuator".
 	SetControlMode(ctx context.Context, tx *sql.Tx, deviceID, userID, peripheralID, mode string) (Peripheral, error)
+	// UpdatePeripheral updates name and pin on an active peripheral owned by userID.
+	// Returns ErrNotFound if the peripheral does not exist or is not reachable by userID.
+	// Returns ErrAlreadyExists if another active peripheral on the device has the same name.
+	// Returns ErrPinInUse if another active peripheral on the device uses the same pin.
+	UpdatePeripheral(ctx context.Context, deviceID, userID, peripheralID, name string, pin int) (Peripheral, error)
 	// DeletePeripheral soft-deletes the peripheral (sets deleted_at) and returns it.
 	// Returns ErrNotFound if the peripheral does not exist or is not reachable by userID.
 	DeletePeripheral(ctx context.Context, tx *sql.Tx, deviceID, userID, peripheralID string) (Peripheral, error)
@@ -291,6 +296,50 @@ func (s *postgresStore) DeletePeripheral(ctx context.Context, tx *sql.Tx, device
 	}
 	if err := json.Unmarshal(schedule, &p.Schedule); err != nil {
 		p.Schedule = []ScheduleWindow{}
+	}
+	return p, nil
+}
+
+func (s *postgresStore) UpdatePeripheral(ctx context.Context, deviceID, userID, peripheralID, name string, pin int) (Peripheral, error) {
+	var p Peripheral
+	var controlMode sql.NullString
+	var scheduleJSON []byte
+	err := s.db.QueryRowContext(ctx, `
+		UPDATE peripherals p
+		SET name = $1, pin = $2, updated_at = now()
+		FROM devices d
+		WHERE p.device_id = d.id
+		  AND d.user_id   = $3
+		  AND p.device_id = $4
+		  AND p.id        = $5
+		  AND p.deleted_at IS NULL
+		  AND d.deleted_at IS NULL
+		RETURNING p.id, p.device_id, p.name, p.kind, p.pin, p.category,
+		          p.control_mode, p.schedule, p.created_at, p.updated_at
+	`, name, pin, userID, deviceID, peripheralID).Scan(
+		&p.ID, &p.DeviceID, &p.Name, &p.Kind, &p.Pin,
+		&p.Category, &controlMode, &scheduleJSON,
+		&p.CreatedAt, &p.UpdatedAt,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Peripheral{}, ErrNotFound
+	}
+	if err != nil {
+		switch uniqueViolationIndex(err) {
+		case "peripherals_device_name_active_idx":
+			return Peripheral{}, ErrAlreadyExists
+		case "peripherals_device_pin_active_idx":
+			return Peripheral{}, ErrPinInUse
+		}
+		return Peripheral{}, fmt.Errorf("update peripheral: %w", err)
+	}
+	if controlMode.Valid {
+		p.ControlMode = &controlMode.String
+	}
+	if scheduleJSON != nil {
+		if err := json.Unmarshal(scheduleJSON, &p.Schedule); err != nil {
+			return Peripheral{}, fmt.Errorf("update peripheral: unmarshal schedule: %w", err)
+		}
 	}
 	return p, nil
 }
