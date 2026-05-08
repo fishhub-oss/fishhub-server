@@ -299,6 +299,7 @@ func main() {
 	var mqttHost string
 	var mqttPort int
 	var mqttUser, mqttPass string
+	var mqttUseTLS bool
 	var deviceMQTTHost string
 	var deviceMQTTPort int
 
@@ -313,6 +314,7 @@ func main() {
 		}
 		mqttHost, mqttPort = cfg.EMQXHost, cfg.EMQXPort
 		mqttUser, mqttPass = cfg.EMQXServerUser, cfg.EMQXServerPass
+		mqttUseTLS = false // plain TCP over private Railway network
 		deviceMQTTHost, deviceMQTTPort = cfg.EMQXDeviceHost, cfg.EMQXDevicePort
 	default: // "hivemq"
 		if cfg.HiveMQBaseURL != "" {
@@ -324,21 +326,22 @@ func main() {
 		}
 		mqttHost, mqttPort = cfg.HiveMQHost, cfg.HiveMQPort
 		mqttUser, mqttPass = cfg.HiveMQServerUser, cfg.HiveMQServerPass
+		mqttUseTLS = true // HiveMQ Cloud requires TLS
 		deviceMQTTHost, deviceMQTTPort = cfg.HiveMQHost, cfg.HiveMQPort
 	}
 
 	var mqttPublisher mqtt.Publisher = mqtt.NewNoOpPublisher()
 	var mqttSubscriber mqtt.Subscriber = mqtt.NewNoOpSubscriber()
 	if mqttHost != "" {
-		p, err := mqtt.NewPublisher(mqttHost, mqttPort, mqttUser, mqttPass, logger)
+		p, err := mqtt.NewPublisher(mqttHost, mqttPort, mqttUser, mqttPass, mqttUseTLS, logger)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "mqtt init: %v\n", err)
 			os.Exit(1)
 		}
 		mqttPublisher = p
-		logger.Info("mqtt publisher configured", "host", mqttHost, "broker", cfg.MQTTBroker)
+		logger.Info("mqtt publisher configured", "host", mqttHost, "broker", cfg.MQTTBroker, "tls", mqttUseTLS)
 
-		sub, err := mqtt.NewSubscriber(mqttHost, mqttPort, mqttUser, mqttPass, logger)
+		sub, err := mqtt.NewSubscriber(mqttHost, mqttPort, mqttUser, mqttPass, mqttUseTLS, logger)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "mqtt subscriber init: %v\n", err)
 			os.Exit(1)
