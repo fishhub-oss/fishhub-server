@@ -54,6 +54,22 @@ services:
     depends_on:
       - redis
 
+  emqx:
+    image: emqx:5
+    ports:
+      - "1883:1883"    # MQTT plain TCP
+      - "18083:18083"  # Dashboard + REST API
+    environment:
+      EMQX_DASHBOARD__DEFAULT_USERNAME: ${EMQX_DASHBOARD_USERNAME:-admin}
+      EMQX_DASHBOARD__DEFAULT_PASSWORD: ${EMQX_DASHBOARD_PASSWORD:-public}
+    healthcheck:
+      test: ["CMD", "emqx", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    volumes:
+      - emqx_data:/opt/emqx/data
+
 secrets:
   influxdb-admin-token:
     file: ${INFLUX_TOKEN_FILE}
@@ -63,3 +79,4 @@ volumes:
   influxdb_data:
   grafana_data:
   redis_data:
+  emqx_data:
