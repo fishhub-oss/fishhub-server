@@ -37,7 +37,7 @@ func (p *ConfigPushProcessor) Process(ctx context.Context, event outbox.Event) e
 		return fmt.Errorf("unmarshal payload: %w", err)
 	}
 
-	msg, err := json.Marshal(map[string]string{"timezone": payload.Timezone})
+	msg, err := json.Marshal(map[string]string{"timezone": posixTZ(payload.Timezone, p.logger)})
 	if err != nil {
 		return fmt.Errorf("marshal mqtt message: %w", err)
 	}
