@@ -52,8 +52,14 @@ func main() {
 	triggerStore := trigger.NewStore(db)
 	processor := alert.NewProcessor(alertStore, triggerStore)
 
+	redisOpt, err := asynq.ParseRedisURI(redisURL)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "invalid REDIS_URL: %v\n", err)
+		os.Exit(1)
+	}
+
 	srv := asynq.NewServer(
-		asynq.RedisClientOpt{Addr: redisURL},
+		redisOpt,
 		asynq.Config{
 			Queues: map[string]int{"trigger-actions": 1},
 			Logger: &asynqLogger{logger},

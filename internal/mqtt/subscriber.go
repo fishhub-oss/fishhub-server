@@ -22,15 +22,21 @@ type pahoSubscriber struct {
 	client paho.Client
 }
 
-// NewSubscriber connects to the HiveMQ broker and returns a Subscriber.
+// NewSubscriber connects to the MQTT broker and returns a Subscriber.
 // Uses a separate client ID from the publisher so both can coexist.
 // CleanSession(false) ensures the subscription survives reconnects.
-func NewSubscriber(host string, port int, username, password string, logger *slog.Logger) (Subscriber, error) {
+// Set useTLS=true for brokers that require TLS (e.g. HiveMQ Cloud on 8883);
+// set useTLS=false for plain TCP connections (e.g. EMQX on the private Railway network).
+func NewSubscriber(host string, port int, username, password string, useTLS bool, logger *slog.Logger) (Subscriber, error) {
 	if logger == nil {
 		logger = slog.Default()
 	}
+	scheme := "tcp"
+	if useTLS {
+		scheme = "tls"
+	}
 	opts := paho.NewClientOptions().
-		AddBroker(fmt.Sprintf("tls://%s:%d", host, port)).
+		AddBroker(fmt.Sprintf("%s://%s:%d", scheme, host, port)).
 		SetClientID("fishhub-server-sub").
 		SetUsername(username).
 		SetPassword(password).

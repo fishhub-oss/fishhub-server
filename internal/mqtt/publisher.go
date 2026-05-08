@@ -21,13 +21,19 @@ type pahoPublisher struct {
 	client paho.Client
 }
 
-// NewPublisher connects to the HiveMQ broker with the given server credentials and returns a Publisher.
-func NewPublisher(host string, port int, username, password string, logger *slog.Logger) (Publisher, error) {
+// NewPublisher connects to the MQTT broker with the given server credentials and returns a Publisher.
+// Set useTLS=true for brokers that require TLS (e.g. HiveMQ Cloud on 8883);
+// set useTLS=false for plain TCP connections (e.g. EMQX on the private Railway network).
+func NewPublisher(host string, port int, username, password string, useTLS bool, logger *slog.Logger) (Publisher, error) {
 	if logger == nil {
 		logger = slog.Default()
 	}
+	scheme := "tcp"
+	if useTLS {
+		scheme = "tls"
+	}
 	opts := paho.NewClientOptions().
-		AddBroker(fmt.Sprintf("tls://%s:%d", host, port)).
+		AddBroker(fmt.Sprintf("%s://%s:%d", scheme, host, port)).
 		SetClientID("fishhub-server").
 		SetUsername(username).
 		SetPassword(password).

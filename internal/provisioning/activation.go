@@ -99,13 +99,13 @@ func (s *ActivationService) Activate(ctx context.Context, code string) (Activati
 		return ActivationResult{}, fmt.Errorf("activate device: %w", err)
 	}
 
-	if err := s.outboxStore.Insert(ctx, tx, EventTypeHiveMQProvision, HiveMQProvisionPayload{
+	if err := s.outboxStore.Insert(ctx, tx, EventTypeMQTTProvision, MQTTProvisionPayload{
 		DeviceID: deviceID,
 		Username: mqttUsername,
 		Password: mqttPassword,
-	}, hiveMQProvisionClaimTimeoutSeconds); err != nil {
-		s.logger.Error("activate: enqueue hivemq provision", "device_id", deviceID, "error", err)
-		return ActivationResult{}, fmt.Errorf("enqueue hivemq provision: %w", err)
+	}, mqttProvisionClaimTimeoutSeconds); err != nil {
+		s.logger.Error("activate: enqueue mqtt provision", "device_id", deviceID, "error", err)
+		return ActivationResult{}, fmt.Errorf("enqueue mqtt provision: %w", err)
 	}
 
 	if err := s.outboxStore.Insert(ctx, tx, eventTypeDeviceConfigPush, deviceConfigPushPayload{
