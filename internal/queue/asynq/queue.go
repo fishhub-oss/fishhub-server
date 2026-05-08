@@ -13,8 +13,12 @@ type Queue struct {
 }
 
 func NewQueue(redisURL string) *Queue {
+	opt, err := asynq.ParseRedisURI(redisURL)
+	if err != nil {
+		panic(fmt.Sprintf("asynq: invalid redis URL: %v", err))
+	}
 	return &Queue{
-		client: asynq.NewClient(asynq.RedisClientOpt{Addr: redisURL}),
+		client: asynq.NewClient(opt),
 	}
 }
 
