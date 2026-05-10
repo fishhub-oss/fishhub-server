@@ -21,7 +21,7 @@ func TestTriggerStore_integration(t *testing.T) {
 	// Insert a device.
 	var deviceID string
 	if err := db.QueryRowContext(ctx,
-		`INSERT INTO devices (user_id) VALUES ($1) RETURNING id`, userID,
+		`INSERT INTO devices (user_id, model_id) VALUES ($1, (SELECT id FROM device_models WHERE slug = 'fishhub-v1')) RETURNING id`, userID,
 	).Scan(&deviceID); err != nil {
 		t.Fatalf("insert device: %v", err)
 	}

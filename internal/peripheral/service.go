@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"log/slog"
 
+	"github.com/fishhub-oss/fishhub-server/internal/devicemodel"
 	"github.com/fishhub-oss/fishhub-server/internal/measurement"
 	"github.com/fishhub-oss/fishhub-server/internal/mqtt"
 	"github.com/fishhub-oss/fishhub-server/internal/outbox"
@@ -58,16 +59,17 @@ func NewService(
 }
 
 // Register creates a new peripheral and enqueues a peripheral.push outbox event atomically.
-func (s *Service) Register(ctx context.Context, deviceID, userID, name, kind, category string, pin int) (Peripheral, error) {
+// port must already be validated (kind match, belongs to device model) by the caller.
+func (s *Service) Register(ctx context.Context, deviceID, userID, name, kind, category string, port devicemodel.Port) (Peripheral, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return Peripheral{}, fmt.Errorf("register peripheral: begin tx: %w", err)
 	}
 	defer tx.Rollback()
 
-	p, err := s.store.CreatePeripheral(ctx, tx, deviceID, userID, name, kind, category, pin)
+	p, err := s.store.CreatePeripheral(ctx, tx, deviceID, userID, name, kind, category, port)
 	if err != nil {
-		if !errors.Is(err, ErrAlreadyExists) {
+		if !errors.Is(err, ErrAlreadyExists) && !errors.Is(err, ErrPortInUse) {
 			s.logger.Error("register peripheral: create", "device_id", deviceID, "name", name, "error", err)
 		}
 		return Peripheral{}, err
@@ -75,10 +77,10 @@ func (s *Service) Register(ctx context.Context, deviceID, userID, name, kind, ca
 
 	if err := s.outbox.Insert(ctx, tx, eventTypePeripheralPush, peripheralPushPayload{
 		DeviceID: deviceID,
-		Name:     fmt.Sprintf("%s-%d", kind, pin),
+		Name:     fmt.Sprintf("%s-%d", kind, port.Pin),
 		Op:       "create",
 		Kind:     kind,
-		Pin:      pin,
+		Pin:      port.Pin,
 	}, peripheralPushClaimTimeoutSeconds); err != nil {
 		s.logger.Error("register peripheral: enqueue push", "device_id", deviceID, "name", name, "error", err)
 		return Peripheral{}, fmt.Errorf("register peripheral: enqueue push: %w", err)
@@ -227,12 +229,11 @@ func (s *Service) SendCommand(ctx context.Context, deviceID, userID, peripheralI
 	return nil
 }
 
-// Update updates name and pin on a peripheral. No firmware notification is needed
-// because the firmware identifies peripherals by kind-pin namespace, not by name.
-func (s *Service) Update(ctx context.Context, deviceID, userID, peripheralID, name string, pin int) (Peripheral, error) {
-	p, err := s.store.UpdatePeripheral(ctx, deviceID, userID, peripheralID, name, pin)
+// Update updates the name of a peripheral. Port is immutable after creation.
+func (s *Service) Update(ctx context.Context, deviceID, userID, peripheralID, name string) (Peripheral, error) {
+	p, err := s.store.UpdatePeripheral(ctx, deviceID, userID, peripheralID, name)
 	if err != nil {
-		if !errors.Is(err, ErrNotFound) && !errors.Is(err, ErrAlreadyExists) && !errors.Is(err, ErrPinInUse) {
+		if !errors.Is(err, ErrNotFound) && !errors.Is(err, ErrAlreadyExists) {
 			s.logger.Error("update peripheral", "device_id", deviceID, "peripheral_id", peripheralID, "error", err)
 		}
 		return Peripheral{}, err

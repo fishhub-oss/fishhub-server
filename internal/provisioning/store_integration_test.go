@@ -135,7 +135,12 @@ func TestActivate_integration(t *testing.T) {
 		if err != nil {
 			t.Fatalf("begin tx: %v", err)
 		}
-		if err := store.Activate(ctx, tx, deviceID, "mqtt-user", "mqtt-pass"); err != nil {
+		var modelID string
+		if err := db.QueryRowContext(ctx, `SELECT id FROM device_models WHERE slug = 'fishhub-v1'`).Scan(&modelID); err != nil {
+			tx.Rollback()
+			t.Fatalf("resolve model: %v", err)
+		}
+		if err := store.Activate(ctx, tx, deviceID, "mqtt-user", "mqtt-pass", modelID); err != nil {
 			tx.Rollback()
 			t.Fatalf("activate: %v", err)
 		}

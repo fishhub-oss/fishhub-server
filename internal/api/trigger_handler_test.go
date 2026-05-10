@@ -173,7 +173,7 @@ func TestCreateTriggerHandler(t *testing.T) {
 
 		// Insert a real device so the device-exists check passes.
 		var deviceID string
-		db.QueryRowContext(ctx, `INSERT INTO devices (user_id) VALUES ('00000000-0000-0000-0000-000000000001') RETURNING id`).Scan(&deviceID)
+		db.QueryRowContext(ctx, `INSERT INTO devices (user_id, model_id) VALUES ('00000000-0000-0000-0000-000000000001', (SELECT id FROM device_models WHERE slug = 'fishhub-v1')) RETURNING id`).Scan(&deviceID)
 
 		svc := trigger.NewService(db, &stubTriggerStore{}, &stubOutboxStore{}, discardLogger)
 		h := &api.CreateTriggerHandler{Service: svc}

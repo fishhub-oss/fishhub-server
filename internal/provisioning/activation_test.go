@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"testing"
 
+	"github.com/fishhub-oss/fishhub-server/internal/devicemodel"
 	"github.com/fishhub-oss/fishhub-server/internal/outbox"
 	"github.com/fishhub-oss/fishhub-server/internal/platform"
 	"github.com/fishhub-oss/fishhub-server/internal/provisioning"
@@ -38,7 +39,7 @@ func (s *stubProvisioningStore) ClaimCode(_ context.Context, _ string) (string, 
 	}
 	return s.claimedDeviceID, uid, s.claimErr
 }
-func (s *stubProvisioningStore) Activate(_ context.Context, _ *sql.Tx, _, _, _ string) error {
+func (s *stubProvisioningStore) Activate(_ context.Context, _ *sql.Tx, _, _, _, _ string) error {
 	return s.activateErr
 }
 
@@ -73,10 +74,19 @@ func (s *stubTimezoneReader) GetTimezone(_ context.Context, _ string) (string, e
 	return "UTC", nil
 }
 
+type stubModelIDResolver struct{ id string }
+
+func (s *stubModelIDResolver) DefaultModelID(_ context.Context) (string, error) {
+	if s.id == "" {
+		return "model-uuid", nil
+	}
+	return s.id, nil
+}
+
 func newActivationSvc(t *testing.T, store provisioning.Store, outboxStore outbox.Store, signer *stubSigner) *provisioning.ActivationService {
 	t.Helper()
 	db := testutil.NewTestDB(t)
-	return provisioning.NewActivationService(db, store, outboxStore, signer, &stubTimezoneReader{}, discardLogger)
+	return provisioning.NewActivationService(db, store, outboxStore, signer, &stubTimezoneReader{}, &stubModelIDResolver{}, discardLogger)
 }
 
 func TestActivationService_HappyPath(t *testing.T) {
@@ -92,7 +102,7 @@ func TestActivationService_HappyPath(t *testing.T) {
 		t.Fatalf("setup: get code: %v", err)
 	}
 
-	svc := provisioning.NewActivationService(db, provStore, outboxStore, &stubSigner{token: "jwt-tok"}, &stubTimezoneReader{}, discardLogger)
+	svc := provisioning.NewActivationService(db, provStore, outboxStore, &stubSigner{token: "jwt-tok"}, &stubTimezoneReader{}, devicemodel.NewStore(db), discardLogger)
 
 	result, err := svc.Activate(ctx, code)
 	if err != nil {
@@ -157,7 +167,7 @@ func TestActivationService_SignerError(t *testing.T) {
 	}
 
 	signErr := errors.New("signing key not configured")
-	svc := provisioning.NewActivationService(db, provStore, outboxStore, &stubSigner{err: signErr}, &stubTimezoneReader{}, discardLogger)
+	svc := provisioning.NewActivationService(db, provStore, outboxStore, &stubSigner{err: signErr}, &stubTimezoneReader{}, devicemodel.NewStore(db), discardLogger)
 
 	_, err = svc.Activate(ctx, code)
 	if !errors.Is(err, signErr) {

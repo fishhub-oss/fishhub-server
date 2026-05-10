@@ -17,6 +17,12 @@ type TimezoneReader interface {
 	GetTimezone(ctx context.Context, userID string) (string, error)
 }
 
+// ModelIDResolver returns the default device model ID to assign to new devices.
+// Implemented by a bridge in main.go.
+type ModelIDResolver interface {
+	DefaultModelID(ctx context.Context) (string, error)
+}
+
 // ActivationResult holds what the device receives immediately after activation.
 // MQTT credentials are not included — the device polls GET /devices/{id}/status
 // until they are ready.
@@ -28,12 +34,13 @@ type ActivationResult struct {
 // ActivationService orchestrates device activation: claim code → store credentials
 // + enqueue HiveMQ provisioning atomically → sign JWT.
 type ActivationService struct {
-	db             *sql.DB
-	store          Store
-	outboxStore    outbox.Store
-	signer         devicejwt.Signer
-	timezoneReader TimezoneReader
-	logger         *slog.Logger
+	db              *sql.DB
+	store           Store
+	outboxStore     outbox.Store
+	signer          devicejwt.Signer
+	timezoneReader  TimezoneReader
+	modelIDResolver ModelIDResolver
+	logger          *slog.Logger
 }
 
 func NewActivationService(
@@ -42,18 +49,20 @@ func NewActivationService(
 	outboxStore outbox.Store,
 	signer devicejwt.Signer,
 	timezoneReader TimezoneReader,
+	modelIDResolver ModelIDResolver,
 	logger *slog.Logger,
 ) *ActivationService {
 	if logger == nil {
 		logger = slog.Default()
 	}
 	return &ActivationService{
-		db:             db,
-		store:          store,
-		outboxStore:    outboxStore,
-		signer:         signer,
-		timezoneReader: timezoneReader,
-		logger:         logger,
+		db:              db,
+		store:           store,
+		outboxStore:     outboxStore,
+		signer:          signer,
+		timezoneReader:  timezoneReader,
+		modelIDResolver: modelIDResolver,
+		logger:          logger,
 	}
 }
 
@@ -87,6 +96,12 @@ func (s *ActivationService) Activate(ctx context.Context, code string) (Activati
 	}
 	mqttPassword := hex.EncodeToString(mqttPasswordBytes)
 
+	modelID, err := s.modelIDResolver.DefaultModelID(ctx)
+	if err != nil {
+		s.logger.Error("activate: resolve default model", "device_id", deviceID, "error", err)
+		return ActivationResult{}, fmt.Errorf("resolve default model: %w", err)
+	}
+
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		s.logger.Error("activate: begin tx", "device_id", deviceID, "error", err)
@@ -94,7 +109,7 @@ func (s *ActivationService) Activate(ctx context.Context, code string) (Activati
 	}
 	defer tx.Rollback()
 
-	if err := s.store.Activate(ctx, tx, deviceID, mqttUsername, mqttPassword); err != nil {
+	if err := s.store.Activate(ctx, tx, deviceID, mqttUsername, mqttPassword, modelID); err != nil {
 		s.logger.Error("activate: store credentials", "device_id", deviceID, "error", err)
 		return ActivationResult{}, fmt.Errorf("activate device: %w", err)
 	}

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/fishhub-oss/fishhub-server/internal/device"
+	"github.com/fishhub-oss/fishhub-server/internal/devicemodel"
 	"github.com/fishhub-oss/fishhub-server/internal/measurement"
 	"github.com/fishhub-oss/fishhub-server/internal/outbox"
 	"github.com/fishhub-oss/fishhub-server/internal/peripheral"
@@ -94,7 +95,7 @@ func (s *stubProvisioningStore) ClaimCode(_ context.Context, _ string) (string, 
 	}
 	return s.claimedDeviceID, uid, s.claimErr
 }
-func (s *stubProvisioningStore) Activate(_ context.Context, _ *sql.Tx, _, _, _ string) error {
+func (s *stubProvisioningStore) Activate(_ context.Context, _ *sql.Tx, _, _, _, _ string) error {
 	return s.activateErr
 }
 
@@ -214,7 +215,7 @@ type stubPeripheralStore struct {
 	deleteErr      error
 }
 
-func (s *stubPeripheralStore) CreatePeripheral(_ context.Context, _ *sql.Tx, _, _, _, _, _ string, _ int) (peripheral.Peripheral, error) {
+func (s *stubPeripheralStore) CreatePeripheral(_ context.Context, _ *sql.Tx, _, _, _, _, _ string, _ devicemodel.Port) (peripheral.Peripheral, error) {
 	return s.created, s.createErr
 }
 func (s *stubPeripheralStore) ListPeripherals(_ context.Context, _, _ string) ([]peripheral.Peripheral, error) {
@@ -229,7 +230,7 @@ func (s *stubPeripheralStore) SetPeripheralSchedule(_ context.Context, _, _, _ s
 func (s *stubPeripheralStore) SetControlMode(_ context.Context, _ *sql.Tx, _, _, _, _ string) (peripheral.Peripheral, error) {
 	return s.controlModeP, s.controlModeErr
 }
-func (s *stubPeripheralStore) UpdatePeripheral(_ context.Context, _, _, _, _ string, _ int) (peripheral.Peripheral, error) {
+func (s *stubPeripheralStore) UpdatePeripheral(_ context.Context, _, _, _, _ string) (peripheral.Peripheral, error) {
 	return s.updated, s.updateErr
 }
 func (s *stubPeripheralStore) DeletePeripheral(_ context.Context, _ *sql.Tx, _, _, _ string) (peripheral.Peripheral, error) {
@@ -254,6 +255,41 @@ func newDevice(id string) device.Device {
 }
 
 var errSentinel = errors.New("store error")
+
+// ── ModelIDResolver ───────────────────────────────────────────────────────────
+
+type stubModelIDResolver struct{ id string }
+
+func (s *stubModelIDResolver) DefaultModelID(_ context.Context) (string, error) {
+	if s.id == "" {
+		return "model-uuid", nil
+	}
+	return s.id, nil
+}
+
+// ── DeviceModelStore ──────────────────────────────────────────────────────────
+
+type stubDeviceModelStore struct {
+	model        devicemodel.DeviceModel
+	modelErr     error
+	port         devicemodel.Port
+	portErr      error
+	defaultID    string
+	defaultIDErr error
+}
+
+func (s *stubDeviceModelStore) GetByDeviceID(_ context.Context, _, _ string) (devicemodel.DeviceModel, error) {
+	return s.model, s.modelErr
+}
+func (s *stubDeviceModelStore) GetPort(_ context.Context, _, _ string) (devicemodel.Port, error) {
+	return s.port, s.portErr
+}
+func (s *stubDeviceModelStore) DefaultModelID(_ context.Context) (string, error) {
+	if s.defaultID == "" {
+		return "model-uuid", s.defaultIDErr
+	}
+	return s.defaultID, s.defaultIDErr
+}
 
 // ── TriggerStore ──────────────────────────────────────────────────────────────
 

@@ -314,7 +314,7 @@ func newActivateHandler(t *testing.T, store *stubProvisioningStore, signer *stub
 	t.Helper()
 	db := testutil.NewTestDB(t)
 	return &api.ActivateHandler{
-		Service: provisioning.NewActivationService(db, store, &stubOutboxStore{}, signer, &stubTimezoneReader{}, discardLogger),
+		Service: provisioning.NewActivationService(db, store, &stubOutboxStore{}, signer, &stubTimezoneReader{}, &stubModelIDResolver{}, discardLogger),
 	}
 }
 

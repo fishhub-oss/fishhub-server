@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/fishhub-oss/fishhub-server/internal/api"
-	"github.com/fishhub-oss/fishhub-server/internal/device"
+	"github.com/fishhub-oss/fishhub-server/internal/devicemodel"
 	"github.com/fishhub-oss/fishhub-server/internal/peripheral"
 	"github.com/fishhub-oss/fishhub-server/internal/testutil"
 )
@@ -179,10 +179,14 @@ func TestCreatePeripheralHandler(t *testing.T) {
 	t.Run("already exists returns 409", func(t *testing.T) {
 		store := &stubPeripheralStore{createErr: peripheral.ErrAlreadyExists}
 		svc := newPeripheralService(t, store, &stubPublisher{})
-		h := &api.CreatePeripheralHandler{Service: svc}
+		modelStore := &stubDeviceModelStore{
+			model: devicemodel.DeviceModel{ID: "model-1"},
+			port:  devicemodel.Port{ID: "port-1", Kind: "relay", Label: "RELAY 1", Pin: 16},
+		}
+		h := &api.CreatePeripheralHandler{Service: svc, ModelStore: modelStore}
 
 		req := withChiParam(
-			withClaims(httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{"name":"light","kind":"relay","pin":5}`)), "user-1"),
+			withClaims(httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{"name":"light","kind":"relay","port_id":"port-1"}`)), "user-1"),
 			"id", "dev-1",
 		)
 		rec := httptest.NewRecorder()
@@ -191,12 +195,13 @@ func TestCreatePeripheralHandler(t *testing.T) {
 	})
 
 	t.Run("device not found returns 404", func(t *testing.T) {
-		store := &stubPeripheralStore{createErr: device.ErrNotFound}
+		store := &stubPeripheralStore{}
 		svc := newPeripheralService(t, store, &stubPublisher{})
-		h := &api.CreatePeripheralHandler{Service: svc}
+		modelStore := &stubDeviceModelStore{modelErr: devicemodel.ErrNotFound}
+		h := &api.CreatePeripheralHandler{Service: svc, ModelStore: modelStore}
 
 		req := withChiParam(
-			withClaims(httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{"name":"light","kind":"relay","pin":5}`)), "user-1"),
+			withClaims(httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{"name":"light","kind":"relay","port_id":"port-1"}`)), "user-1"),
 			"id", "dev-x",
 		)
 		rec := httptest.NewRecorder()
@@ -210,12 +215,11 @@ func TestCreatePeripheralHandler(t *testing.T) {
 func TestPatchPeripheralHandler(t *testing.T) {
 	t.Run("returns 200 with updated peripheral", func(t *testing.T) {
 		p := newPeripheral("renamed")
-		p.Pin = 7
 		store := &stubPeripheralStore{updated: p}
 		svc := peripheral.NewService(nil, store, &stubOutboxStore{}, nil, &stubPublisher{}, discardLogger)
 		h := &api.PatchPeripheralHandler{Service: svc}
 
-		body := `{"name":"renamed","pin":7}`
+		body := `{"name":"renamed"}`
 		req := withChiParams(
 			withClaims(httptest.NewRequest(http.MethodPatch, "/", strings.NewReader(body)), "user-1"),
 			map[string]string{"id": "dev-1", "peripheralId": "pid-1"},
@@ -233,9 +237,6 @@ func TestPatchPeripheralHandler(t *testing.T) {
 		if resp["name"] != "renamed" {
 			t.Errorf("unexpected name: %v", resp["name"])
 		}
-		if resp["pin"] != float64(7) {
-			t.Errorf("unexpected pin: %v", resp["pin"])
-		}
 	})
 
 	t.Run("peripheral not found returns 404", func(t *testing.T) {
@@ -244,7 +245,7 @@ func TestPatchPeripheralHandler(t *testing.T) {
 		h := &api.PatchPeripheralHandler{Service: svc}
 
 		req := withChiParams(
-			withClaims(httptest.NewRequest(http.MethodPatch, "/", strings.NewReader(`{"name":"x","pin":1}`)), "user-1"),
+			withClaims(httptest.NewRequest(http.MethodPatch, "/", strings.NewReader(`{"name":"x"}`)), "user-1"),
 			map[string]string{"id": "dev-1", "peripheralId": "ghost"},
 		)
 		rec := httptest.NewRecorder()
@@ -258,7 +259,7 @@ func TestPatchPeripheralHandler(t *testing.T) {
 		h := &api.PatchPeripheralHandler{Service: svc}
 
 		req := withChiParams(
-			withClaims(httptest.NewRequest(http.MethodPatch, "/", strings.NewReader(`{"name":"taken","pin":1}`)), "user-1"),
+			withClaims(httptest.NewRequest(http.MethodPatch, "/", strings.NewReader(`{"name":"taken"}`)), "user-1"),
 			map[string]string{"id": "dev-1", "peripheralId": "pid-1"},
 		)
 		rec := httptest.NewRecorder()
@@ -266,26 +267,12 @@ func TestPatchPeripheralHandler(t *testing.T) {
 		assertErrorCode(t, rec, http.StatusConflict, "peripheral_name_conflict")
 	})
 
-	t.Run("pin conflict returns 409", func(t *testing.T) {
-		store := &stubPeripheralStore{updateErr: peripheral.ErrPinInUse}
-		svc := peripheral.NewService(nil, store, &stubOutboxStore{}, nil, &stubPublisher{}, discardLogger)
-		h := &api.PatchPeripheralHandler{Service: svc}
-
-		req := withChiParams(
-			withClaims(httptest.NewRequest(http.MethodPatch, "/", strings.NewReader(`{"name":"x","pin":5}`)), "user-1"),
-			map[string]string{"id": "dev-1", "peripheralId": "pid-1"},
-		)
-		rec := httptest.NewRecorder()
-		h.ServeHTTP(rec, req)
-		assertErrorCode(t, rec, http.StatusConflict, "peripheral_pin_conflict")
-	})
-
 	t.Run("missing name returns 400", func(t *testing.T) {
 		svc := peripheral.NewService(nil, &stubPeripheralStore{}, &stubOutboxStore{}, nil, &stubPublisher{}, discardLogger)
 		h := &api.PatchPeripheralHandler{Service: svc}
 
 		req := withChiParams(
-			withClaims(httptest.NewRequest(http.MethodPatch, "/", strings.NewReader(`{"pin":5}`)), "user-1"),
+			withClaims(httptest.NewRequest(http.MethodPatch, "/", strings.NewReader(`{}`)), "user-1"),
 			map[string]string{"id": "dev-1", "peripheralId": "pid-1"},
 		)
 		rec := httptest.NewRecorder()

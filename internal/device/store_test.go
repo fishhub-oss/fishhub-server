@@ -33,7 +33,7 @@ func TestListByUserID_integration(t *testing.T) {
 			t.Fatalf("setup claim: %v", err)
 		}
 		var d2 string
-		if err := db.QueryRowContext(ctx, `INSERT INTO devices (user_id) VALUES ($1) RETURNING id`, userID).Scan(&d2); err != nil {
+		if err := db.QueryRowContext(ctx, `INSERT INTO devices (user_id, model_id) VALUES ($1, (SELECT id FROM device_models WHERE slug = 'fishhub-v1')) RETURNING id`, userID).Scan(&d2); err != nil {
 			t.Fatalf("setup device 2: %v", err)
 		}
 
@@ -85,7 +85,7 @@ func TestGetActivationStatus_integration(t *testing.T) {
 		t.Helper()
 		var deviceID string
 		err := db.QueryRowContext(ctx,
-			`INSERT INTO devices (user_id) VALUES ($1) RETURNING id`, userID,
+			`INSERT INTO devices (user_id, model_id) VALUES ($1, (SELECT id FROM device_models WHERE slug = 'fishhub-v1')) RETURNING id`, userID,
 		).Scan(&deviceID)
 		if err != nil {
 			t.Fatalf("insert device: %v", err)
@@ -165,7 +165,7 @@ func TestFindByID_integration(t *testing.T) {
 
 	var deviceID string
 	if err := db.QueryRowContext(ctx,
-		`INSERT INTO devices (user_id) VALUES ($1) RETURNING id`, userID,
+		`INSERT INTO devices (user_id, model_id) VALUES ($1, (SELECT id FROM device_models WHERE slug = 'fishhub-v1')) RETURNING id`, userID,
 	).Scan(&deviceID); err != nil {
 		t.Fatalf("insert device: %v", err)
 	}
