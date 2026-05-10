@@ -18,11 +18,51 @@ UNIQUE (provider, provider_sub)
 
 Stores one row per identity. The `provider`/`provider_sub` pair identifies the OAuth account (e.g. `provider='google'`, `provider_sub='<google-sub-claim>'`). The seed user has `provider='local'`.
 
+### `device_models`
+```
+device_models
+├── id         UUID        PK  default gen_random_uuid()
+├── slug       VARCHAR(64) UNIQUE NOT NULL
+├── name       VARCHAR(128) NOT NULL
+└── created_at TIMESTAMPTZ NOT NULL  default now()
+```
+
+Hardware model catalogue. Currently only `fishhub-v1` is seeded. Each model defines a fixed set of ports (see `device_model_ports`).
+
+### `device_model_ports`
+```
+device_model_ports
+├── id         UUID        PK  default gen_random_uuid()
+├── model_id   UUID        FK → device_models.id  NOT NULL
+├── kind       VARCHAR(32) NOT NULL  -- e.g. 'relay', 'ds18b20', 'analog'
+├── label      VARCHAR(32) NOT NULL  -- e.g. 'RELAY 1', 'TEMP', 'ANALOG 2'
+├── pin        INT         NOT NULL  -- GPIO pin number
+└── created_at TIMESTAMPTZ NOT NULL  default now()
+
+UNIQUE (model_id, pin)
+UNIQUE (model_id, kind, label)
+```
+
+One row per physical port on a hardware model. The `fishhub-v1` seed data:
+
+| Label | Kind | Pin |
+|-------|------|-----|
+| TEMP | ds18b20 | 4 |
+| RELAY 1 | relay | 16 |
+| RELAY 2 | relay | 17 |
+| RELAY 3 | relay | 26 |
+| RELAY 4 | relay | 27 |
+| ANALOG 1 | analog | 32 |
+| ANALOG 2 | analog | 33 |
+| ANALOG 3 | analog | 34 |
+| ANALOG 4 | analog | 35 |
+
 ### `devices`
 ```
 devices
 ├── id             UUID  PK  default gen_random_uuid()
 ├── user_id        UUID  FK → users.id  NOT NULL
+├── model_id       UUID  FK → device_models.id  NOT NULL
 ├── name           TEXT  (nullable)
 ├── mqtt_username  TEXT  (nullable)
 ├── mqtt_password  TEXT  (nullable)
@@ -30,7 +70,7 @@ devices
 └── created_at     TIMESTAMPTZ  default now()
 ```
 
-A device row is created when the ESP32 claims a pairing code via `POST /devices/activate`. `mqtt_username` and `mqtt_password` are populated asynchronously by the outbox runner after HiveMQ provisioning completes. `deleted_at` is set on soft-delete; soft-deleted devices are excluded from all queries.
+A device row is created when the ESP32 claims a pairing code via `POST /devices/activate`. `model_id` is set to `fishhub-v1` at claim time. `mqtt_username` and `mqtt_password` are populated asynchronously by the outbox runner after HiveMQ provisioning completes. `deleted_at` is set on soft-delete; soft-deleted devices are excluded from all queries.
 
 ### `provisioning_codes`
 ```
@@ -139,14 +179,39 @@ INDEX action_triggers_trigger_id_idx ON (trigger_id)
 
 Join table linking triggers to their actions. Phase 1 always has exactly one action per trigger, but the schema is open for future multi-action support.
 
+### `peripherals`
+```
+peripherals
+├── id           UUID  PK  default gen_random_uuid()
+├── device_id    UUID  FK → devices.id  NOT NULL
+├── name         TEXT  NOT NULL
+├── kind         TEXT  NOT NULL  -- e.g. 'relay', 'ds18b20', 'analog'
+├── pin          INT   NOT NULL  -- GPIO pin number (copied from port at creation)
+├── port_id      UUID  FK → device_model_ports.id  (nullable for legacy rows)
+├── category     TEXT  NOT NULL  -- 'sensor' | 'actuator'
+├── control_mode TEXT  (nullable)  -- 'automatic' | 'manual'; non-null for actuators only
+├── schedule     JSONB NOT NULL  default '[]'
+├── deleted_at   TIMESTAMPTZ  (nullable)
+├── created_at   TIMESTAMPTZ  NOT NULL  default now()
+└── updated_at   TIMESTAMPTZ  NOT NULL  default now()
+
+UNIQUE INDEX peripherals_device_name_active_idx ON (device_id, name) WHERE deleted_at IS NULL
+UNIQUE INDEX peripherals_device_pin_active_idx  ON (device_id, pin)  WHERE deleted_at IS NULL
+UNIQUE INDEX peripherals_port_id_active_idx     ON (port_id)         WHERE deleted_at IS NULL AND port_id IS NOT NULL
+```
+
+One row per physical peripheral attached to a device. `port_id` links to the model port that determines the GPIO pin; `pin` is copied from the port at insertion so it remains correct even if the port catalogue changes. Legacy rows created before `port_id` was added have `port_id = NULL`. Soft-deleted peripherals (`deleted_at IS NOT NULL`) are excluded from all list/get queries but their port slot is released for reuse.
+
 ## Relationships
 
 ```
+device_models ──< device_model_ports
+              └──< devices
 users ──< devices
       └──< provisioning_codes
       └──< refresh_tokens
       └──  accounts  (1:1 via user_id UNIQUE)
-devices ──< peripherals
+devices ──< peripherals ──> device_model_ports (via port_id, nullable)
         └──< triggers
 triggers ──< action_triggers ──> actions
 outbox_events  (standalone — no FK; device/trigger referenced via payload)
@@ -187,6 +252,10 @@ They run automatically on server startup via `platform.Migrate()`. Current migra
 | 020 | Create `actions` table |
 | 021 | Create `action_triggers` join table |
 | 022 | Migrate existing trigger rows to `actions` + `action_triggers`; drop `target_peripheral_id` and `action` columns from `triggers` |
+| 023–025 | (internal) |
+| 026 | Create `device_models` and `device_model_ports` tables; seed `fishhub-v1` |
+| 027 | Add `model_id` (NOT NULL) to `devices`; backfill existing rows to `fishhub-v1` |
+| 028 | Add `port_id` (nullable) to `peripherals`; add unique index `peripherals_port_id_active_idx` |
 
 To add a migration, create the next numbered `.up.sql` / `.down.sql` pair in `db/migrations/`. Migrations run on the next server startup.
 

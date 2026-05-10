@@ -10,6 +10,7 @@ import (
 	"github.com/fishhub-oss/fishhub-server/internal/apierr"
 	"github.com/fishhub-oss/fishhub-server/internal/auth"
 	"github.com/fishhub-oss/fishhub-server/internal/device"
+	"github.com/fishhub-oss/fishhub-server/internal/devicemodel"
 	"github.com/fishhub-oss/fishhub-server/internal/measurement"
 	"github.com/fishhub-oss/fishhub-server/internal/peripheral"
 	"github.com/fishhub-oss/fishhub-server/internal/provisioning"
@@ -309,18 +310,25 @@ type LastReadingResponse struct {
 	Values    map[string]any `json:"values"`
 }
 
+type PortResponse struct {
+	ID    string `json:"id"`
+	Label string `json:"label"`
+	Pin   int    `json:"pin"`
+}
+
 type PeripheralResponse struct {
-	ID          string               `json:"id"`
-	DeviceID    string               `json:"device_id"`
-	Name        string               `json:"name"`
-	Kind        string               `json:"kind"`
-	Pin         int                  `json:"pin"`
-	Category    string               `json:"category"`
-	ControlMode *string              `json:"control_mode"`
+	ID          string                      `json:"id"`
+	DeviceID    string                      `json:"device_id"`
+	Name        string                      `json:"name"`
+	Kind        string                      `json:"kind"`
+	Pin         int                         `json:"pin"`
+	Port        *PortResponse               `json:"port"`
+	Category    string                      `json:"category"`
+	ControlMode *string                     `json:"control_mode"`
 	Schedule    []peripheral.ScheduleWindow `json:"schedule"`
-	LastReading *LastReadingResponse `json:"last_reading"`
-	CreatedAt   string               `json:"created_at"`
-	UpdatedAt   string               `json:"updated_at"`
+	LastReading *LastReadingResponse        `json:"last_reading"`
+	CreatedAt   string                      `json:"created_at"`
+	UpdatedAt   string                      `json:"updated_at"`
 }
 
 func peripheralResponse(p peripheral.Peripheral) PeripheralResponse {
@@ -335,12 +343,17 @@ func peripheralResponse(p peripheral.Peripheral) PeripheralResponse {
 			Values:    p.LastReading.Values,
 		}
 	}
+	var port *PortResponse
+	if p.Port != nil {
+		port = &PortResponse{ID: p.Port.ID, Label: p.Port.Label, Pin: p.Port.Pin}
+	}
 	return PeripheralResponse{
 		ID:          p.ID,
 		DeviceID:    p.DeviceID,
 		Name:        p.Name,
 		Kind:        p.Kind,
 		Pin:         p.Pin,
+		Port:        port,
 		Category:    p.Category,
 		ControlMode: p.ControlMode,
 		Schedule:    schedule,
@@ -350,15 +363,56 @@ func peripheralResponse(p peripheral.Peripheral) PeripheralResponse {
 	}
 }
 
+// DeviceModelHandler handles GET /api/devices/{id}/model (session auth).
+type DeviceModelHandler struct {
+	Store devicemodel.Store
+}
+
+type portResponse struct {
+	ID    string `json:"id"`
+	Kind  string `json:"kind"`
+	Label string `json:"label"`
+	Pin   int    `json:"pin"`
+}
+
+type deviceModelResponse struct {
+	ID    string         `json:"id"`
+	Slug  string         `json:"slug"`
+	Name  string         `json:"name"`
+	Ports []portResponse `json:"ports"`
+}
+
+func (h *DeviceModelHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	claims := auth.MustClaimsFromContext(r.Context())
+	deviceID := chi.URLParam(r, "id")
+
+	m, err := h.Store.GetByDeviceID(r.Context(), deviceID, claims.UserID)
+	if err != nil {
+		if errors.Is(err, devicemodel.ErrNotFound) {
+			apierr.Write(w, http.StatusNotFound, "device_not_found", "device not found")
+			return
+		}
+		apierr.Write(w, http.StatusInternalServerError, "internal_error", "internal server error")
+		return
+	}
+
+	ports := make([]portResponse, len(m.Ports))
+	for i, p := range m.Ports {
+		ports[i] = portResponse{ID: p.ID, Kind: p.Kind, Label: p.Label, Pin: p.Pin}
+	}
+	render.JSON(w, r, deviceModelResponse{ID: m.ID, Slug: m.Slug, Name: m.Name, Ports: ports})
+}
+
 // CreatePeripheralHandler handles POST /api/devices/{id}/peripherals (session auth).
 type CreatePeripheralHandler struct {
-	Service *peripheral.Service
+	Service    *peripheral.Service
+	ModelStore devicemodel.Store
 }
 
 type createPeripheralRequest struct {
 	Name     string `json:"name"`
 	Kind     string `json:"kind"`
-	Pin      int    `json:"pin"`
+	PortID   string `json:"port_id"`
 	Category string `json:"category"`
 }
 
@@ -370,8 +424,8 @@ func (h *CreatePeripheralHandler) ServeHTTP(w http.ResponseWriter, r *http.Reque
 		apierr.Write(w, http.StatusBadRequest, "invalid_request", "invalid request body")
 		return
 	}
-	if req.Name == "" || req.Kind == "" {
-		apierr.Write(w, http.StatusBadRequest, "invalid_request", "name and kind are required")
+	if req.Name == "" || req.Kind == "" || req.PortID == "" {
+		apierr.Write(w, http.StatusBadRequest, "invalid_request", "name, kind, and port_id are required")
 		return
 	}
 	if req.Category == "" {
@@ -383,7 +437,34 @@ func (h *CreatePeripheralHandler) ServeHTTP(w http.ResponseWriter, r *http.Reque
 	}
 
 	deviceID := chi.URLParam(r, "id")
-	p, err := h.Service.Register(r.Context(), deviceID, claims.UserID, req.Name, req.Kind, req.Category, req.Pin)
+
+	// Resolve and validate the port against the device model.
+	m, err := h.ModelStore.GetByDeviceID(r.Context(), deviceID, claims.UserID)
+	if err != nil {
+		if errors.Is(err, devicemodel.ErrNotFound) {
+			apierr.Write(w, http.StatusNotFound, "device_not_found", "device not found")
+			return
+		}
+		apierr.Write(w, http.StatusInternalServerError, "internal_error", "internal server error")
+		return
+	}
+
+	port, err := h.ModelStore.GetPort(r.Context(), req.PortID, m.ID)
+	if err != nil {
+		if errors.Is(err, devicemodel.ErrPortNotFound) {
+			apierr.Write(w, http.StatusBadRequest, "port_not_found", "port not found or does not belong to this device's model")
+			return
+		}
+		apierr.Write(w, http.StatusInternalServerError, "internal_error", "internal server error")
+		return
+	}
+
+	if port.Kind != req.Kind {
+		apierr.Write(w, http.StatusBadRequest, "port_kind_mismatch", "port kind does not match the requested peripheral kind")
+		return
+	}
+
+	p, err := h.Service.Register(r.Context(), deviceID, claims.UserID, req.Name, req.Kind, req.Category, port)
 	if err != nil {
 		if errors.Is(err, device.ErrNotFound) {
 			apierr.Write(w, http.StatusNotFound, "device_not_found", "device not found")
@@ -393,8 +474,8 @@ func (h *CreatePeripheralHandler) ServeHTTP(w http.ResponseWriter, r *http.Reque
 			apierr.Write(w, http.StatusConflict, "peripheral_name_conflict", "a peripheral with that name already exists")
 			return
 		}
-		if errors.Is(err, peripheral.ErrPinInUse) {
-			apierr.Write(w, http.StatusConflict, "peripheral_pin_conflict", "pin already in use by another peripheral")
+		if errors.Is(err, peripheral.ErrPortInUse) {
+			apierr.Write(w, http.StatusConflict, "port_conflict", "port already in use by another peripheral")
 			return
 		}
 		apierr.Write(w, http.StatusInternalServerError, "internal_error", "internal server error")
@@ -485,7 +566,6 @@ type PatchPeripheralHandler struct {
 
 type patchPeripheralRequest struct {
 	Name string `json:"name"`
-	Pin  int    `json:"pin"`
 }
 
 func (h *PatchPeripheralHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -503,7 +583,7 @@ func (h *PatchPeripheralHandler) ServeHTTP(w http.ResponseWriter, r *http.Reques
 
 	deviceID := chi.URLParam(r, "id")
 	peripheralID := chi.URLParam(r, "peripheralId")
-	p, err := h.Service.Update(r.Context(), deviceID, claims.UserID, peripheralID, req.Name, req.Pin)
+	p, err := h.Service.Update(r.Context(), deviceID, claims.UserID, peripheralID, req.Name)
 	if err != nil {
 		if errors.Is(err, peripheral.ErrNotFound) {
 			apierr.Write(w, http.StatusNotFound, "peripheral_not_found", "peripheral not found")
@@ -511,10 +591,6 @@ func (h *PatchPeripheralHandler) ServeHTTP(w http.ResponseWriter, r *http.Reques
 		}
 		if errors.Is(err, peripheral.ErrAlreadyExists) {
 			apierr.Write(w, http.StatusConflict, "peripheral_name_conflict", "a peripheral with that name already exists")
-			return
-		}
-		if errors.Is(err, peripheral.ErrPinInUse) {
-			apierr.Write(w, http.StatusConflict, "peripheral_pin_conflict", "pin already in use by another peripheral")
 			return
 		}
 		apierr.Write(w, http.StatusInternalServerError, "internal_error", "internal server error")

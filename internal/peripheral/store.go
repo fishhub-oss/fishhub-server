@@ -9,16 +9,19 @@ import (
 	"strings"
 
 	"github.com/fishhub-oss/fishhub-server/internal/device"
+	"github.com/fishhub-oss/fishhub-server/internal/devicemodel"
 )
 
 type Store interface {
 	// CreatePeripheral inserts a new peripheral for the device owned by userID.
+	// port must belong to the device's model and match kind; its pin is used for the peripheral.
 	// Returns device.ErrNotFound if the device does not exist or is not owned by userID.
 	// Returns ErrAlreadyExists if an active peripheral with the same name exists.
-	// Returns ErrPinInUse if an active peripheral with the same pin exists.
+	// Returns ErrPortInUse if an active peripheral already occupies the port.
 	// category must be "sensor" or "actuator"; actuators get control_mode defaulted to "automatic".
-	CreatePeripheral(ctx context.Context, tx *sql.Tx, deviceID, userID, name, kind, category string, pin int) (Peripheral, error)
-	// ListPeripherals returns active (non-deleted) peripherals for the device owned by userID.
+	CreatePeripheral(ctx context.Context, tx *sql.Tx, deviceID, userID, name, kind, category string, port devicemodel.Port) (Peripheral, error)
+	// ListPeripherals returns active (non-deleted) peripherals for the device owned by userID,
+	// each joined with its port (label, pin) when port_id is set.
 	// Returns an empty slice if the device does not exist or is not owned by userID.
 	ListPeripherals(ctx context.Context, deviceID, userID string) ([]Peripheral, error)
 	// GetPeripheral returns a single active peripheral by ID, scoped to the device and user.
@@ -31,11 +34,10 @@ type Store interface {
 	// Returns ErrNotFound if the peripheral does not exist or is not reachable by userID.
 	// Returns ErrNotAnActuator if the peripheral's category is not "actuator".
 	SetControlMode(ctx context.Context, tx *sql.Tx, deviceID, userID, peripheralID, mode string) (Peripheral, error)
-	// UpdatePeripheral updates name and pin on an active peripheral owned by userID.
+	// UpdatePeripheral updates name on an active peripheral owned by userID.
 	// Returns ErrNotFound if the peripheral does not exist or is not reachable by userID.
 	// Returns ErrAlreadyExists if another active peripheral on the device has the same name.
-	// Returns ErrPinInUse if another active peripheral on the device uses the same pin.
-	UpdatePeripheral(ctx context.Context, deviceID, userID, peripheralID, name string, pin int) (Peripheral, error)
+	UpdatePeripheral(ctx context.Context, deviceID, userID, peripheralID, name string) (Peripheral, error)
 	// DeletePeripheral soft-deletes the peripheral (sets deleted_at) and returns it.
 	// Returns ErrNotFound if the peripheral does not exist or is not reachable by userID.
 	DeletePeripheral(ctx context.Context, tx *sql.Tx, deviceID, userID, peripheralID string) (Peripheral, error)
@@ -49,7 +51,7 @@ func NewStore(db *sql.DB) Store {
 	return &postgresStore{db: db}
 }
 
-func (s *postgresStore) CreatePeripheral(ctx context.Context, tx *sql.Tx, deviceID, userID, name, kind, category string, pin int) (Peripheral, error) {
+func (s *postgresStore) CreatePeripheral(ctx context.Context, tx *sql.Tx, deviceID, userID, name, kind, category string, port devicemodel.Port) (Peripheral, error) {
 	var exists bool
 	err := s.db.QueryRowContext(ctx,
 		`SELECT EXISTS(SELECT 1 FROM devices WHERE id = $1 AND user_id = $2 AND deleted_at IS NULL)`,
@@ -65,11 +67,11 @@ func (s *postgresStore) CreatePeripheral(ctx context.Context, tx *sql.Tx, device
 	var p Peripheral
 	var controlMode sql.NullString
 	err = tx.QueryRowContext(ctx, `
-		INSERT INTO peripherals (device_id, name, kind, pin, category, control_mode)
-		VALUES ($1, $2, $3, $4, $5,
-			CASE WHEN $5 = 'actuator' THEN 'automatic' ELSE NULL END)
+		INSERT INTO peripherals (device_id, name, kind, pin, port_id, category, control_mode)
+		VALUES ($1, $2, $3, $4, $5, $6,
+			CASE WHEN $6 = 'actuator' THEN 'automatic' ELSE NULL END)
 		RETURNING id, device_id, name, kind, pin, category, control_mode, created_at, updated_at
-	`, deviceID, name, kind, pin, category).Scan(
+	`, deviceID, name, kind, port.Pin, port.ID, category).Scan(
 		&p.ID, &p.DeviceID, &p.Name, &p.Kind, &p.Pin,
 		&p.Category, &controlMode, &p.CreatedAt, &p.UpdatedAt,
 	)
@@ -78,25 +80,28 @@ func (s *postgresStore) CreatePeripheral(ctx context.Context, tx *sql.Tx, device
 		case "peripherals_device_name_active_idx":
 			return Peripheral{}, ErrAlreadyExists
 		case "peripherals_device_pin_active_idx":
-			return Peripheral{}, ErrPinInUse
-		case "":
-		default:
-			return Peripheral{}, ErrAlreadyExists
+			// Port carries the pin, so a pin conflict is always a port conflict.
+			return Peripheral{}, ErrPortInUse
+		case "peripherals_port_id_active_idx":
+			return Peripheral{}, ErrPortInUse
 		}
 		return Peripheral{}, fmt.Errorf("create peripheral: insert: %w", err)
 	}
 	if controlMode.Valid {
 		p.ControlMode = &controlMode.String
 	}
+	p.Port = &Port{ID: port.ID, Label: port.Label, Pin: port.Pin}
 	return p, nil
 }
 
 func (s *postgresStore) ListPeripherals(ctx context.Context, deviceID, userID string) ([]Peripheral, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT p.id, p.device_id, p.name, p.kind, p.pin, p.category, p.control_mode,
-		       p.schedule, p.created_at, p.updated_at
+		       p.schedule, p.created_at, p.updated_at,
+		       dmp.id, dmp.label, dmp.pin
 		FROM peripherals p
 		JOIN devices d ON d.id = p.device_id
+		LEFT JOIN device_model_ports dmp ON dmp.id = p.port_id
 		WHERE p.device_id = $1
 		  AND d.user_id = $2
 		  AND p.deleted_at IS NULL
@@ -113,10 +118,13 @@ func (s *postgresStore) ListPeripherals(ctx context.Context, deviceID, userID st
 		var p Peripheral
 		var controlMode sql.NullString
 		var scheduleJSON []byte
+		var portID, portLabel sql.NullString
+		var portPin sql.NullInt64
 		if err := rows.Scan(
 			&p.ID, &p.DeviceID, &p.Name, &p.Kind, &p.Pin,
 			&p.Category, &controlMode, &scheduleJSON,
 			&p.CreatedAt, &p.UpdatedAt,
+			&portID, &portLabel, &portPin,
 		); err != nil {
 			return nil, fmt.Errorf("list peripherals: scan: %w", err)
 		}
@@ -128,6 +136,9 @@ func (s *postgresStore) ListPeripherals(ctx context.Context, deviceID, userID st
 				return nil, fmt.Errorf("list peripherals: unmarshal schedule: %w", err)
 			}
 		}
+		if portID.Valid && portLabel.Valid && portPin.Valid {
+			p.Port = &Port{ID: portID.String, Label: portLabel.String, Pin: int(portPin.Int64)}
+		}
 		peripherals = append(peripherals, p)
 	}
 	return peripherals, rows.Err()
@@ -137,11 +148,15 @@ func (s *postgresStore) GetPeripheral(ctx context.Context, deviceID, userID, per
 	var p Peripheral
 	var controlMode sql.NullString
 	var scheduleJSON []byte
+	var portID, portLabel sql.NullString
+	var portPin sql.NullInt64
 	err := s.db.QueryRowContext(ctx, `
 		SELECT p.id, p.device_id, p.name, p.kind, p.pin, p.category, p.control_mode,
-		       p.schedule, p.created_at, p.updated_at
+		       p.schedule, p.created_at, p.updated_at,
+		       dmp.id, dmp.label, dmp.pin
 		FROM peripherals p
 		JOIN devices d ON d.id = p.device_id
+		LEFT JOIN device_model_ports dmp ON dmp.id = p.port_id
 		WHERE p.device_id = $1
 		  AND d.user_id = $2
 		  AND p.id = $3
@@ -151,6 +166,7 @@ func (s *postgresStore) GetPeripheral(ctx context.Context, deviceID, userID, per
 		&p.ID, &p.DeviceID, &p.Name, &p.Kind, &p.Pin,
 		&p.Category, &controlMode, &scheduleJSON,
 		&p.CreatedAt, &p.UpdatedAt,
+		&portID, &portLabel, &portPin,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Peripheral{}, ErrNotFound
@@ -165,6 +181,9 @@ func (s *postgresStore) GetPeripheral(ctx context.Context, deviceID, userID, per
 		if err := json.Unmarshal(scheduleJSON, &p.Schedule); err != nil {
 			return Peripheral{}, fmt.Errorf("get peripheral: unmarshal schedule: %w", err)
 		}
+	}
+	if portID.Valid && portLabel.Valid && portPin.Valid {
+		p.Port = &Port{ID: portID.String, Label: portLabel.String, Pin: int(portPin.Int64)}
 	}
 	return p, nil
 }
@@ -300,36 +319,40 @@ func (s *postgresStore) DeletePeripheral(ctx context.Context, tx *sql.Tx, device
 	return p, nil
 }
 
-func (s *postgresStore) UpdatePeripheral(ctx context.Context, deviceID, userID, peripheralID, name string, pin int) (Peripheral, error) {
+func (s *postgresStore) UpdatePeripheral(ctx context.Context, deviceID, userID, peripheralID, name string) (Peripheral, error) {
 	var p Peripheral
 	var controlMode sql.NullString
 	var scheduleJSON []byte
+	var portID sql.NullString
+	var portLabel sql.NullString
+	var portPin sql.NullInt64
 	err := s.db.QueryRowContext(ctx, `
 		UPDATE peripherals p
-		SET name = $1, pin = $2, updated_at = now()
+		SET name = $1, updated_at = now()
 		FROM devices d
 		WHERE p.device_id = d.id
-		  AND d.user_id   = $3
-		  AND p.device_id = $4
-		  AND p.id        = $5
+		  AND d.user_id   = $2
+		  AND p.device_id = $3
+		  AND p.id        = $4
 		  AND p.deleted_at IS NULL
 		  AND d.deleted_at IS NULL
 		RETURNING p.id, p.device_id, p.name, p.kind, p.pin, p.category,
-		          p.control_mode, p.schedule, p.created_at, p.updated_at
-	`, name, pin, userID, deviceID, peripheralID).Scan(
+		          p.control_mode, p.schedule, p.created_at, p.updated_at,
+		          p.port_id,
+		          (SELECT label FROM device_model_ports WHERE id = p.port_id),
+		          (SELECT pin   FROM device_model_ports WHERE id = p.port_id)
+	`, name, userID, deviceID, peripheralID).Scan(
 		&p.ID, &p.DeviceID, &p.Name, &p.Kind, &p.Pin,
 		&p.Category, &controlMode, &scheduleJSON,
 		&p.CreatedAt, &p.UpdatedAt,
+		&portID, &portLabel, &portPin,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Peripheral{}, ErrNotFound
 	}
 	if err != nil {
-		switch uniqueViolationIndex(err) {
-		case "peripherals_device_name_active_idx":
+		if uniqueViolationIndex(err) == "peripherals_device_name_active_idx" {
 			return Peripheral{}, ErrAlreadyExists
-		case "peripherals_device_pin_active_idx":
-			return Peripheral{}, ErrPinInUse
 		}
 		return Peripheral{}, fmt.Errorf("update peripheral: %w", err)
 	}
@@ -340,6 +363,9 @@ func (s *postgresStore) UpdatePeripheral(ctx context.Context, deviceID, userID, 
 		if err := json.Unmarshal(scheduleJSON, &p.Schedule); err != nil {
 			return Peripheral{}, fmt.Errorf("update peripheral: unmarshal schedule: %w", err)
 		}
+	}
+	if portID.Valid && portLabel.Valid && portPin.Valid {
+		p.Port = &Port{ID: portID.String, Label: portLabel.String, Pin: int(portPin.Int64)}
 	}
 	return p, nil
 }

@@ -15,8 +15,8 @@ type Store interface {
 	// ClaimCode marks the code used, creates a new device row, and returns the device ID and user ID.
 	// Returns ErrCodeNotFound if the code is unknown, ErrCodeAlreadyUsed if already claimed.
 	ClaimCode(ctx context.Context, code string) (deviceID, userID string, err error)
-	// Activate stores MQTT credentials on the device row within the provided transaction.
-	Activate(ctx context.Context, tx *sql.Tx, deviceID, mqttUsername, mqttPassword string) error
+	// Activate stores MQTT credentials and model_id on the device row within the provided transaction.
+	Activate(ctx context.Context, tx *sql.Tx, deviceID, mqttUsername, mqttPassword, modelID string) error
 }
 
 type postgresStore struct {
@@ -105,7 +105,9 @@ func (s *postgresStore) ClaimCode(ctx context.Context, code string) (string, str
 
 	var deviceID string
 	if err := tx.QueryRowContext(ctx, `
-		INSERT INTO devices (user_id) VALUES ($1) RETURNING id
+		INSERT INTO devices (user_id, model_id)
+		VALUES ($1, (SELECT id FROM device_models WHERE slug = 'fishhub-v1'))
+		RETURNING id
 	`, userID).Scan(&deviceID); err != nil {
 		return "", "", fmt.Errorf("insert device: %w", err)
 	}
@@ -122,10 +124,10 @@ func (s *postgresStore) ClaimCode(ctx context.Context, code string) (string, str
 	return deviceID, userID, nil
 }
 
-func (s *postgresStore) Activate(ctx context.Context, tx *sql.Tx, deviceID, mqttUsername, mqttPassword string) error {
+func (s *postgresStore) Activate(ctx context.Context, tx *sql.Tx, deviceID, mqttUsername, mqttPassword, modelID string) error {
 	_, err := tx.ExecContext(ctx, `
-		UPDATE devices SET mqtt_username = $2, mqtt_password = $3 WHERE id = $1
-	`, deviceID, mqttUsername, mqttPassword)
+		UPDATE devices SET mqtt_username = $2, mqtt_password = $3, model_id = $4 WHERE id = $1
+	`, deviceID, mqttUsername, mqttPassword, modelID)
 	return err
 }
 

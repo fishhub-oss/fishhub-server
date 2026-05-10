@@ -19,6 +19,7 @@ import (
 	"github.com/fishhub-oss/fishhub-server/internal/auth"
 	"github.com/fishhub-oss/fishhub-server/internal/device"
 	"github.com/fishhub-oss/fishhub-server/internal/devicejwt"
+	"github.com/fishhub-oss/fishhub-server/internal/devicemodel"
 	"github.com/fishhub-oss/fishhub-server/internal/emqx"
 	"github.com/fishhub-oss/fishhub-server/internal/hivemq"
 	"github.com/fishhub-oss/fishhub-server/internal/jwtutil"
@@ -354,6 +355,7 @@ func main() {
 	// ── Stores & services ─────────────────────────────────────────────────────
 	deviceStore := device.NewStore(db)
 	peripheralStore := peripheral.NewStore(db)
+	deviceModelStore := devicemodel.NewStore(db)
 	triggerStore := trigger.NewStore(db)
 	provisioningStore := provisioning.NewStore(db)
 	outboxStore := outbox.NewPostgresStore(db)
@@ -363,7 +365,7 @@ func main() {
 	triggerSvc := trigger.NewService(db, triggerStore, outboxStore, logger)
 	provisioningSvc := provisioning.NewService(provisioningStore, logger)
 	activationSvc := provisioning.NewActivationService(db, provisioningStore, outboxStore, deviceSigner,
-		accountTimezoneReaderBridge{accountStore}, logger)
+		accountTimezoneReaderBridge{accountStore}, deviceModelStore, logger)
 
 	// ── MQTT readings subscription ────────────────────────────────────────────
 	readingsMQTTHandler := measurement.NewReadingsMQTTHandler(deviceStore, readingsSvc, logger)
@@ -452,7 +454,8 @@ func main() {
 		r.Patch("/api/devices/{id}", (&api.PatchDeviceHandler{Service: deviceSvc}).ServeHTTP)
 		r.Delete("/api/devices/{id}", (&api.DeleteDeviceHandler{Service: deviceSvc}).ServeHTTP)
 		r.Get("/api/devices/{id}/readings", (&api.ReadingsQueryHandler{Service: readingsSvc}).List)
-		r.Post("/api/devices/{id}/peripherals", (&api.CreatePeripheralHandler{Service: peripheralSvc}).ServeHTTP)
+		r.Get("/api/devices/{id}/model", (&api.DeviceModelHandler{Store: deviceModelStore}).ServeHTTP)
+		r.Post("/api/devices/{id}/peripherals", (&api.CreatePeripheralHandler{Service: peripheralSvc, ModelStore: deviceModelStore}).ServeHTTP)
 		r.Get("/api/devices/{id}/peripherals", (&api.ListPeripheralsHandler{Service: peripheralSvc}).ServeHTTP)
 		r.Put("/api/devices/{id}/peripherals/{peripheralId}/schedule", (&api.SetPeripheralScheduleHandler{Service: peripheralSvc}).ServeHTTP)
 		r.Patch("/api/devices/{id}/peripherals/{peripheralId}", (&api.PatchPeripheralHandler{Service: peripheralSvc}).ServeHTTP)
