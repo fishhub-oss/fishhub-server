@@ -54,7 +54,7 @@ func TestPeripheralStore_integration(t *testing.T) {
 		if err != nil {
 			t.Fatalf("begin tx for light: %v", err)
 		}
-		p, err := store.CreatePeripheral(ctx, tx, deviceID, userID, "light", "relay", "actuator", relayPort)
+		p, err := store.CreatePeripheral(ctx, tx, deviceID, userID, "light", "relay", "actuator", nil, relayPort)
 		if err != nil {
 			tx.Rollback()
 			t.Fatalf("create light: %v", err)
@@ -69,7 +69,7 @@ func TestPeripheralStore_integration(t *testing.T) {
 		if err != nil {
 			t.Fatalf("begin tx for temp: %v", err)
 		}
-		p, err := store.CreatePeripheral(ctx, tx, deviceID, userID, "temp", "ds18b20", "sensor", tempPort)
+		p, err := store.CreatePeripheral(ctx, tx, deviceID, userID, "temp", "ds18b20", "sensor", nil, tempPort)
 		if err != nil {
 			tx.Rollback()
 			t.Fatalf("create temp: %v", err)
@@ -150,7 +150,7 @@ func TestPeripheralStore_integration(t *testing.T) {
 		}
 		defer tx.Rollback()
 
-		_, err = store.CreatePeripheral(ctx, tx, deviceID, userID, "light", "relay", "actuator", relay2Port)
+		_, err = store.CreatePeripheral(ctx, tx, deviceID, userID, "light", "relay", "actuator", nil, relay2Port)
 		if !errors.Is(err, peripheral.ErrAlreadyExists) {
 			t.Errorf("expected ErrAlreadyExists, got %v", err)
 		}
@@ -163,7 +163,7 @@ func TestPeripheralStore_integration(t *testing.T) {
 		}
 		defer tx.Rollback()
 
-		_, err = store.CreatePeripheral(ctx, tx, deviceID, userID, "pump", "relay", "actuator", relayPort)
+		_, err = store.CreatePeripheral(ctx, tx, deviceID, userID, "pump", "relay", "actuator", nil, relayPort)
 		if !errors.Is(err, peripheral.ErrPortInUse) {
 			t.Errorf("expected ErrPortInUse, got %v", err)
 		}
@@ -176,7 +176,7 @@ func TestPeripheralStore_integration(t *testing.T) {
 		}
 		defer tx.Rollback()
 
-		_, err = store.CreatePeripheral(ctx, tx, "00000000-0000-0000-0000-000000000099", userID, "pump", "relay", "actuator", relay2Port)
+		_, err = store.CreatePeripheral(ctx, tx, "00000000-0000-0000-0000-000000000099", userID, "pump", "relay", "actuator", nil, relay2Port)
 		if !errors.Is(err, device.ErrNotFound) {
 			t.Errorf("expected device.ErrNotFound, got %v", err)
 		}
@@ -310,7 +310,7 @@ func TestPeripheralStore_integration(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		p, err := store.CreatePeripheral(ctx, tx, deviceID, userID, "light", "relay", "actuator", relayPort)
+		p, err := store.CreatePeripheral(ctx, tx, deviceID, userID, "light", "relay", "actuator", nil, relayPort)
 		if err != nil {
 			tx.Rollback()
 			t.Fatalf("re-create after delete: %v", err)

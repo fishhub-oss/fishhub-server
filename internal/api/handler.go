@@ -325,6 +325,7 @@ type PeripheralResponse struct {
 	Port        *PortResponse               `json:"port"`
 	Category    string                      `json:"category"`
 	ControlMode *string                     `json:"control_mode"`
+	Purpose     *string                     `json:"purpose"`
 	Schedule    []peripheral.ScheduleWindow `json:"schedule"`
 	LastReading *LastReadingResponse        `json:"last_reading"`
 	CreatedAt   string                      `json:"created_at"`
@@ -356,6 +357,7 @@ func peripheralResponse(p peripheral.Peripheral) PeripheralResponse {
 		Port:        port,
 		Category:    p.Category,
 		ControlMode: p.ControlMode,
+		Purpose:     p.Purpose,
 		Schedule:    schedule,
 		LastReading: lastReading,
 		CreatedAt:   p.CreatedAt.UTC().Format(time.RFC3339),
@@ -410,10 +412,11 @@ type CreatePeripheralHandler struct {
 }
 
 type createPeripheralRequest struct {
-	Name     string `json:"name"`
-	Kind     string `json:"kind"`
-	PortID   string `json:"port_id"`
-	Category string `json:"category"`
+	Name     string  `json:"name"`
+	Kind     string  `json:"kind"`
+	PortID   string  `json:"port_id"`
+	Category string  `json:"category"`
+	Purpose  *string `json:"purpose"`
 }
 
 func (h *CreatePeripheralHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -464,7 +467,7 @@ func (h *CreatePeripheralHandler) ServeHTTP(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	p, err := h.Service.Register(r.Context(), deviceID, claims.UserID, req.Name, req.Kind, req.Category, port)
+	p, err := h.Service.Register(r.Context(), deviceID, claims.UserID, req.Name, req.Kind, req.Category, req.Purpose, port)
 	if err != nil {
 		if errors.Is(err, device.ErrNotFound) {
 			apierr.Write(w, http.StatusNotFound, "device_not_found", "device not found")

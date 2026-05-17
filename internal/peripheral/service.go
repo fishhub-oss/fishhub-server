@@ -20,11 +20,12 @@ const eventTypePeripheralPush = "peripheral.push"
 const peripheralPushClaimTimeoutSeconds = 30
 
 type peripheralPushPayload struct {
-	DeviceID string `json:"device_id"`
-	Name     string `json:"name"`
-	Op       string `json:"op"`
-	Kind     string `json:"kind,omitempty"`
-	Pin      int    `json:"pin,omitempty"`
+	DeviceID string  `json:"device_id"`
+	Name     string  `json:"name"`
+	Op       string  `json:"op"`
+	Kind     string  `json:"kind,omitempty"`
+	Pin      int     `json:"pin,omitempty"`
+	Purpose  *string `json:"purpose,omitempty"`
 }
 
 // Service orchestrates peripheral registration, listing, schedule updates, and deletion.
@@ -60,14 +61,14 @@ func NewService(
 
 // Register creates a new peripheral and enqueues a peripheral.push outbox event atomically.
 // port must already be validated (kind match, belongs to device model) by the caller.
-func (s *Service) Register(ctx context.Context, deviceID, userID, name, kind, category string, port devicemodel.Port) (Peripheral, error) {
+func (s *Service) Register(ctx context.Context, deviceID, userID, name, kind, category string, purpose *string, port devicemodel.Port) (Peripheral, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return Peripheral{}, fmt.Errorf("register peripheral: begin tx: %w", err)
 	}
 	defer tx.Rollback()
 
-	p, err := s.store.CreatePeripheral(ctx, tx, deviceID, userID, name, kind, category, port)
+	p, err := s.store.CreatePeripheral(ctx, tx, deviceID, userID, name, kind, category, purpose, port)
 	if err != nil {
 		if !errors.Is(err, ErrAlreadyExists) && !errors.Is(err, ErrPortInUse) {
 			s.logger.Error("register peripheral: create", "device_id", deviceID, "name", name, "error", err)
@@ -81,6 +82,7 @@ func (s *Service) Register(ctx context.Context, deviceID, userID, name, kind, ca
 		Op:       "create",
 		Kind:     kind,
 		Pin:      port.Pin,
+		Purpose:  purpose,
 	}, peripheralPushClaimTimeoutSeconds); err != nil {
 		s.logger.Error("register peripheral: enqueue push", "device_id", deviceID, "name", name, "error", err)
 		return Peripheral{}, fmt.Errorf("register peripheral: enqueue push: %w", err)

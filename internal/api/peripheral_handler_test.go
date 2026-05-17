@@ -30,6 +30,8 @@ func newPeripheral(name string) peripheral.Peripheral {
 	}
 }
 
+func strPtr(s string) *string { return &s }
+
 func newPeripheralService(t *testing.T, store *stubPeripheralStore, pub *stubPublisher) *peripheral.Service {
 	t.Helper()
 	return peripheral.NewService(testutil.NewTestDB(t), store, &stubOutboxStore{}, nil, pub, discardLogger)
@@ -207,6 +209,38 @@ func TestCreatePeripheralHandler(t *testing.T) {
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, req)
 		assertErrorCode(t, rec, http.StatusNotFound, "device_not_found")
+	})
+
+	t.Run("purpose is stored and echoed in response", func(t *testing.T) {
+		p := newPeripheral("heater")
+		purpose := "heater"
+		p.Purpose = &purpose
+		store := &stubPeripheralStore{created: p}
+		svc := newPeripheralService(t, store, &stubPublisher{})
+		modelStore := &stubDeviceModelStore{
+			model: devicemodel.DeviceModel{ID: "model-1"},
+			port:  devicemodel.Port{ID: "port-1", Kind: "relay", Label: "RELAY 1", Pin: 16},
+		}
+		h := &api.CreatePeripheralHandler{Service: svc, ModelStore: modelStore}
+
+		body := `{"name":"heater","kind":"relay","port_id":"port-1","purpose":"heater"}`
+		req := withChiParam(
+			withClaims(httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body)), "user-1"),
+			"id", "dev-1",
+		)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("expected 201, got %d: %s", rec.Code, rec.Body.String())
+		}
+		var resp map[string]any
+		if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		if resp["purpose"] != "heater" {
+			t.Errorf("expected purpose=heater, got %v", resp["purpose"])
+		}
 	})
 }
 

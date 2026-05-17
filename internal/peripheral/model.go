@@ -22,6 +22,7 @@ type Peripheral struct {
 	Port        *Port   // nil for peripherals that pre-date the port model
 	Category    string  // "sensor" | "actuator"
 	ControlMode *string // nil for sensors; "automatic"|"manual" for actuators
+	Purpose     *string
 	Schedule    []ScheduleWindow
 	LastReading *measurement.Point
 	CreatedAt   time.Time
