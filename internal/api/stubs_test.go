@@ -215,7 +215,7 @@ type stubPeripheralStore struct {
 	deleteErr      error
 }
 
-func (s *stubPeripheralStore) CreatePeripheral(_ context.Context, _ *sql.Tx, _, _, _, _, _ string, _ devicemodel.Port) (peripheral.Peripheral, error) {
+func (s *stubPeripheralStore) CreatePeripheral(_ context.Context, _ *sql.Tx, _, _, _, _, _ string, _ *string, _ devicemodel.Port) (peripheral.Peripheral, error) {
 	return s.created, s.createErr
 }
 func (s *stubPeripheralStore) ListPeripherals(_ context.Context, _, _ string) ([]peripheral.Peripheral, error) {
