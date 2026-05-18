@@ -183,20 +183,21 @@ func TestPeripheralStore_integration(t *testing.T) {
 	})
 
 	t.Run("set peripheral schedule", func(t *testing.T) {
-		schedule := []peripheral.ScheduleWindow{
-			{From: "08:00", To: "18:00", Value: 1.0},
+		schedule := peripheral.Schedule{
+			Type:    "windows",
+			Windows: []peripheral.ScheduleWindow{{From: "08:00", To: "18:00", Value: 1.0}},
 		}
 		p, err := store.SetPeripheralSchedule(ctx, deviceID, userID, lightID, schedule)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		if len(p.Schedule) != 1 || p.Schedule[0].From != "08:00" {
+		if p.Schedule == nil || len(p.Schedule.Windows) != 1 || p.Schedule.Windows[0].From != "08:00" {
 			t.Errorf("unexpected schedule: %+v", p.Schedule)
 		}
 	})
 
 	t.Run("set schedule on unknown peripheral returns ErrNotFound", func(t *testing.T) {
-		_, err := store.SetPeripheralSchedule(ctx, deviceID, userID, "00000000-0000-0000-0000-000000000000", nil)
+		_, err := store.SetPeripheralSchedule(ctx, deviceID, userID, "00000000-0000-0000-0000-000000000000", peripheral.Schedule{Type: "windows"})
 		if !errors.Is(err, peripheral.ErrNotFound) {
 			t.Errorf("expected ErrNotFound, got %v", err)
 		}

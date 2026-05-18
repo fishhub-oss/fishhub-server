@@ -224,7 +224,7 @@ func (s *stubPeripheralStore) ListPeripherals(_ context.Context, _, _ string) ([
 func (s *stubPeripheralStore) GetPeripheral(_ context.Context, _, _, _ string) (peripheral.Peripheral, error) {
 	return s.created, s.createErr
 }
-func (s *stubPeripheralStore) SetPeripheralSchedule(_ context.Context, _, _, _ string, _ []peripheral.ScheduleWindow) (peripheral.Peripheral, error) {
+func (s *stubPeripheralStore) SetPeripheralSchedule(_ context.Context, _, _, _ string, _ peripheral.Schedule) (peripheral.Peripheral, error) {
 	return s.scheduled, s.schedErr
 }
 func (s *stubPeripheralStore) SetControlMode(_ context.Context, _ *sql.Tx, _, _, _, _ string) (peripheral.Peripheral, error) {

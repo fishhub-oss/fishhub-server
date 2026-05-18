@@ -30,6 +30,8 @@ func newPeripheral(name string) peripheral.Peripheral {
 	}
 }
 
+func schedulePtr(s peripheral.Schedule) *peripheral.Schedule { return &s }
+
 func strPtr(s string) *string { return &s }
 
 func newPeripheralService(t *testing.T, store *stubPeripheralStore, pub *stubPublisher) *peripheral.Service {
@@ -93,18 +95,21 @@ func TestListPeripheralsHandler(t *testing.T) {
 // ── SetPeripheralScheduleHandler ─────────────────────────────────────────────
 
 func TestSetPeripheralScheduleHandler(t *testing.T) {
-	schedule := `[{"from":"08:00","to":"18:00","value":1.0}]`
-
-	t.Run("returns 200 with updated peripheral", func(t *testing.T) {
+	t.Run("windows schedule returns 200", func(t *testing.T) {
 		p := newPeripheral("light")
-		p.Schedule = []peripheral.ScheduleWindow{{From: "08:00", To: "18:00", Value: 1.0}}
+		p.Schedule = schedulePtr(peripheral.Schedule{
+			Type:    "windows",
+			Windows: []peripheral.ScheduleWindow{{From: "08:00", To: "18:00", Value: 1.0}},
+		})
 		store := &stubPeripheralStore{scheduled: p}
-		svc := peripheral.NewService(nil, store, &stubOutboxStore{}, nil, &stubPublisher{}, discardLogger)
+		pub := &stubPublisher{}
+		svc := peripheral.NewService(nil, store, &stubOutboxStore{}, nil, pub, discardLogger)
 		h := &api.SetPeripheralScheduleHandler{Service: svc}
 
+		body := `{"type":"windows","windows":[{"from":"08:00","to":"18:00","value":1.0}]}`
 		req := withChiParams(
-			withClaims(httptest.NewRequest(http.MethodPut, "/", strings.NewReader(schedule)), "user-1"),
-			map[string]string{"id": "dev-1", "name": "light"},
+			withClaims(httptest.NewRequest(http.MethodPut, "/", strings.NewReader(body)), "user-1"),
+			map[string]string{"id": "dev-1", "peripheralId": "pid-1"},
 		)
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, req)
@@ -119,6 +124,132 @@ func TestSetPeripheralScheduleHandler(t *testing.T) {
 		if resp["name"] != "light" {
 			t.Errorf("unexpected name: %v", resp["name"])
 		}
+
+		// verify MQTT payload shape
+		var mqttPayload map[string]any
+		if err := json.Unmarshal(pub.publishedPayload, &mqttPayload); err != nil {
+			t.Fatalf("decode mqtt payload: %v", err)
+		}
+		if mqttPayload["type"] != "windows" {
+			t.Errorf("expected mqtt type=windows, got %v", mqttPayload["type"])
+		}
+		if mqttPayload["command"] != "schedule" {
+			t.Errorf("expected mqtt command=schedule, got %v", mqttPayload["command"])
+		}
+	})
+
+	t.Run("missing type defaults to windows", func(t *testing.T) {
+		p := newPeripheral("light")
+		p.Schedule = schedulePtr(peripheral.Schedule{Type: "windows"})
+		store := &stubPeripheralStore{scheduled: p}
+		pub := &stubPublisher{}
+		svc := peripheral.NewService(nil, store, &stubOutboxStore{}, nil, pub, discardLogger)
+		h := &api.SetPeripheralScheduleHandler{Service: svc}
+
+		body := `{"windows":[{"from":"08:00","to":"18:00","value":1.0}]}`
+		req := withChiParams(
+			withClaims(httptest.NewRequest(http.MethodPut, "/", strings.NewReader(body)), "user-1"),
+			map[string]string{"id": "dev-1", "peripheralId": "pid-1"},
+		)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+		}
+
+		var mqttPayload map[string]any
+		if err := json.Unmarshal(pub.publishedPayload, &mqttPayload); err != nil {
+			t.Fatalf("decode mqtt payload: %v", err)
+		}
+		if mqttPayload["type"] != "windows" {
+			t.Errorf("expected mqtt type=windows, got %v", mqttPayload["type"])
+		}
+	})
+
+	t.Run("cron schedule stores entries with server-assigned ids", func(t *testing.T) {
+		p := newPeripheral("feeder")
+		p.Kind = "servo_cr"
+		p.Schedule = schedulePtr(peripheral.Schedule{
+			Type:    "cron",
+			Entries: []peripheral.CronEntry{{ID: "entry-uuid-1", Cron: "0 8 * * *", Value: 3}},
+		})
+		store := &stubPeripheralStore{scheduled: p}
+		pub := &stubPublisher{}
+		svc := peripheral.NewService(nil, store, &stubOutboxStore{}, nil, pub, discardLogger)
+		h := &api.SetPeripheralScheduleHandler{Service: svc}
+
+		// send entry without an id — server should assign one
+		body := `{"type":"cron","entries":[{"cron":"0 8 * * *","value":3}]}`
+		req := withChiParams(
+			withClaims(httptest.NewRequest(http.MethodPut, "/", strings.NewReader(body)), "user-1"),
+			map[string]string{"id": "dev-1", "peripheralId": "pid-1"},
+		)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+		}
+
+		var resp map[string]any
+		if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		sched, ok := resp["schedule"].(map[string]any)
+		if !ok {
+			t.Fatalf("expected schedule object, got %T", resp["schedule"])
+		}
+		if sched["type"] != "cron" {
+			t.Errorf("expected schedule.type=cron, got %v", sched["type"])
+		}
+		entries, ok := sched["entries"].([]any)
+		if !ok || len(entries) == 0 {
+			t.Fatalf("expected entries array, got %v", sched["entries"])
+		}
+		entry := entries[0].(map[string]any)
+		if entry["id"] == "" || entry["id"] == nil {
+			t.Errorf("expected server-assigned id, got empty")
+		}
+	})
+
+	t.Run("cron schedule publishes cron mqtt payload", func(t *testing.T) {
+		p := newPeripheral("feeder")
+		p.Kind = "servo_cr"
+		p.Schedule = schedulePtr(peripheral.Schedule{
+			Type:    "cron",
+			Entries: []peripheral.CronEntry{{ID: "entry-uuid-1", Cron: "0 8 * * *", Value: 3}},
+		})
+		store := &stubPeripheralStore{scheduled: p}
+		pub := &stubPublisher{}
+		svc := peripheral.NewService(nil, store, &stubOutboxStore{}, nil, pub, discardLogger)
+		h := &api.SetPeripheralScheduleHandler{Service: svc}
+
+		body := `{"type":"cron","entries":[{"id":"entry-uuid-1","cron":"0 8 * * *","value":3}]}`
+		req := withChiParams(
+			withClaims(httptest.NewRequest(http.MethodPut, "/", strings.NewReader(body)), "user-1"),
+			map[string]string{"id": "dev-1", "peripheralId": "pid-1"},
+		)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+		}
+
+		var mqttPayload map[string]any
+		if err := json.Unmarshal(pub.publishedPayload, &mqttPayload); err != nil {
+			t.Fatalf("decode mqtt payload: %v", err)
+		}
+		if mqttPayload["type"] != "cron" {
+			t.Errorf("expected mqtt type=cron, got %v", mqttPayload["type"])
+		}
+		if mqttPayload["command"] != "schedule" {
+			t.Errorf("expected mqtt command=schedule, got %v", mqttPayload["command"])
+		}
+		if _, ok := mqttPayload["entries"]; !ok {
+			t.Errorf("expected mqtt payload to have entries field")
+		}
 	})
 
 	t.Run("peripheral not found returns 404", func(t *testing.T) {
@@ -126,8 +257,9 @@ func TestSetPeripheralScheduleHandler(t *testing.T) {
 		svc := peripheral.NewService(nil, store, &stubOutboxStore{}, nil, &stubPublisher{}, discardLogger)
 		h := &api.SetPeripheralScheduleHandler{Service: svc}
 
+		body := `{"type":"windows","windows":[]}`
 		req := withChiParams(
-			withClaims(httptest.NewRequest(http.MethodPut, "/", strings.NewReader(schedule)), "user-1"),
+			withClaims(httptest.NewRequest(http.MethodPut, "/", strings.NewReader(body)), "user-1"),
 			map[string]string{"id": "dev-1", "name": "ghost"},
 		)
 		rec := httptest.NewRecorder()

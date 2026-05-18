@@ -29,7 +29,7 @@ type Store interface {
 	GetPeripheral(ctx context.Context, deviceID, userID, peripheralID string) (Peripheral, error)
 	// SetPeripheralSchedule persists the schedule and returns the updated peripheral.
 	// Returns ErrNotFound if the peripheral does not exist or is not reachable by userID.
-	SetPeripheralSchedule(ctx context.Context, deviceID, userID, peripheralID string, schedule []ScheduleWindow) (Peripheral, error)
+	SetPeripheralSchedule(ctx context.Context, deviceID, userID, peripheralID string, schedule Schedule) (Peripheral, error)
 	// SetControlMode updates control_mode for an actuator peripheral within the provided transaction.
 	// Returns ErrNotFound if the peripheral does not exist or is not reachable by userID.
 	// Returns ErrNotAnActuator if the peripheral's category is not "actuator".
@@ -141,9 +141,11 @@ func (s *postgresStore) ListPeripherals(ctx context.Context, deviceID, userID st
 			p.Purpose = &purposeOut.String
 		}
 		if scheduleJSON != nil {
-			if err := json.Unmarshal(scheduleJSON, &p.Schedule); err != nil {
+			sched, err := parseSchedule(scheduleJSON)
+			if err != nil {
 				return nil, fmt.Errorf("list peripherals: unmarshal schedule: %w", err)
 			}
+			p.Schedule = sched
 		}
 		if portID.Valid && portLabel.Valid && portPin.Valid {
 			p.Port = &Port{ID: portID.String, Label: portLabel.String, Pin: int(portPin.Int64)}
@@ -191,9 +193,11 @@ func (s *postgresStore) GetPeripheral(ctx context.Context, deviceID, userID, per
 		p.Purpose = &purposeOut.String
 	}
 	if scheduleJSON != nil {
-		if err := json.Unmarshal(scheduleJSON, &p.Schedule); err != nil {
+		sched, err := parseSchedule(scheduleJSON)
+		if err != nil {
 			return Peripheral{}, fmt.Errorf("get peripheral: unmarshal schedule: %w", err)
 		}
+		p.Schedule = sched
 	}
 	if portID.Valid && portLabel.Valid && portPin.Valid {
 		p.Port = &Port{ID: portID.String, Label: portLabel.String, Pin: int(portPin.Int64)}
@@ -201,7 +205,7 @@ func (s *postgresStore) GetPeripheral(ctx context.Context, deviceID, userID, per
 	return p, nil
 }
 
-func (s *postgresStore) SetPeripheralSchedule(ctx context.Context, deviceID, userID, peripheralID string, schedule []ScheduleWindow) (Peripheral, error) {
+func (s *postgresStore) SetPeripheralSchedule(ctx context.Context, deviceID, userID, peripheralID string, schedule Schedule) (Peripheral, error) {
 	scheduleJSON, err := json.Marshal(schedule)
 	if err != nil {
 		return Peripheral{}, fmt.Errorf("set peripheral schedule: marshal: %w", err)
@@ -240,9 +244,11 @@ func (s *postgresStore) SetPeripheralSchedule(ctx context.Context, deviceID, use
 	if purposeOut.Valid {
 		p.Purpose = &purposeOut.String
 	}
-	if err := json.Unmarshal(scheduleOut, &p.Schedule); err != nil {
+	sched, err := parseSchedule(scheduleOut)
+	if err != nil {
 		return Peripheral{}, fmt.Errorf("set peripheral schedule: unmarshal: %w", err)
 	}
+	p.Schedule = sched
 	return p, nil
 }
 
@@ -299,9 +305,11 @@ func (s *postgresStore) SetControlMode(ctx context.Context, tx *sql.Tx, deviceID
 		p.Purpose = &purposeOut.String
 	}
 	if scheduleJSON != nil {
-		if err := json.Unmarshal(scheduleJSON, &p.Schedule); err != nil {
+		sched, err := parseSchedule(scheduleJSON)
+		if err != nil {
 			return Peripheral{}, fmt.Errorf("set control mode: unmarshal schedule: %w", err)
 		}
+		p.Schedule = sched
 	}
 	return p, nil
 }
@@ -338,8 +346,10 @@ func (s *postgresStore) DeletePeripheral(ctx context.Context, tx *sql.Tx, device
 	if purposeOut.Valid {
 		p.Purpose = &purposeOut.String
 	}
-	if err := json.Unmarshal(schedule, &p.Schedule); err != nil {
-		p.Schedule = []ScheduleWindow{}
+	if schedule != nil {
+		if sched, err := parseSchedule(schedule); err == nil {
+			p.Schedule = sched
+		}
 	}
 	return p, nil
 }
@@ -389,14 +399,37 @@ func (s *postgresStore) UpdatePeripheral(ctx context.Context, deviceID, userID, 
 		p.Purpose = &purposeOut.String
 	}
 	if scheduleJSON != nil {
-		if err := json.Unmarshal(scheduleJSON, &p.Schedule); err != nil {
+		sched, err := parseSchedule(scheduleJSON)
+		if err != nil {
 			return Peripheral{}, fmt.Errorf("update peripheral: unmarshal schedule: %w", err)
 		}
+		p.Schedule = sched
 	}
 	if portID.Valid && portLabel.Valid && portPin.Valid {
 		p.Port = &Port{ID: portID.String, Label: portLabel.String, Pin: int(portPin.Int64)}
 	}
 	return p, nil
+}
+
+// parseSchedule unmarshals schedule JSON into a Schedule value.
+// It handles two on-disk formats for backwards compatibility:
+//   - current: {"type":"windows","windows":[...]} or {"type":"cron","entries":[...]}
+//   - legacy: [{"from":...}] — a bare []ScheduleWindow array written before the
+//     Schedule wrapper type was introduced; treated as type "windows".
+func parseSchedule(data []byte) (*Schedule, error) {
+	var sched Schedule
+	if err := json.Unmarshal(data, &sched); err == nil {
+		if sched.Type == "" {
+			sched.Type = "windows"
+		}
+		return &sched, nil
+	}
+	// Retrocompat: try legacy bare-array format.
+	var windows []ScheduleWindow
+	if err := json.Unmarshal(data, &windows); err != nil {
+		return nil, err
+	}
+	return &Schedule{Type: "windows", Windows: windows}, nil
 }
 
 func uniqueViolationIndex(err error) string {
