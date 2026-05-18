@@ -141,14 +141,11 @@ func (s *postgresStore) ListPeripherals(ctx context.Context, deviceID, userID st
 			p.Purpose = &purposeOut.String
 		}
 		if scheduleJSON != nil {
-			var sched Schedule
-			if err := json.Unmarshal(scheduleJSON, &sched); err != nil {
+			sched, err := parseSchedule(scheduleJSON)
+			if err != nil {
 				return nil, fmt.Errorf("list peripherals: unmarshal schedule: %w", err)
 			}
-			if sched.Type == "" {
-				sched.Type = "windows"
-			}
-			p.Schedule = &sched
+			p.Schedule = sched
 		}
 		if portID.Valid && portLabel.Valid && portPin.Valid {
 			p.Port = &Port{ID: portID.String, Label: portLabel.String, Pin: int(portPin.Int64)}
@@ -196,14 +193,11 @@ func (s *postgresStore) GetPeripheral(ctx context.Context, deviceID, userID, per
 		p.Purpose = &purposeOut.String
 	}
 	if scheduleJSON != nil {
-		var sched Schedule
-		if err := json.Unmarshal(scheduleJSON, &sched); err != nil {
+		sched, err := parseSchedule(scheduleJSON)
+		if err != nil {
 			return Peripheral{}, fmt.Errorf("get peripheral: unmarshal schedule: %w", err)
 		}
-		if sched.Type == "" {
-			sched.Type = "windows"
-		}
-		p.Schedule = &sched
+		p.Schedule = sched
 	}
 	if portID.Valid && portLabel.Valid && portPin.Valid {
 		p.Port = &Port{ID: portID.String, Label: portLabel.String, Pin: int(portPin.Int64)}
@@ -250,14 +244,11 @@ func (s *postgresStore) SetPeripheralSchedule(ctx context.Context, deviceID, use
 	if purposeOut.Valid {
 		p.Purpose = &purposeOut.String
 	}
-	var sched Schedule
-	if err := json.Unmarshal(scheduleOut, &sched); err != nil {
+	sched, err := parseSchedule(scheduleOut)
+	if err != nil {
 		return Peripheral{}, fmt.Errorf("set peripheral schedule: unmarshal: %w", err)
 	}
-	if sched.Type == "" {
-		sched.Type = "windows"
-	}
-	p.Schedule = &sched
+	p.Schedule = sched
 	return p, nil
 }
 
@@ -314,14 +305,11 @@ func (s *postgresStore) SetControlMode(ctx context.Context, tx *sql.Tx, deviceID
 		p.Purpose = &purposeOut.String
 	}
 	if scheduleJSON != nil {
-		var sched Schedule
-		if err := json.Unmarshal(scheduleJSON, &sched); err != nil {
+		sched, err := parseSchedule(scheduleJSON)
+		if err != nil {
 			return Peripheral{}, fmt.Errorf("set control mode: unmarshal schedule: %w", err)
 		}
-		if sched.Type == "" {
-			sched.Type = "windows"
-		}
-		p.Schedule = &sched
+		p.Schedule = sched
 	}
 	return p, nil
 }
@@ -359,12 +347,8 @@ func (s *postgresStore) DeletePeripheral(ctx context.Context, tx *sql.Tx, device
 		p.Purpose = &purposeOut.String
 	}
 	if schedule != nil {
-		var sched Schedule
-		if err := json.Unmarshal(schedule, &sched); err == nil {
-			if sched.Type == "" {
-				sched.Type = "windows"
-			}
-			p.Schedule = &sched
+		if sched, err := parseSchedule(schedule); err == nil {
+			p.Schedule = sched
 		}
 	}
 	return p, nil
@@ -415,19 +399,37 @@ func (s *postgresStore) UpdatePeripheral(ctx context.Context, deviceID, userID, 
 		p.Purpose = &purposeOut.String
 	}
 	if scheduleJSON != nil {
-		var sched Schedule
-		if err := json.Unmarshal(scheduleJSON, &sched); err != nil {
+		sched, err := parseSchedule(scheduleJSON)
+		if err != nil {
 			return Peripheral{}, fmt.Errorf("update peripheral: unmarshal schedule: %w", err)
 		}
-		if sched.Type == "" {
-			sched.Type = "windows"
-		}
-		p.Schedule = &sched
+		p.Schedule = sched
 	}
 	if portID.Valid && portLabel.Valid && portPin.Valid {
 		p.Port = &Port{ID: portID.String, Label: portLabel.String, Pin: int(portPin.Int64)}
 	}
 	return p, nil
+}
+
+// parseSchedule unmarshals schedule JSON into a Schedule value.
+// It handles two on-disk formats for backwards compatibility:
+//   - current: {"type":"windows","windows":[...]} or {"type":"cron","entries":[...]}
+//   - legacy: [{"from":...}] — a bare []ScheduleWindow array written before the
+//     Schedule wrapper type was introduced; treated as type "windows".
+func parseSchedule(data []byte) (*Schedule, error) {
+	var sched Schedule
+	if err := json.Unmarshal(data, &sched); err == nil {
+		if sched.Type == "" {
+			sched.Type = "windows"
+		}
+		return &sched, nil
+	}
+	// Retrocompat: try legacy bare-array format.
+	var windows []ScheduleWindow
+	if err := json.Unmarshal(data, &windows); err != nil {
+		return nil, err
+	}
+	return &Schedule{Type: "windows", Windows: windows}, nil
 }
 
 func uniqueViolationIndex(err error) string {
