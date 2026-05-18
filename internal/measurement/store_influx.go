@@ -49,9 +49,14 @@ func (c *influxDBClient) WriteReading(ctx context.Context, r Reading) error {
 //  2. LAST_VALUE(field IGNORE NULLS) OVER () to get the latest value per field
 //     independently (different peripherals write at different timestamps).
 func (c *influxDBClient) QueryLastReadings(ctx context.Context, deviceID string) (*Point, error) {
+	// Lookback window: covers any peripheral that has written at least once in the last 30 days.
+	// Bounding the scan is critical for performance — unbounded window functions scan all history.
+	const lookback = 7 * 24 * time.Hour
+	since := time.Now().UTC().Add(-lookback).Format(time.RFC3339)
+
 	discoverSQL := fmt.Sprintf(
-		`SELECT * FROM sensors WHERE device_id = '%s' ORDER BY time DESC LIMIT 1`,
-		deviceID,
+		`SELECT * FROM sensors WHERE device_id = '%s' AND time >= '%s' ORDER BY time DESC LIMIT 1`,
+		deviceID, since,
 	)
 	iter, err := c.client.Query(ctx, discoverSQL)
 	if err != nil {
@@ -76,9 +81,10 @@ func (c *influxDBClient) QueryLastReadings(ctx context.Context, deviceID string)
 		selectCols += fmt.Sprintf(`, LAST_VALUE("%s" IGNORE NULLS) OVER () AS "%s"`, f, f)
 	}
 	lastSQL := fmt.Sprintf(
-		`SELECT MAX(time) OVER () AS time%s FROM sensors WHERE device_id = '%s' LIMIT 1`,
+		`SELECT MAX(time) OVER () AS time%s FROM sensors WHERE device_id = '%s' AND time >= '%s' LIMIT 1`,
 		selectCols,
 		deviceID,
+		since,
 	)
 	iter2, err := c.client.Query(ctx, lastSQL)
 	if err != nil {
