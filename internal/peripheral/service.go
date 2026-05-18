@@ -137,7 +137,13 @@ func filterByNamespace(p *measurement.Point, ns string) *measurement.Point {
 }
 
 // SetSchedule persists the schedule to DB and publishes it synchronously via MQTT.
-func (s *Service) SetSchedule(ctx context.Context, deviceID, userID, peripheralID string, schedule []ScheduleWindow) (Peripheral, error) {
+func (s *Service) SetSchedule(ctx context.Context, deviceID, userID, peripheralID string, schedule Schedule) (Peripheral, error) {
+	for i := range schedule.Entries {
+		if schedule.Entries[i].ID == "" {
+			schedule.Entries[i].ID = uuid.NewString()
+		}
+	}
+
 	p, err := s.store.SetPeripheralSchedule(ctx, deviceID, userID, peripheralID, schedule)
 	if err != nil {
 		if !errors.Is(err, ErrNotFound) {
@@ -146,11 +152,24 @@ func (s *Service) SetSchedule(ctx context.Context, deviceID, userID, peripheralI
 		return Peripheral{}, err
 	}
 
-	msg, err := json.Marshal(map[string]any{
-		"id":      uuid.NewString(),
-		"command": "schedule",
-		"windows": schedule,
-	})
+	var payload map[string]any
+	if schedule.Type == "cron" {
+		payload = map[string]any{
+			"id":      uuid.NewString(),
+			"command": "schedule",
+			"type":    "cron",
+			"entries": schedule.Entries,
+		}
+	} else {
+		payload = map[string]any{
+			"id":      uuid.NewString(),
+			"command": "schedule",
+			"type":    "windows",
+			"windows": schedule.Windows,
+		}
+	}
+
+	msg, err := json.Marshal(payload)
 	if err != nil {
 		s.logger.Error("set peripheral schedule: marshal mqtt payload", "device_id", deviceID, "peripheral_id", peripheralID, "error", err)
 		return p, nil

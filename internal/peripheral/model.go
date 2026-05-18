@@ -23,10 +23,16 @@ type Peripheral struct {
 	Category    string  // "sensor" | "actuator"
 	ControlMode *string // nil for sensors; "automatic"|"manual" for actuators
 	Purpose     *string
-	Schedule    []ScheduleWindow
+	Schedule    *Schedule
 	LastReading *measurement.Point
 	CreatedAt   time.Time
 	UpdatedAt   time.Time
+}
+
+type Schedule struct {
+	Type    string           `json:"type"` // "windows" | "cron"
+	Windows []ScheduleWindow `json:"windows,omitempty"`
+	Entries []CronEntry      `json:"entries,omitempty"`
 }
 
 type ScheduleWindow struct {
@@ -34,4 +40,10 @@ type ScheduleWindow struct {
 	To    string  `json:"to"`
 	Value float64 `json:"value"`
 	Days  []int   `json:"days,omitempty"`
+}
+
+type CronEntry struct {
+	ID    string `json:"id"`
+	Cron  string `json:"cron"`
+	Value int    `json:"value"`
 }

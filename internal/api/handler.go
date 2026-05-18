@@ -317,26 +317,22 @@ type PortResponse struct {
 }
 
 type PeripheralResponse struct {
-	ID          string                      `json:"id"`
-	DeviceID    string                      `json:"device_id"`
-	Name        string                      `json:"name"`
-	Kind        string                      `json:"kind"`
-	Pin         int                         `json:"pin"`
-	Port        *PortResponse               `json:"port"`
-	Category    string                      `json:"category"`
-	ControlMode *string                     `json:"control_mode"`
-	Purpose     *string                     `json:"purpose"`
-	Schedule    []peripheral.ScheduleWindow `json:"schedule"`
-	LastReading *LastReadingResponse        `json:"last_reading"`
-	CreatedAt   string                      `json:"created_at"`
-	UpdatedAt   string                      `json:"updated_at"`
+	ID          string               `json:"id"`
+	DeviceID    string               `json:"device_id"`
+	Name        string               `json:"name"`
+	Kind        string               `json:"kind"`
+	Pin         int                  `json:"pin"`
+	Port        *PortResponse        `json:"port"`
+	Category    string               `json:"category"`
+	ControlMode *string              `json:"control_mode"`
+	Purpose     *string              `json:"purpose"`
+	Schedule    *peripheral.Schedule `json:"schedule"`
+	LastReading *LastReadingResponse `json:"last_reading"`
+	CreatedAt   string               `json:"created_at"`
+	UpdatedAt   string               `json:"updated_at"`
 }
 
 func peripheralResponse(p peripheral.Peripheral) PeripheralResponse {
-	schedule := p.Schedule
-	if schedule == nil {
-		schedule = []peripheral.ScheduleWindow{}
-	}
 	var lastReading *LastReadingResponse
 	if p.LastReading != nil {
 		lastReading = &LastReadingResponse{
@@ -358,7 +354,7 @@ func peripheralResponse(p peripheral.Peripheral) PeripheralResponse {
 		Category:    p.Category,
 		ControlMode: p.ControlMode,
 		Purpose:     p.Purpose,
-		Schedule:    schedule,
+		Schedule:    p.Schedule,
 		LastReading: lastReading,
 		CreatedAt:   p.CreatedAt.UTC().Format(time.RFC3339),
 		UpdatedAt:   p.UpdatedAt.UTC().Format(time.RFC3339),
@@ -519,10 +515,13 @@ type SetPeripheralScheduleHandler struct {
 func (h *SetPeripheralScheduleHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	claims := auth.MustClaimsFromContext(r.Context())
 
-	var schedule []peripheral.ScheduleWindow
+	var schedule peripheral.Schedule
 	if err := render.DecodeJSON(r.Body, &schedule); err != nil {
 		apierr.Write(w, http.StatusBadRequest, "invalid_request", "invalid request body")
 		return
+	}
+	if schedule.Type == "" {
+		schedule.Type = "windows"
 	}
 
 	deviceID := chi.URLParam(r, "id")
