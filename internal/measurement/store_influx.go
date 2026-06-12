@@ -6,7 +6,6 @@ import (
 	"time"
 
 	influxdb3 "github.com/InfluxCommunity/influxdb3-go/v2/influxdb3"
-	"github.com/apache/arrow-go/v18/arrow"
 )
 
 var reservedColumns = map[string]bool{"time": true, "device_id": true, "user_id": true}
@@ -42,69 +41,73 @@ func (c *influxDBClient) WriteReading(ctx context.Context, r Reading) error {
 }
 
 // QueryLastReadings returns a single Point containing the last known non-null
-// value for every field the device has ever written. Returns nil if the device has no data.
+// value for every field the device has written recently. Returns nil if the device
+// has no data within the widest lookback window.
 //
-// Two-step approach required by InfluxDB 3's schema-on-write model:
-//  1. SELECT * LIMIT 1 to discover which field columns actually exist.
-//  2. LAST_VALUE(field IGNORE NULLS) OVER () to get the latest value per field
-//     independently (different peripherals write at different timestamps).
+// Tiered lookback: the device deep-sleeps ~5 min between cycles, so the latest
+// reading is almost always within minutes. We try a short recent window first and
+// only widen to a long window when it comes back empty (a peripheral that has been
+// silent). Each pass is a single time-ordered top-N scan reduced in Go — far cheaper
+// than an unbounded LAST_VALUE(...) OVER () window function over the whole partition.
 func (c *influxDBClient) QueryLastReadings(ctx context.Context, deviceID string) (*Point, error) {
-	// Lookback window: covers any peripheral that has written at least once in the last 30 days.
-	// Bounding the scan is critical for performance — unbounded window functions scan all history.
-	const lookback = 7 * 24 * time.Hour
+	for _, lookback := range []time.Duration{30 * time.Minute, 7 * 24 * time.Hour} {
+		p, err := c.queryLastWithin(ctx, deviceID, lookback)
+		if err != nil {
+			return nil, err
+		}
+		if p != nil {
+			return p, nil
+		}
+	}
+	return nil, nil
+}
+
+// queryLastWithin scans the most recent rows within lookback, newest first, and
+// keeps the first non-null value seen per field. This reproduces
+// LAST_VALUE(field IGNORE NULLS) for every field independently: because rows are
+// ordered time-descending, the first non-null value encountered for a field is its
+// latest value. maxRows bounds the scan so a device that writes each peripheral on a
+// separate cycle still terminates; in the common case (all measurements written in one
+// point per cycle) the newest row already carries every field.
+func (c *influxDBClient) queryLastWithin(ctx context.Context, deviceID string, lookback time.Duration) (*Point, error) {
+	const maxRows = 200
 	since := time.Now().UTC().Add(-lookback).Format(time.RFC3339)
 
-	discoverSQL := fmt.Sprintf(
-		`SELECT * FROM sensors WHERE device_id = '%s' AND time >= '%s' ORDER BY time DESC LIMIT 1`,
-		deviceID, since,
+	sql := fmt.Sprintf(
+		`SELECT * FROM sensors WHERE device_id = '%s' AND time >= '%s' ORDER BY time DESC LIMIT %d`,
+		deviceID, since, maxRows,
 	)
-	iter, err := c.client.Query(ctx, discoverSQL)
-	if err != nil {
-		return nil, fmt.Errorf("influx query last readings (discover): %w", err)
-	}
-
-	var fields []string
-	for iter.Next() {
-		for k := range iter.Value() {
-			if !reservedColumns[k] {
-				fields = append(fields, k)
-			}
-		}
-		break
-	}
-	if len(fields) == 0 {
-		return nil, nil
-	}
-
-	selectCols := ""
-	for _, f := range fields {
-		selectCols += fmt.Sprintf(`, LAST_VALUE("%s" IGNORE NULLS) OVER () AS "%s"`, f, f)
-	}
-	lastSQL := fmt.Sprintf(
-		`SELECT MAX(time) OVER () AS time%s FROM sensors WHERE device_id = '%s' AND time >= '%s' LIMIT 1`,
-		selectCols,
-		deviceID,
-		since,
-	)
-	iter2, err := c.client.Query(ctx, lastSQL)
+	iter, err := c.client.Query(ctx, sql)
 	if err != nil {
 		return nil, fmt.Errorf("influx query last readings: %w", err)
 	}
 
+	var rows []map[string]any
+	for iter.Next() {
+		rows = append(rows, iter.Value())
+	}
+	return reduceLatest(rows), nil
+}
+
+// reduceLatest folds rows ordered newest-first into a single Point holding the
+// first non-null value seen for each field — equivalent to LAST_VALUE(field IGNORE
+// NULLS) per field, since the first non-null encountered in time-descending order is
+// the latest. The Point timestamp is the newest row's timestamp. Returns nil when no
+// field values are present.
+func reduceLatest(rows []map[string]any) *Point {
 	p := &Point{Values: make(map[string]any)}
-	for iter2.Next() {
-		row := iter2.Value()
-		// MAX(time) OVER () returns arrow.Timestamp (nanoseconds), not time.Time.
-		// The client only maps the literal "time" column to time.Time automatically.
-		switch tv := row["time"].(type) {
-		case time.Time:
-			p.Timestamp = tv.UTC()
-		case arrow.Timestamp:
-			p.Timestamp = tv.ToTime(arrow.Nanosecond).UTC()
+	for _, row := range rows {
+		if p.Timestamp.IsZero() {
+			if t, ok := row["time"].(time.Time); ok {
+				p.Timestamp = t.UTC()
+			}
 		}
 		for k, v := range row {
 			if reservedColumns[k] {
 				continue
+			}
+			if _, seen := p.Values[k]; seen {
+				continue // already captured a newer (non-null) value for this field
 			}
 			switch val := v.(type) {
 			case float64:
@@ -119,12 +122,11 @@ func (c *influxDBClient) QueryLastReadings(ctx context.Context, deviceID string)
 				p.Values[k] = val
 			}
 		}
-		break
 	}
 	if len(p.Values) == 0 {
-		return nil, nil
+		return nil
 	}
-	return p, nil
+	return p
 }
 
 func (c *influxDBClient) QueryReadings(ctx context.Context, q Query) ([]Point, error) {

@@ -200,6 +200,121 @@ func TestWriteAndQueryStringField_Integration(t *testing.T) {
 	}
 }
 
+func TestQueryLastReadings_Integration(t *testing.T) {
+	host := startInfluxDB(t)
+	createDatabase(t, host)
+
+	client, err := measurement.NewInfluxClient(host, testToken, testDatabase)
+	if err != nil {
+		t.Fatalf("new client: %v", err)
+	}
+	ctx := context.Background()
+	const device = "last-readings-device"
+
+	// Timestamps relative to now so the 30-min recent window covers them.
+	now := time.Now().UTC().Truncate(time.Second)
+	writeAt := func(ts time.Time, fields map[string]any) {
+		t.Helper()
+		if err := client.WriteReading(ctx, measurement.Reading{
+			DeviceID:     device,
+			UserID:       "test-user",
+			Timestamp:    ts,
+			Measurements: fields,
+		}); err != nil {
+			t.Fatalf("write reading: %v", err)
+		}
+	}
+
+	// temperature written twice — newer value must win.
+	writeAt(now.Add(-10*time.Minute), map[string]any{"temperature": float64(20.0)})
+	writeAt(now.Add(-5*time.Minute), map[string]any{"ph": float64(7.2)})
+	writeAt(now.Add(-2*time.Minute), map[string]any{"temperature": float64(23.4)})
+
+	p, err := client.QueryLastReadings(ctx, device)
+	if err != nil {
+		t.Fatalf("query last readings: %v", err)
+	}
+	if p == nil {
+		t.Fatal("expected a point, got nil")
+	}
+	if p.Values["temperature"] != float64(23.4) {
+		t.Errorf("temperature: want 23.4 (latest), got %v", p.Values["temperature"])
+	}
+	if p.Values["ph"] != float64(7.2) {
+		t.Errorf("ph: want 7.2, got %v", p.Values["ph"])
+	}
+	// Timestamp is the newest row's timestamp.
+	if !p.Timestamp.Equal(now.Add(-2 * time.Minute)) {
+		t.Errorf("timestamp: want %v, got %v", now.Add(-2*time.Minute), p.Timestamp)
+	}
+}
+
+func TestQueryLastReadings_WideFallback_Integration(t *testing.T) {
+	host := startInfluxDB(t)
+	createDatabase(t, host)
+
+	client, err := measurement.NewInfluxClient(host, testToken, testDatabase)
+	if err != nil {
+		t.Fatalf("new client: %v", err)
+	}
+	ctx := context.Background()
+	const device = "fallback-device"
+
+	// Only data is older than the 30-min recent window but within the 7-day window —
+	// must be found via the wide-window fallback pass.
+	now := time.Now().UTC().Truncate(time.Second)
+	if err := client.WriteReading(ctx, measurement.Reading{
+		DeviceID:     device,
+		UserID:       "test-user",
+		Timestamp:    now.Add(-2 * time.Hour),
+		Measurements: map[string]any{"temperature": float64(18.5)},
+	}); err != nil {
+		t.Fatalf("write reading: %v", err)
+	}
+
+	p, err := client.QueryLastReadings(ctx, device)
+	if err != nil {
+		t.Fatalf("query last readings: %v", err)
+	}
+	if p == nil {
+		t.Fatal("expected a point from the wide-window fallback, got nil")
+	}
+	if p.Values["temperature"] != float64(18.5) {
+		t.Errorf("temperature: want 18.5, got %v", p.Values["temperature"])
+	}
+}
+
+func TestQueryLastReadings_NoData_Integration(t *testing.T) {
+	host := startInfluxDB(t)
+	createDatabase(t, host)
+
+	client, err := measurement.NewInfluxClient(host, testToken, testDatabase)
+	if err != nil {
+		t.Fatalf("new client: %v", err)
+	}
+	ctx := context.Background()
+
+	// Seed the sensors table with an unrelated device so the table exists — mirrors
+	// production, where the table is always present and "no data" means no rows for
+	// this particular device (not a missing table).
+	if err := client.WriteReading(ctx, measurement.Reading{
+		DeviceID:     "some-other-device",
+		UserID:       "test-user",
+		Timestamp:    time.Now().UTC(),
+		Measurements: map[string]any{"temperature": float64(21.0)},
+	}); err != nil {
+		t.Fatalf("seed write: %v", err)
+	}
+
+	p, err := client.QueryLastReadings(ctx, "device-with-no-data")
+	if err != nil {
+		t.Fatalf("query last readings: %v", err)
+	}
+	if p != nil {
+		t.Errorf("expected nil for device with no data, got %+v", p)
+	}
+}
+
 func TestQueryReadings_Integration(t *testing.T) {
 	host := startInfluxDB(t)
 	createDatabase(t, host)
