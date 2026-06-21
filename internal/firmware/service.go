@@ -28,7 +28,7 @@ type DeviceFirmwareStatus struct {
 
 type Service struct {
 	releases      ReleaseSource
-	updates       DeviceFirmwareStore
+	firmwareStore DeviceFirmwareStore
 	presigner     URLPresigner
 	publisher     mqtt.Publisher
 	deviceChecker DeviceOwnerChecker
@@ -39,7 +39,7 @@ type Service struct {
 
 func NewService(
 	releases ReleaseSource,
-	updates DeviceFirmwareStore,
+	firmwareStore DeviceFirmwareStore,
 	presigner URLPresigner,
 	publisher mqtt.Publisher,
 	deviceChecker DeviceOwnerChecker,
@@ -52,7 +52,7 @@ func NewService(
 	}
 	return &Service{
 		releases:      releases,
-		updates:       updates,
+		firmwareStore: firmwareStore,
 		presigner:     presigner,
 		publisher:     publisher,
 		deviceChecker: deviceChecker,
@@ -67,7 +67,7 @@ func (s *Service) GetStatus(ctx context.Context, deviceID, userID string) (Devic
 		return DeviceFirmwareStatus{}, err
 	}
 
-	reportedVersion, err := s.updates.GetFirmwareVersion(ctx, deviceID)
+	reportedVersion, err := s.firmwareStore.GetFirmwareVersion(ctx, deviceID)
 	if err != nil {
 		return DeviceFirmwareStatus{}, fmt.Errorf("get firmware version: %w", err)
 	}
@@ -77,7 +77,7 @@ func (s *Service) GetStatus(ctx context.Context, deviceID, userID string) (Devic
 		latestVersion = r.Version
 	}
 
-	record, err := s.updates.LatestRecord(ctx, deviceID)
+	record, err := s.firmwareStore.LatestRecord(ctx, deviceID)
 	if errors.Is(err, ErrRecordNotFound) {
 		return DeviceFirmwareStatus{
 			ReportedVersion: reportedVersion,
@@ -108,7 +108,7 @@ func (s *Service) ConfirmUpdate(ctx context.Context, deviceID, userID string) er
 		return ErrNoRelease
 	}
 
-	pending, err := s.updates.HasPending(ctx, deviceID, release.Version)
+	pending, err := s.firmwareStore.HasPending(ctx, deviceID, release.Version)
 	if err != nil {
 		return fmt.Errorf("check pending: %w", err)
 	}
@@ -130,7 +130,7 @@ func (s *Service) ConfirmUpdate(ctx context.Context, deviceID, userID string) er
 		return fmt.Errorf("publish manifest: %w", err)
 	}
 
-	if err := s.updates.InsertPending(ctx, deviceID, release.Version, nonce); err != nil {
+	if err := s.firmwareStore.InsertPending(ctx, deviceID, release.Version, nonce); err != nil {
 		return fmt.Errorf("insert pending: %w", err)
 	}
 
@@ -148,7 +148,7 @@ func (s *Service) RetryUpdate(ctx context.Context, deviceID, userID string) erro
 		return ErrNoRelease
 	}
 
-	record, err := s.updates.LatestRecord(ctx, deviceID)
+	record, err := s.firmwareStore.LatestRecord(ctx, deviceID)
 	if errors.Is(err, ErrRecordNotFound) {
 		return ErrNoPendingUpdate
 	}
@@ -176,7 +176,7 @@ func (s *Service) RetryUpdate(ctx context.Context, deviceID, userID string) erro
 		return fmt.Errorf("publish manifest: %w", err)
 	}
 
-	if err := s.updates.ResetPending(ctx, deviceID, nonce); err != nil {
+	if err := s.firmwareStore.ResetPending(ctx, deviceID, nonce); err != nil {
 		return fmt.Errorf("reset pending: %w", err)
 	}
 
@@ -186,18 +186,18 @@ func (s *Service) RetryUpdate(ctx context.Context, deviceID, userID string) erro
 
 // IngestStatus is called by the MQTT handler for each fishhub/+/status message.
 func (s *Service) IngestStatus(ctx context.Context, deviceID, version, lastUpdateResult string) error {
-	if err := s.updates.SetFirmwareVersion(ctx, deviceID, version); err != nil {
+	if err := s.firmwareStore.SetFirmwareVersion(ctx, deviceID, version); err != nil {
 		return fmt.Errorf("set firmware version: %w", err)
 	}
 
 	switch {
 	case lastUpdateResult == "ok":
-		if err := s.updates.MarkSucceeded(ctx, deviceID, version); err != nil {
+		if err := s.firmwareStore.MarkSucceeded(ctx, deviceID, version); err != nil {
 			s.logger.Warn("firmware: mark succeeded", "device_id", deviceID, "error", err)
 		}
 	case strings.HasPrefix(lastUpdateResult, "failed:"):
 		reason := strings.TrimPrefix(lastUpdateResult, "failed:")
-		if err := s.updates.MarkFailed(ctx, deviceID, reason); err != nil {
+		if err := s.firmwareStore.MarkFailed(ctx, deviceID, reason); err != nil {
 			s.logger.Warn("firmware: mark failed", "device_id", deviceID, "error", err)
 		}
 	}
