@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -21,6 +22,7 @@ import (
 	"github.com/fishhub-oss/fishhub-server/internal/devicejwt"
 	"github.com/fishhub-oss/fishhub-server/internal/devicemodel"
 	"github.com/fishhub-oss/fishhub-server/internal/emqx"
+	"github.com/fishhub-oss/fishhub-server/internal/firmware"
 	"github.com/fishhub-oss/fishhub-server/internal/hivemq"
 	"github.com/fishhub-oss/fishhub-server/internal/jwtutil"
 	"github.com/fishhub-oss/fishhub-server/internal/measurement"
@@ -32,11 +34,23 @@ import (
 	"github.com/fishhub-oss/fishhub-server/internal/provisioning"
 	"github.com/fishhub-oss/fishhub-server/internal/queue"
 	asynqqueue "github.com/fishhub-oss/fishhub-server/internal/queue/asynq"
+	s3client "github.com/fishhub-oss/fishhub-server/internal/s3"
 	"github.com/fishhub-oss/fishhub-server/internal/trigger"
 	trigger_events "github.com/fishhub-oss/fishhub-server/internal/trigger_events"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/cors"
 )
+
+// deviceOwnerBridge adapts device.Store to firmware.DeviceOwnerChecker.
+type deviceOwnerBridge struct{ store device.Store }
+
+func (b deviceOwnerBridge) CheckOwnership(ctx context.Context, deviceID, userID string) error {
+	_, err := b.store.FindByIDAndUserID(ctx, deviceID, userID)
+	if errors.Is(err, device.ErrNotFound) {
+		return firmware.ErrDeviceNotFound
+	}
+	return err
+}
 
 // deviceFinderBridge adapts device.Store to measurement.DeviceFinder.
 // device.Store.FindByIDAndUserID returns (device.Device, error) while
@@ -128,6 +142,17 @@ type config struct {
 	MQTTBroker       string // "hivemq" (default) or "emqx"
 	CORSOrigins      []string
 	RedisURL         string
+	// S3 / firmware
+	S3Endpoint            string
+	S3Region              string
+	S3Bucket              string
+	S3AccessKey           string
+	S3SecretKey           string
+	GitHubToken           string
+	FirmwarePollInterval  time.Duration
+	FirmwarePresignExpiry time.Duration
+	FirmwareUpdateTimeout time.Duration
+	FirmwareRepoSlug      string
 }
 
 func loadConfig() config {
@@ -162,6 +187,29 @@ func loadConfig() config {
 		corsOrigins = strings.Split(v, ",")
 	}
 
+	firmwarePollInterval := 15 * time.Minute
+	if v := os.Getenv("FIRMWARE_POLL_INTERVAL"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil {
+			firmwarePollInterval = d
+		}
+	}
+	firmwarePresignExpiry := 4 * time.Hour
+	if v := os.Getenv("FIRMWARE_PRESIGN_EXPIRY"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil {
+			firmwarePresignExpiry = d
+		}
+	}
+	firmwareUpdateTimeout := 30 * time.Minute
+	if v := os.Getenv("FIRMWARE_UPDATE_TIMEOUT"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil {
+			firmwareUpdateTimeout = d
+		}
+	}
+	firmwareRepoSlug := os.Getenv("FIRMWARE_REPO_SLUG")
+	if firmwareRepoSlug == "" {
+		firmwareRepoSlug = "fishhub-oss/fishhub-firmware"
+	}
+
 	return config{
 		Port:               port,
 		LogFormat:          os.Getenv("LOG_FORMAT"),
@@ -192,9 +240,19 @@ func loadConfig() config {
 		EMQXDevicePort:     emqxDevicePort,
 		EMQXServerUser:     os.Getenv("EMQX_SERVER_USERNAME"),
 		EMQXServerPass:     os.Getenv("EMQX_SERVER_PASSWORD"),
-		MQTTBroker:         mqttBroker,
-		CORSOrigins:        corsOrigins,
-		RedisURL:           os.Getenv("REDIS_URL"),
+		MQTTBroker:            mqttBroker,
+		CORSOrigins:           corsOrigins,
+		RedisURL:              os.Getenv("REDIS_URL"),
+		S3Endpoint:            os.Getenv("S3_ENDPOINT"),
+		S3Region:              os.Getenv("S3_REGION"),
+		S3Bucket:              os.Getenv("S3_BUCKET"),
+		S3AccessKey:           os.Getenv("S3_ACCESS_KEY_ID"),
+		S3SecretKey:           os.Getenv("S3_SECRET_ACCESS_KEY"),
+		GitHubToken:           os.Getenv("GITHUB_TOKEN"),
+		FirmwarePollInterval:  firmwarePollInterval,
+		FirmwarePresignExpiry: firmwarePresignExpiry,
+		FirmwareUpdateTimeout: firmwareUpdateTimeout,
+		FirmwareRepoSlug:      firmwareRepoSlug,
 	}
 }
 
@@ -398,6 +456,32 @@ func main() {
 		logger.Error("mqtt trigger_events subscription failed", "error", err)
 	}
 
+	// ── Firmware release tracking ─────────────────────────────────────────────
+	var s3 s3client.Client
+	if cfg.S3Endpoint != "" && cfg.S3Bucket != "" {
+		c, err := s3client.NewClient(cfg.S3Endpoint, cfg.S3Region, cfg.S3Bucket, cfg.S3AccessKey, cfg.S3SecretKey)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "s3 init: %v\n", err)
+			os.Exit(1)
+		}
+		s3 = c
+		logger.Info("s3 configured", "endpoint", cfg.S3Endpoint, "bucket", cfg.S3Bucket)
+	} else {
+		s3 = s3client.NewNoOp()
+		logger.Warn("s3 not configured — firmware release tracking disabled")
+	}
+
+	manifests := firmware.NewManifestReader(s3)
+	presigner := firmware.NewURLPresigner(s3)
+	poller := firmware.NewGitHubPoller(cfg.FirmwareRepoSlug, cfg.GitHubToken, cfg.FirmwarePollInterval, manifests, logger)
+	firmwareStore := firmware.NewDeviceFirmwareStore(db)
+	firmwareSvc := firmware.NewService(poller, firmwareStore, presigner, mqttPublisher, deviceOwnerBridge{deviceStore}, cfg.FirmwarePresignExpiry, cfg.FirmwareUpdateTimeout, logger)
+
+	if err := mqttSubscriber.Subscribe(ctx, "fishhub/+/status", firmware.NewStatusMQTTHandler(firmwareSvc, logger).Handle); err != nil {
+		logger.Error("mqtt status subscription failed", "error", err)
+	}
+	go poller.Run(ctx)
+
 	// ── Outbox runner ─────────────────────────────────────────────────────────
 	outboxRunner := outbox.NewRunner(
 		outboxStore,
@@ -469,6 +553,9 @@ func main() {
 		r.Delete("/api/devices/{id}/triggers/{tid}", (&api.DeleteTriggerHandler{Service: triggerSvc}).ServeHTTP)
 		r.Get("/api/devices/{id}/triggers/{tid}/events", (&api.ListTriggerEventsHandler{TriggerStore: triggerStore, EventStore: triggerEventStore}).ServeHTTP)
 		r.Get("/api/alerts", (&api.ListAlertsHandler{Store: alertStore}).ServeHTTP)
+		r.Get("/api/devices/{id}/firmware", (&firmware.FirmwareStatusHandler{Service: firmwareSvc}).ServeHTTP)
+		r.Post("/api/devices/{id}/firmware/confirm", (&firmware.FirmwareConfirmHandler{Service: firmwareSvc}).ServeHTTP)
+		r.Post("/api/devices/{id}/firmware/retry", (&firmware.FirmwareRetryHandler{Service: firmwareSvc}).ServeHTTP)
 	})
 
 	srv := &http.Server{Addr: ":" + cfg.Port, Handler: r}
