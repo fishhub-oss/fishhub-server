@@ -6,8 +6,8 @@ import (
 	"errors"
 )
 
-// UpdateStore persists firmware update records and the device-reported firmware version.
-type UpdateStore interface {
+// DeviceFirmwareStore persists firmware update records and the device-reported firmware version.
+type DeviceFirmwareStore interface {
 	// SetFirmwareVersion updates devices.firmware_version for the given device.
 	SetFirmwareVersion(ctx context.Context, deviceID, version string) error
 	// GetFirmwareVersion returns the last-reported firmware version, or "" if unknown.
@@ -28,7 +28,7 @@ type UpdateStore interface {
 
 type postgresUpdateStore struct{ db *sql.DB }
 
-func NewUpdateStore(db *sql.DB) UpdateStore {
+func NewDeviceFirmwareStore(db *sql.DB) DeviceFirmwareStore {
 	return &postgresUpdateStore{db: db}
 }
 

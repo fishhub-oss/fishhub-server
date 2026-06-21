@@ -28,7 +28,7 @@ type DeviceFirmwareStatus struct {
 
 type Service struct {
 	releases      ReleaseSource
-	updates       UpdateStore
+	updates       DeviceFirmwareStore
 	presigner     URLPresigner
 	publisher     mqtt.Publisher
 	deviceChecker DeviceOwnerChecker
@@ -39,7 +39,7 @@ type Service struct {
 
 func NewService(
 	releases ReleaseSource,
-	updates UpdateStore,
+	updates DeviceFirmwareStore,
 	presigner URLPresigner,
 	publisher mqtt.Publisher,
 	deviceChecker DeviceOwnerChecker,

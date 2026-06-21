@@ -474,7 +474,7 @@ func main() {
 	manifests := firmware.NewManifestReader(s3)
 	presigner := firmware.NewURLPresigner(s3)
 	poller := firmware.NewGitHubPoller(cfg.FirmwareRepoSlug, cfg.GitHubToken, cfg.FirmwarePollInterval, manifests, logger)
-	updateStore := firmware.NewUpdateStore(db)
+	updateStore := firmware.NewDeviceFirmwareStore(db)
 	firmwareSvc := firmware.NewService(poller, updateStore, presigner, mqttPublisher, deviceOwnerBridge{deviceStore}, cfg.FirmwarePresignExpiry, cfg.FirmwareUpdateTimeout, logger)
 
 	if err := mqttSubscriber.Subscribe(ctx, "fishhub/+/status", firmware.NewStatusMQTTHandler(firmwareSvc, logger).Handle); err != nil {
